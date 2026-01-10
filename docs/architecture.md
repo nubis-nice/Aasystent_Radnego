@@ -11,6 +11,10 @@ System automatyzuje obieg dokumentów Rady Miejskiej (pozyskanie, ekstrakcja tre
 - **Bezpieczeństwo**: klucze API tylko w zmiennych środowiskowych; brak danych wrażliwych w logach.
 
 ## 3. Stos technologiczny (docelowo)
+
+## 3.1. Repozytorium (monorepo)
+Projekt jest utrzymywany jako monorepo (**npm workspaces**) z osobnymi aplikacjami uruchomieniowymi w `apps/*` (frontend/api/worker) oraz współdzielonym kodem w `packages/*`.
+
 - **Runtime**: Node.js LTS
 - **Język**: TypeScript
 - **Backend**: Fastify (lub NestJS + Fastify)

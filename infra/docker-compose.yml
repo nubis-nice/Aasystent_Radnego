@@ -1,0 +1,40 @@
+name: aasystent-radnego
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: aasystent-postgres
+    environment:
+      POSTGRES_DB: aasystent_radnego
+      POSTGRES_USER: aasystent
+      POSTGRES_PASSWORD: aasystent
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aasystent -d aasystent_radnego"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: aasystent-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  adminer:
+    image: adminer:4
+    container_name: aasystent-adminer
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+
+volumes:
+  postgres_data:
+  redis_data:

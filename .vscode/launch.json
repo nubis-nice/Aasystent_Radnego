@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/launch",
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "API: debug (ts-node)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--workspace", "apps/api", "run", "dev"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Worker: debug (ts-node)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--workspace", "apps/worker", "run", "dev"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ]
+}

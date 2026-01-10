@@ -9,7 +9,7 @@ Celem jest stworzenie Agenta AI, który automatycznie pozyskuje i przetwarza dok
 - **wstępną analizę prawną/ryzyk** (sygnały ostrzegawcze dot. kompetencji i kolizji z prawem)
 - **raporty okresowe** (tydzień/miesiąc) i podsumowanie sesji
 
-Zakres zgodny z dokumentem wstępnym: `docs/AGENT ANALIZY DOKUMENTÓW RADY – STRESZCZ.md`.
+Zakres zgodny z dokumentem wstępnym: `docs/_tylko_jako_notatka.md`.
 
 ## 2. Użytkownik i potrzeby (profil: Radny Miejski w Polsce)
 ### 2.1. Główne potrzeby
@@ -35,6 +35,33 @@ Zakres zgodny z dokumentem wstępnym: `docs/AGENT ANALIZY DOKUMENTÓW RADY – S
 - **Bezpieczeństwo**: brak danych wrażliwych w logach, kontrola dostępu do panelu.
 
 ## 4. Proponowana architektura (TypeScript, środowisko kompatybilne)
+
+### 4.0. Repozytorium (monorepo) – drzewo katalogów
+Rekomendowany układ repozytorium (Windows 11 + **npm workspaces** + **Docker Compose**):
+
+```text
+Aasystent_Radnego/
+  apps/
+    frontend/                  # Next.js (panel dokumentów + czat)
+    api/                       # Fastify REST API (auth, CRUD, search, enqueue jobów)
+    worker/                    # BullMQ worker (ingest, ekstrakcja, analizy, embeddingi)
+  packages/
+    shared/                    # współdzielone typy i kontrakty (Zod)
+  infra/
+    docker-compose.yml         # Postgres (pgvector) + Redis + Adminer
+  docs/                        # dokumentacja
+  scripts/                     # skrypty dev/CI (np. seed, reset db)
+  .vscode/                     # tasks/launch/settings dla lokalnego dev
+  package.json                 # root (workspaces + skrypty)
+  tsconfig.base.json
+  .env.example
+```
+
+**Uzasadnienie**:
+- `apps/*` to osobne artefakty uruchomieniowe (łatwe skalowanie i deployment).
+- `packages/*` to współdzielone biblioteki (kontrakty danych, schematy Zod) bez mieszania zależności UI.
+- `infra/*` trzyma zależności środowiskowe (DB/Redis) uruchamiane w dev/CI.
+
 ### 4.1. Technologia
 - **Runtime**: Node.js LTS (np. 20+)
 - **Język**: TypeScript

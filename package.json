@@ -1,0 +1,36 @@
+{
+  "name": "aasystent-radnego",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "docker:up": "docker compose -f infra/docker-compose.yml up -d",
+    "docker:down": "docker compose -f infra/docker-compose.yml down",
+    "dev": "npm-run-all -p dev:frontend dev:api dev:worker",
+    "dev:frontend": "npm --workspace apps/frontend run dev",
+    "dev:api": "npm --workspace apps/api run dev",
+    "dev:worker": "npm --workspace apps/worker run dev",
+    "build": "npm-run-all build:frontend build:api build:worker",
+    "build:frontend": "npm --workspace apps/frontend run build",
+    "build:api": "npm --workspace apps/api run build",
+    "build:worker": "npm --workspace apps/worker run build",
+    "lint": "npm-run-all lint:frontend lint:api lint:worker",
+    "lint:frontend": "npm --workspace apps/frontend run lint",
+    "lint:api": "npm --workspace apps/api run lint",
+    "lint:worker": "npm --workspace apps/worker run lint",
+    "typecheck": "npm-run-all typecheck:frontend typecheck:api typecheck:worker",
+    "typecheck:frontend": "npm --workspace apps/frontend run typecheck",
+    "typecheck:api": "npm --workspace apps/api run typecheck",
+    "typecheck:worker": "npm --workspace apps/worker run typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "npm-run-all": "^4.1.5"
+  }
+}
