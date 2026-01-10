@@ -3,7 +3,6 @@
   "editor.defaultFormatter": "esbenp.prettier-vscode",
   "files.eol": "\n",
   "typescript.tsdk": "node_modules/typescript/lib",
-  "eslint.workingDirectories": [
-    { "mode": "auto" }
-  ]
+  "eslint.workingDirectories": [{ "mode": "auto" }],
+  "git.ignoreLimitWarning": true
 }

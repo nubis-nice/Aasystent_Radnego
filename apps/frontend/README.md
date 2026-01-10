@@ -1,36 +1,97 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Asystent Radnego - Frontend
 
-## Getting Started
+Panel webowy dla Radnych Miejskich Gminy Drawno do zarządzania dokumentami Rady Miejskiej i analizy treści z wykorzystaniem AI.
 
-First, run the development server:
+## Stack Technologiczny
+
+- **Framework**: Next.js 16 (App Router)
+- **Język**: TypeScript
+- **Styling**: TailwindCSS
+- **UI Components**: Lucide React Icons
+- **Auth**: Supabase Auth (OAuth Google + Email/Hasło)
+- **State Management**: React Hooks (useState, useEffect)
+
+## Uruchomienie
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Aplikacja dostępna na [http://localhost:3000](http://localhost:3000)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Struktura Projektu
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+src/
+├── app/                    # Next.js App Router
+│   ├── (auth)/            # Strony logowania (bez layoutu)
+│   ├── dashboard/         # Pulpit główny
+│   ├── documents/         # Moduł dokumentów
+│   ├── chat/              # Czat z AI
+│   ├── settings/          # Ustawienia użytkownika
+│   └── admin/             # Panel administratora
+├── components/
+│   ├── ui/                # Komponenty bazowe (Button, Input)
+│   ├── layout/            # Header, Sidebar
+│   ├── auth/              # Formularze logowania
+│   └── ...
+├── lib/
+│   └── supabase/          # Konfiguracja Supabase
+└── types/                 # Typy TypeScript
+```
 
-## Learn More
+## Funkcjonalności
 
-To learn more about Next.js, take a look at the following resources:
+### ✅ Zaimplementowane
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **Autentykacja**: OAuth Google, Email/Hasło, Reset hasła
+- **Dashboard**: Pulpit z kartami statystyk i aktywnością
+- **Dokumenty**: Lista dokumentów z filtrami (placeholder)
+- **Czat AI**: Interfejs czatu z cytatami (placeholder)
+- **Ustawienia**:
+  - Profil użytkownika
+  - **Konfiguracja API** (OpenAI, lokalne modele)
+  - Powiadomienia
+  - Wygląd
+  - Język i region
+  - Prywatność
+- **Panel Admina**: Zarządzanie użytkownikami (placeholder)
+- **UI/UX**: Profesjonalny design, gradienty, animacje
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 🚧 W Trakcie Implementacji
 
-## Deploy on Vercel
+- Integracja z backend API
+- Upload dokumentów
+- Podgląd szczegółów dokumentu
+- Rzeczywisty czat z AI
+- Dark mode
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Konfiguracja
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Zmienne Środowiskowe
+
+Utwórz plik `.env.local`:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+## Dokumentacja
+
+- **Architektura**: `../../docs/architecture.md`
+- **Plan budowy**: `../../docs/frontend_build_plan.md`
+- **Struktura menu**: `../../docs/menu_structure.md`
+- **Zarządzanie API**: `../../docs/api_management_design.md`
+- **TODO**: `../../docs/todo.md`
+- **Change Log**: `../../docs/change_log.md`
+
+## Status Projektu
+
+**Frontend**: ✅ Gotowy do użycia (MVP)
+**Backend**: 🚧 W przygotowaniu
+**Deployment**: 🔧 Local development
+
+---
+
+**Data**: 2024-12-27

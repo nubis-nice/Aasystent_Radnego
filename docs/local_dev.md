@@ -9,7 +9,7 @@
 docker compose -f infra/docker-compose.yml up -d
 ```
 
-- Postgres: `localhost:5432` (DB: `aasystent_radnego`, user/pass: `aasystent`)
+- Postgres: `localhost:5433` (DB: `aasystent_radnego`, user/pass: `aasystent`) *(mapowanie jest ustawione w `infra/docker-compose.yml` jako `5433:5432`)*
 - Redis: `localhost:6379`
 - Adminer: http://localhost:8080
 
@@ -26,6 +26,7 @@ npm run dev
 
 ### Endpointy
 - API healthcheck: `GET http://localhost:3001/health`
+  - na Windows używaj `curl.exe`, np.: `curl.exe -s http://localhost:3001/health`
 
 ## Debug w VS Code/Windsurf
 W repo jest `.vscode/launch.json`:

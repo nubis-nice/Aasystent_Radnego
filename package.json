@@ -12,11 +12,12 @@
   "scripts": {
     "docker:up": "docker compose -f infra/docker-compose.yml up -d",
     "docker:down": "docker compose -f infra/docker-compose.yml down",
-    "dev": "npm-run-all -p dev:frontend dev:api dev:worker",
+    "build:shared": "npm --workspace packages/shared run build",
+    "dev": "npm-run-all build:shared -p dev:frontend dev:api dev:worker",
     "dev:frontend": "npm --workspace apps/frontend run dev",
     "dev:api": "npm --workspace apps/api run dev",
     "dev:worker": "npm --workspace apps/worker run dev",
-    "build": "npm-run-all build:frontend build:api build:worker",
+    "build": "npm-run-all build:shared build:frontend build:api build:worker",
     "build:frontend": "npm --workspace apps/frontend run build",
     "build:api": "npm --workspace apps/api run build",
     "build:worker": "npm --workspace apps/worker run build",
@@ -31,6 +32,17 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
-    "npm-run-all": "^4.1.5"
+    "@types/node": "^25.0.3",
+    "@typescript-eslint/eslint-plugin": "^8.50.1",
+    "@typescript-eslint/parser": "^8.50.1",
+    "eslint": "^9.39.2",
+    "npm-run-all": "^4.1.5",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "pdf-to-png-converter": "^3.11.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   }
 }

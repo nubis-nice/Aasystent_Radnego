@@ -1,0 +1,558 @@
+import { Buffer } from "node:buffer";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, unlinkSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
+import OpenAI from "openai";
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.SUPABASE_URL!;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+export interface DownloadResult {
+  success: boolean;
+  audioPath?: string;
+  title?: string;
+  duration?: string;
+  error?: string;
+}
+
+export interface TranscriptSegment {
+  timestamp: string;
+  speaker: string;
+  text: string;
+  sentiment: string;
+  emotion: string;
+  emotionEmoji: string;
+  tension: number;
+  credibility: number;
+  credibilityEmoji: string;
+}
+
+export interface TranscriptionWithAnalysis {
+  success: boolean;
+  rawTranscript: string;
+  formattedTranscript: string;
+  segments: TranscriptSegment[];
+  summary: {
+    averageTension: number;
+    dominantSentiment: string;
+    overallCredibility: number;
+    overallCredibilityEmoji: string;
+    speakerCount: number;
+    duration: string;
+  };
+  metadata: {
+    videoId: string;
+    videoTitle: string;
+    videoUrl: string;
+  };
+  error?: string;
+}
+
+export class YouTubeDownloader {
+  private openai: OpenAI | null = null;
+  private tempDir: string;
+
+  constructor() {
+    this.tempDir = join(tmpdir(), "aasystent-youtube");
+    if (!existsSync(this.tempDir)) {
+      mkdirSync(this.tempDir, { recursive: true });
+    }
+  }
+
+  async initializeWithUserConfig(userId: string): Promise<void> {
+    const { data: config } = await supabase
+      .from("api_configurations")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("is_default", true)
+      .eq("is_active", true)
+      .single();
+
+    if (!config) {
+      throw new Error("Brak skonfigurowanego klucza API. Przejdź do ustawień.");
+    }
+
+    const decodedApiKey = Buffer.from(
+      config.api_key_encrypted,
+      "base64"
+    ).toString("utf-8");
+
+    this.openai = new OpenAI({
+      apiKey: decodedApiKey,
+    });
+  }
+
+  async downloadAudio(videoUrl: string): Promise<DownloadResult> {
+    const videoId = this.extractVideoId(videoUrl);
+    if (!videoId) {
+      return { success: false, error: "Nieprawidłowy URL YouTube" };
+    }
+
+    const outputPath = join(this.tempDir, `${randomUUID()}.mp3`);
+
+    try {
+      console.log(`[YouTubeDownloader] Downloading audio from: ${videoUrl}`);
+
+      // Use yt-dlp to download audio
+      const result = await this.runYtDlp(videoUrl, outputPath);
+
+      if (!result.success) {
+        return result;
+      }
+
+      return {
+        success: true,
+        audioPath: outputPath,
+        title: result.title,
+        duration: result.duration,
+      };
+    } catch (error) {
+      console.error("[YouTubeDownloader] Download error:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Błąd pobierania audio",
+      };
+    }
+  }
+
+  private runYtDlp(
+    videoUrl: string,
+    outputPath: string
+  ): Promise<DownloadResult> {
+    return new Promise((resolve) => {
+      // Remove .mp3 extension - yt-dlp will add it
+      const outputBase = outputPath.replace(/\.mp3$/, "");
+
+      // FFmpeg and Deno locations (winget installation)
+      const ffmpegPath =
+        "C:\\Users\\nubis\\AppData\\Local\\Microsoft\\WinGet\\Packages\\yt-dlp.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-N-121938-g2456a39581-win64-gpl\\bin";
+      const denoPath =
+        "C:\\Users\\nubis\\AppData\\Local\\Microsoft\\WinGet\\Links\\deno.exe";
+
+      // yt-dlp arguments for audio extraction (64kbps mono for smaller files)
+      const args = [
+        "--ffmpeg-location",
+        ffmpegPath,
+        "--js-runtimes",
+        `deno:${denoPath}`, // JavaScript runtime for YouTube extraction
+        "-x", // Extract audio
+        "--audio-format",
+        "mp3",
+        "--audio-quality",
+        "9", // Lower quality = smaller file (64kbps)
+        "--postprocessor-args",
+        "ffmpeg:-ac 1 -ar 16000", // Mono 16kHz (Whisper optimal)
+        "-o",
+        `${outputBase}.%(ext)s`,
+        "--no-playlist",
+        "--print",
+        "after_move:filepath",
+        "--print",
+        "%(title)s|||%(duration_string)s",
+        videoUrl,
+      ];
+
+      // Use full path to yt-dlp (winget installation location)
+      const ytdlpPath: string =
+        globalThis.process?.env?.YTDLP_PATH ||
+        "C:\\Users\\nubis\\AppData\\Local\\Microsoft\\WinGet\\Links\\yt-dlp.exe";
+
+      console.log(
+        `[YouTubeDownloader] Running: ${ytdlpPath} ${args.join(" ")}`
+      );
+
+      const childProcess = spawn(ytdlpPath, args);
+
+      let stdout = "";
+      let stderr = "";
+
+      childProcess.stdout.on("data", (data: Buffer) => {
+        stdout += data.toString();
+      });
+
+      childProcess.stderr.on("data", (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      childProcess.on("close", (code: number | null) => {
+        if (code === 0) {
+          // Parse output - first line is filepath, second is title|||duration
+          const lines = stdout.trim().split("\n");
+          const actualFilePath = lines[0] || outputPath;
+          const metaLine = lines[1] || "";
+          const parts = metaLine.split("|||");
+          const title = parts[0];
+          const duration = parts[1];
+
+          console.log(`[YouTubeDownloader] Output file: ${actualFilePath}`);
+
+          resolve({
+            success: true,
+            audioPath: actualFilePath,
+            title: title || "Nieznany tytuł",
+            duration: duration || "0:00",
+          });
+        } else {
+          console.error("[YouTubeDownloader] yt-dlp stderr:", stderr);
+
+          // Check for common errors
+          if (
+            stderr.includes("not found") ||
+            stderr.includes("nie odnaleziono")
+          ) {
+            resolve({
+              success: false,
+              error:
+                "yt-dlp nie jest zainstalowany. Zainstaluj go poleceniem: pip install yt-dlp",
+            });
+          } else if (stderr.includes("File is larger than max-filesize")) {
+            resolve({
+              success: false,
+              error:
+                "Plik audio jest zbyt duży (max 25MB). Wybierz krótsze wideo.",
+            });
+          } else {
+            resolve({
+              success: false,
+              error: `Błąd pobierania: ${stderr.slice(0, 200)}`,
+            });
+          }
+        }
+      });
+
+      childProcess.on("error", (err: Error & { code?: string }) => {
+        if (err.code === "ENOENT") {
+          resolve({
+            success: false,
+            error:
+              "yt-dlp nie jest zainstalowany. Zainstaluj go poleceniem: pip install yt-dlp",
+          });
+        } else {
+          resolve({
+            success: false,
+            error: `Błąd uruchomienia yt-dlp: ${err.message}`,
+          });
+        }
+      });
+    });
+  }
+
+  async transcribeAndAnalyze(
+    audioPath: string,
+    videoId: string,
+    videoTitle: string,
+    videoUrl: string
+  ): Promise<TranscriptionWithAnalysis> {
+    if (!this.openai) {
+      throw new Error("OpenAI not initialized");
+    }
+
+    try {
+      console.log(`[YouTubeDownloader] Transcribing: ${audioPath}`);
+
+      // Read audio file
+      const audioBuffer = readFileSync(audioPath);
+      const fileSizeMB = (audioBuffer.length / 1024 / 1024).toFixed(2);
+      console.log(`[YouTubeDownloader] Audio file size: ${fileSizeMB}MB`);
+
+      // Transcribe with Whisper using fs.createReadStream
+      const { createReadStream } = await import("node:fs");
+      const audioStream = createReadStream(audioPath);
+
+      const transcription = await this.openai.audio.transcriptions.create({
+        file: audioStream as unknown as File,
+        model: "whisper-1",
+        language: "pl",
+        response_format: "text",
+      });
+
+      const rawTranscript = transcription as unknown as string;
+
+      if (!rawTranscript || rawTranscript.trim().length === 0) {
+        return {
+          success: false,
+          rawTranscript: "",
+          formattedTranscript: "",
+          segments: [],
+          summary: {
+            averageTension: 0,
+            dominantSentiment: "neutral",
+            overallCredibility: 0,
+            overallCredibilityEmoji: "🔴",
+            speakerCount: 0,
+            duration: "0:00",
+          },
+          metadata: { videoId, videoTitle, videoUrl },
+          error: "Nie udało się rozpoznać mowy w nagraniu",
+        };
+      }
+
+      // Correct transcription errors
+      const correctedTranscript = await this.correctTranscript(rawTranscript);
+      console.log("[YouTubeDownloader] Transcript corrected");
+
+      // Analyze with GPT-4
+      const analysis = await this.analyzeTranscript(correctedTranscript);
+
+      // Format output as Markdown for export
+      const formattedTranscript = this.formatTranscriptMarkdown(
+        correctedTranscript,
+        analysis.segments,
+        analysis.summary,
+        videoTitle,
+        videoUrl
+      );
+
+      // Cleanup temp file
+      try {
+        unlinkSync(audioPath);
+      } catch {
+        /* ignore cleanup errors */
+      }
+
+      return {
+        success: true,
+        rawTranscript,
+        formattedTranscript,
+        segments: analysis.segments,
+        summary: analysis.summary,
+        metadata: { videoId, videoTitle, videoUrl },
+      };
+    } catch (error) {
+      console.error("[YouTubeDownloader] Transcription error:", error);
+
+      // Cleanup temp file
+      try {
+        unlinkSync(audioPath);
+      } catch {
+        /* ignore cleanup errors */
+      }
+
+      return {
+        success: false,
+        rawTranscript: "",
+        formattedTranscript: "",
+        segments: [],
+        summary: {
+          averageTension: 0,
+          dominantSentiment: "neutral",
+          overallCredibility: 0,
+          overallCredibilityEmoji: "🔴",
+          speakerCount: 0,
+          duration: "0:00",
+        },
+        metadata: { videoId, videoTitle, videoUrl },
+        error: error instanceof Error ? error.message : "Błąd transkrypcji",
+      };
+    }
+  }
+
+  private async correctTranscript(rawTranscript: string): Promise<string> {
+    if (!this.openai) throw new Error("OpenAI not initialized");
+
+    console.log("[YouTubeDownloader] Correcting transcript errors...");
+
+    const correctionPrompt = `Jesteś korektorem transkrypcji sesji rady miejskiej/gminnej. 
+
+ZADANIE: Popraw błędy w transkrypcji, zachowując oryginalny kontekst i sens wypowiedzi.
+
+ZASADY:
+1. Poprawiaj TYLKO oczywiste błędy transkrypcji (przekręcone słowa, literówki)
+2. Poprawiaj błędy stylistyczne (interpunkcja, wielkie litery na początku zdań)
+3. NIE zmieniaj sensu wypowiedzi
+4. NIE dodawaj własnych treści
+5. NIE usuwaj fragmentów
+6. Zachowaj strukturę i podział na akapity
+7. Poprawiaj typowe błędy ASR: "rady" zamiast "raty", "sesja" zamiast "sesję" itp.
+
+Zwróć TYLKO poprawiony tekst, bez komentarzy.`;
+
+    const response = await this.openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: correctionPrompt },
+        { role: "user", content: rawTranscript.slice(0, 30000) },
+      ],
+      temperature: 0.1,
+    });
+
+    return response.choices[0]?.message?.content || rawTranscript;
+  }
+
+  private async analyzeTranscript(transcript: string): Promise<{
+    segments: TranscriptSegment[];
+    summary: {
+      averageTension: number;
+      dominantSentiment: string;
+      overallCredibility: number;
+      overallCredibilityEmoji: string;
+      speakerCount: number;
+      duration: string;
+    };
+  }> {
+    if (!this.openai) throw new Error("OpenAI not initialized");
+
+    const systemPrompt = `Jesteś ekspertem analizy lingwistycznej sesji rady miejskiej/gminnej. Przeanalizuj transkrypcję i zwróć szczegółową analizę w formacie JSON.
+
+Dla KAŻDEJ wypowiedzi określ:
+1. **speaker** - identyfikuj rozmówców: "Przewodniczący", "Radny 1", "Radny 2", "Burmistrz", "Skarbnik" itp.
+2. **sentiment** - "positive", "neutral", lub "negative"
+3. **emotion** - główna emocja
+4. **emotionEmoji** - emoji
+5. **tension** - napięcie 1-10
+6. **credibility** - wiarygodność 0-100%
+7. **credibilityEmoji** - emoji: 90-100%=✅, 70-89%=🟢, 50-69%=🟡, 30-49%=⚠️, 0-29%=🔴
+
+Odpowiedz TYLKO w formacie JSON:
+{
+  "segments": [
+    {
+      "timestamp": "00:00:00",
+      "speaker": "Przewodniczący",
+      "text": "tekst wypowiedzi",
+      "sentiment": "neutral",
+      "emotion": "spokój",
+      "emotionEmoji": "🙂",
+      "tension": 2,
+      "credibility": 95,
+      "credibilityEmoji": "✅"
+    }
+  ],
+  "summary": {
+    "averageTension": 3.5,
+    "dominantSentiment": "neutral",
+    "overallCredibility": 85,
+    "overallCredibilityEmoji": "🟢",
+    "speakerCount": 5,
+    "duration": "1:32:00"
+  }
+}`;
+
+    const response = await this.openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: `Przeanalizuj transkrypcję sesji rady:\n\n${transcript.slice(
+            0,
+            15000
+          )}`,
+        },
+      ],
+      temperature: 0.3,
+      response_format: { type: "json_object" },
+    });
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) {
+      throw new Error("Brak odpowiedzi od GPT-4");
+    }
+
+    try {
+      return JSON.parse(content);
+    } catch {
+      return {
+        segments: [
+          {
+            timestamp: "00:00:00",
+            speaker: "Mówca",
+            text: transcript,
+            sentiment: "neutral",
+            emotion: "neutralny",
+            emotionEmoji: "😐",
+            tension: 5,
+            credibility: 50,
+            credibilityEmoji: "🟡",
+          },
+        ],
+        summary: {
+          averageTension: 5,
+          dominantSentiment: "neutral",
+          overallCredibility: 50,
+          overallCredibilityEmoji: "🟡",
+          speakerCount: 1,
+          duration: "0:00",
+        },
+      };
+    }
+  }
+
+  private formatTranscriptMarkdown(
+    correctedTranscript: string,
+    segments: TranscriptSegment[],
+    summary: {
+      averageTension: number;
+      dominantSentiment: string;
+      overallCredibility: number;
+      overallCredibilityEmoji: string;
+      speakerCount: number;
+      duration: string;
+    },
+    videoTitle: string,
+    videoUrl: string
+  ): string {
+    const date = new Date().toLocaleDateString("pl-PL", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    let md = `# Transkrypcja Sesji Rady\n\n`;
+    md += `**Tytuł:** ${videoTitle}\n\n`;
+    md += `**Źródło:** [YouTube](${videoUrl})\n\n`;
+    md += `**Data transkrypcji:** ${date}\n\n`;
+    md += `---\n\n`;
+
+    md += `## Podsumowanie\n\n`;
+    md += `| Parametr | Wartość |\n`;
+    md += `|----------|--------|\n`;
+    md += `| Czas trwania | ${summary.duration} |\n`;
+    md += `| Liczba mówców | ${summary.speakerCount} |\n`;
+    md += `| Średnie napięcie | ${
+      summary.averageTension?.toFixed(1) || "N/A"
+    }/10 |\n`;
+    md += `| Dominujący sentyment | ${summary.dominantSentiment} |\n`;
+    md += `| Ogólna wiarygodność | ${summary.overallCredibility}% ${summary.overallCredibilityEmoji} |\n\n`;
+
+    md += `---\n\n`;
+    md += `## Pełna transkrypcja\n\n`;
+    md += `${correctedTranscript}\n\n`;
+
+    md += `---\n\n`;
+    md += `## Analiza wypowiedzi\n\n`;
+
+    for (const seg of segments) {
+      md += `### ${seg.speaker}\n\n`;
+      md += `> ${seg.text}\n\n`;
+      md += `- **Sentyment:** ${seg.sentiment} ${seg.emotionEmoji}\n`;
+      md += `- **Emocja:** ${seg.emotion}\n`;
+      md += `- **Napięcie:** ${seg.tension}/10\n`;
+      md += `- **Wiarygodność:** ${seg.credibility}% ${seg.credibilityEmoji}\n\n`;
+    }
+
+    md += `---\n\n`;
+    md += `*Dokument wygenerowany automatycznie przez Asystent Radnego*\n`;
+
+    return md;
+  }
+
+  private extractVideoId(url: string): string | null {
+    const patterns = [
+      /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
+      /^([a-zA-Z0-9_-]{11})$/,
+    ];
+
+    for (const pattern of patterns) {
+      const match = url.match(pattern);
+      if (match) return match[1];
+    }
+    return null;
+  }
+}

@@ -8,14 +8,16 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "lint": "eslint .",
+    "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@aasystent-radnego/shared": "*",
+    "@supabase/supabase-js": "^2.90.1",
     "bullmq": "^5.36.2",
     "dotenv": "^16.4.5",
-    "ioredis": "^5.4.1"
+    "ioredis": "^5.4.1",
+    "openai": "^6.15.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

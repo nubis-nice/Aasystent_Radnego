@@ -1,0 +1,241 @@
+import { supabase } from "@/lib/supabase/client";
+import { AIErrorHandler } from "@/lib/errors/ai-error-handler";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
+// Retry configuration
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 1000; // 1 second
+
+async function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+interface SendMessageRequest {
+  message: string;
+  conversationId?: string;
+  includeDocuments?: boolean;
+  includeMunicipalData?: boolean;
+  temperature?: number;
+}
+
+interface Citation {
+  documentId?: string;
+  documentTitle: string;
+  page?: number;
+  text: string;
+  relevanceScore?: number;
+}
+
+interface Message {
+  id: string;
+  conversationId: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  citations: Citation[];
+  createdAt: string;
+}
+
+interface SendMessageResponse {
+  conversationId: string;
+  message: Message;
+  relatedDocuments?: Array<{
+    id: string;
+    title: string;
+    relevanceScore: number;
+  }>;
+}
+
+interface Conversation {
+  id: string;
+  userId: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastMessage?: string | null;
+  lastMessageAt?: string;
+  lastMessageRole?: string | null;
+  messageCount?: number;
+}
+
+async function getAuthToken(): Promise<string | null> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  return session?.access_token || null;
+}
+
+export async function sendMessage(
+  request: SendMessageRequest
+): Promise<SendMessageResponse> {
+  const token = await getAuthToken();
+
+  if (!token) {
+    const error = new Error(
+      "Nie jesteś zalogowany. Zaloguj się aby korzystać z czatu."
+    );
+    throw error;
+  }
+
+  // Retry logic with exponential backoff
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(`${API_URL}/api/chat/message`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(request),
+        signal: AbortSignal.timeout(30000), // 30 second timeout
+      });
+
+      if (!response.ok) {
+        const errorData = await response
+          .json()
+          .catch(() => ({ error: "Unknown error" }));
+
+        // Obsługa specjalnych błędów API (quota, invalid key)
+        if (
+          errorData.error === "QUOTA_EXCEEDED" ||
+          errorData.error === "INVALID_API_KEY"
+        ) {
+          const apiError = new Error(errorData.message) as Error & {
+            code: string;
+            details: string;
+            billingUrl?: string;
+            settingsUrl?: string;
+          };
+          (apiError as any).code = errorData.error;
+          (apiError as any).details = errorData.details;
+          (apiError as any).billingUrl = errorData.billingUrl;
+          (apiError as any).settingsUrl = errorData.settingsUrl;
+          throw apiError;
+        }
+
+        const errorMessage =
+          errorData.message ||
+          errorData.error ||
+          `HTTP ${response.status}: ${response.statusText}`;
+
+        // Don't retry on client errors (4xx)
+        if (response.status >= 400 && response.status < 500) {
+          throw new Error(errorMessage);
+        }
+
+        // Retry on server errors (5xx)
+        lastError = new Error(errorMessage);
+
+        if (attempt < MAX_RETRIES - 1) {
+          await sleep(RETRY_DELAY * Math.pow(2, attempt)); // Exponential backoff
+          continue;
+        }
+      } else {
+        return response.json();
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error("Unknown error");
+
+      // Don't retry on network errors after first attempt
+      if (error instanceof TypeError && error.message === "Failed to fetch") {
+        throw error; // Immediate fail on network errors
+      }
+
+      // Retry on timeout
+      if (
+        attempt < MAX_RETRIES - 1 &&
+        error instanceof Error &&
+        error.name === "TimeoutError"
+      ) {
+        await sleep(RETRY_DELAY * Math.pow(2, attempt));
+        continue;
+      }
+
+      if (attempt === MAX_RETRIES - 1) {
+        throw lastError;
+      }
+    }
+  }
+
+  throw lastError || new Error("Failed to send message after retries");
+}
+
+export async function getConversations(): Promise<Conversation[]> {
+  const token = await getAuthToken();
+
+  if (!token) {
+    throw new Error("Not authenticated");
+  }
+
+  const response = await fetch(`${API_URL}/api/chat/conversations`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to fetch conversations");
+  }
+
+  const data = await response.json();
+  return data.conversations;
+}
+
+export async function getConversation(id: string): Promise<{
+  conversation: Conversation & { messages: Message[] };
+}> {
+  const token = await getAuthToken();
+
+  if (!token) {
+    throw new Error("Not authenticated");
+  }
+
+  const response = await fetch(`${API_URL}/api/chat/conversation/${id}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to fetch conversation");
+  }
+
+  return response.json();
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  const token = await getAuthToken();
+
+  if (!token) {
+    throw new Error("Not authenticated");
+  }
+
+  try {
+    const response = await fetch(`${API_URL}/api/chat/conversation/${id}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      signal: AbortSignal.timeout(10000), // 10 second timeout
+    });
+
+    if (!response.ok) {
+      const error = await response
+        .json()
+        .catch(() => ({ error: "Unknown error" }));
+      throw new Error(error.error || "Failed to delete conversation");
+    }
+  } catch (error) {
+    console.error("Delete conversation error:", error);
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new Error("Request timeout - sprawdź połączenie z serwerem");
+    }
+    throw error;
+  }
+}

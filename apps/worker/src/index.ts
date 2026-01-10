@@ -1,8 +1,12 @@
-import 'dotenv/config';
-import { type Job, Queue, Worker } from 'bullmq';
-import { Redis } from 'ioredis';
+import "dotenv/config";
+import { type Job, Queue, Worker } from "bullmq";
+import { Redis } from "ioredis";
+import { processUserJob, type UserJobData } from "./handlers/user-jobs.js";
+import { processExtraction } from "./jobs/extraction.js";
+import { processAnalysis } from "./jobs/analysis.js";
+import { processRelations } from "./jobs/relations.js";
 
-const redisHost = process.env.REDIS_HOST ?? 'localhost';
+const redisHost = process.env.REDIS_HOST ?? "localhost";
 const redisPort = Number(process.env.REDIS_PORT ?? 6379);
 
 const connection = new Redis({
@@ -11,30 +15,89 @@ const connection = new Redis({
   maxRetriesPerRequest: null,
 });
 
-export const documentQueue = new Queue('document-jobs', { connection });
+// Kolejki
+export const documentQueue = new Queue("document-jobs", { connection });
+export const userQueue = new Queue("user-jobs", { connection });
 
-const worker = new Worker(
-  'document-jobs',
+// Worker dla zadań dokumentów
+const documentWorker = new Worker(
+  "document-jobs",
   async (job: Job) => {
-    // MVP: placeholder. W kolejnych krokach: ingest -> ekstrakcja -> analiza -> embedding.
-    return {
-      ok: true,
-      jobName: job.name,
-      payload: job.data,
-    };
+    console.log(`[document-worker] Processing job ${job.name} (${job.id})`);
+
+    switch (job.name) {
+      case "extraction":
+        return await processExtraction(job);
+
+      case "analysis":
+        return await processAnalysis(job);
+
+      case "relations":
+        return await processRelations(job);
+
+      default:
+        throw new Error(`Unknown job type: ${job.name}`);
+    }
+  },
+  {
+    connection,
+    concurrency: 2, // Maksymalnie 2 zadania równolegle (OpenAI rate limits)
+    limiter: {
+      max: 10, // Maksymalnie 10 zadań
+      duration: 60000, // na minutę
+    },
+  }
+);
+
+// Worker dla zadań użytkowników
+const userWorker = new Worker(
+  "user-jobs",
+  async (job: Job<UserJobData>) => {
+    console.log(`[user-worker] Processing job ${job.name} (${job.id})`);
+    return await processUserJob(job);
   },
   { connection }
 );
 
-worker.on('completed', (job: Job, result: unknown) => {
-  // eslint-disable-next-line no-console
-  console.log('[worker] completed', job.id, result);
+// Event handlers dla document worker
+documentWorker.on("completed", (job: Job, result: unknown) => {
+  console.log(`[document-worker] ✅ Completed ${job.name} (${job.id})`);
+  console.log(`[document-worker] Result:`, result);
 });
 
-worker.on('failed', (job: Job | undefined, err: Error) => {
-  // eslint-disable-next-line no-console
-  console.error('[worker] failed', job?.id, err);
+documentWorker.on("failed", (job: Job | undefined, err: Error) => {
+  console.error(`[document-worker] ❌ Failed ${job?.name} (${job?.id})`);
+  console.error(`[document-worker] Error:`, err.message);
 });
 
-// eslint-disable-next-line no-console
-console.log(`[worker] started (redis=${redisHost}:${redisPort})`);
+documentWorker.on(
+  "progress",
+  (job: Job, progress: number | string | object | boolean) => {
+    console.log(
+      `[document-worker] 📊 Progress ${job.name} (${job.id}): ${progress}%`
+    );
+  }
+);
+
+// Event handlers dla user worker
+userWorker.on("completed", (job: Job, result: unknown) => {
+  console.log(`[user-worker] ✅ Completed ${job.name} (${job.id})`);
+});
+
+userWorker.on("failed", (job: Job | undefined, err: Error) => {
+  console.error(`[user-worker] ❌ Failed ${job?.name} (${job?.id})`);
+  console.error(`[user-worker] Error:`, err.message);
+});
+
+// Graceful shutdown
+process.on("SIGTERM", async () => {
+  console.log("[worker] SIGTERM received, closing workers...");
+  await documentWorker.close();
+  await userWorker.close();
+  await connection.quit();
+  process.exit(0);
+});
+
+console.log(`[worker] 🚀 Started (redis=${redisHost}:${redisPort})`);
+console.log("[worker] 📋 Queues: document-jobs, user-jobs");
+console.log("[worker] 🔧 Jobs: extraction, analysis, relations");

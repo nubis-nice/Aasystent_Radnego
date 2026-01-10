@@ -1,0 +1,1 @@
+{"root":["./src/index.ts","./src/middleware/auth.ts","./src/routes/auth.ts","./src/routes/chat.ts","./src/routes/data-sources.ts","./src/routes/documents.ts","./src/routes/test-api.ts","./src/services/scraper-v2.ts","./src/services/scraper.ts"],"errors":true,"version":"5.9.3"}
