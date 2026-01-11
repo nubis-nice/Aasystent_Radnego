@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
-import { scrapeDataSourceV2 } from "../services/scraper-v2.js";
+import { intelligentScrapeDataSource } from "../services/intelligent-scraper.js";
+import { semanticDocumentSearch } from "../services/semantic-document-discovery.js";
 import OpenAI from "openai";
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 export async function dataSourcesRoutes(fastify) {
@@ -27,20 +28,14 @@ export async function dataSourcesRoutes(fastify) {
                     .from("scraped_content")
                     .select("*", { count: "exact", head: true })
                     .eq("source_id", source.id);
-                // Pobierz IDs scraped_content dla tego źródła
-                const { data: scrapedIds } = await supabase
-                    .from("scraped_content")
-                    .select("id")
-                    .eq("source_id", source.id);
-                let docsCount = 0;
-                if (scrapedIds && scrapedIds.length > 0) {
-                    const ids = scrapedIds.map((s) => s.id);
-                    const { count } = await supabase
-                        .from("processed_documents")
-                        .select("*", { count: "exact", head: true })
-                        .in("scraped_content_id", ids);
-                    docsCount = count || 0;
-                }
+                // Licz dokumenty przez source_url (zawiera URL źródła)
+                // Użyj LIKE pattern dla URL bazowego
+                const baseUrlPattern = `${source.url}%`;
+                const { count: docsCount } = await supabase
+                    .from("processed_documents")
+                    .select("*", { count: "exact", head: true })
+                    .eq("user_id", userId)
+                    .like("source_url", baseUrlPattern);
                 const { data: lastLog } = await supabase
                     .from("scraping_logs")
                     .select("status, created_at")
@@ -150,7 +145,7 @@ export async function dataSourcesRoutes(fastify) {
                 return reply.status(401).send({ error: "Unauthorized" });
             }
             const { id } = request.params;
-            const { name, base_url, scrape_config, schedule_cron, is_active } = request.body;
+            const { name, base_url, source_type, scrape_config, schedule_cron, is_active, } = request.body;
             // Sprawdź czy źródło należy do użytkownika
             const { data: existing } = await supabase
                 .from("data_sources")
@@ -169,10 +164,21 @@ export async function dataSourcesRoutes(fastify) {
                 dbUpdates.name = name;
             if (base_url !== undefined)
                 dbUpdates.url = base_url;
+            if (source_type !== undefined)
+                dbUpdates.type = source_type;
             if (scrape_config !== undefined)
                 dbUpdates.scraping_config = scrape_config;
-            if (schedule_cron !== undefined)
-                dbUpdates.scraping_frequency = schedule_cron;
+            if (schedule_cron !== undefined) {
+                // Mapuj cron expression na wartość z constraint CHECK
+                const cronToFrequency = {
+                    "0 * * * *": "hourly",
+                    "0 6 * * *": "daily",
+                    "0 6 * * 0": "weekly",
+                    "0 6 1 * *": "monthly",
+                };
+                dbUpdates.scraping_frequency =
+                    cronToFrequency[schedule_cron] || "daily";
+            }
             if (is_active !== undefined)
                 dbUpdates.scraping_enabled = is_active;
             const { data: source, error } = await supabase
@@ -182,10 +188,10 @@ export async function dataSourcesRoutes(fastify) {
                 .select()
                 .single();
             if (error) {
-                request.log.error("Error updating data source:", error);
+                request.log.error("Error updating data source:", JSON.stringify(error));
                 return reply
                     .status(500)
-                    .send({ error: "Failed to update data source" });
+                    .send({ error: `Failed to update: ${error.message}` });
             }
             return reply.send({ source });
         }
@@ -247,27 +253,117 @@ export async function dataSourcesRoutes(fastify) {
             if (!source) {
                 return reply.status(404).send({ error: "Source not found" });
             }
-            // Uruchom scraping synchronicznie (w przyszłości przez BullMQ)
-            request.log.info({ sourceId: id }, "Starting scraping v2");
-            const result = await scrapeDataSourceV2(id, userId);
+            // Uruchom inteligentny scraping z analizą LLM
+            request.log.info({ sourceId: id }, "Starting intelligent scrape with LLM analysis");
+            const result = await intelligentScrapeDataSource(id, userId, {
+                councilLocation: source.metadata?.councilLocation || "Drawno",
+                enableLLMAnalysis: true,
+                incrementalMode: true,
+            });
             request.log.info({
                 sourceId: id,
                 success: result.success,
-                pagesScraped: result.pagesScraped,
+                pagesAnalyzed: result.pagesAnalyzed,
                 documentsProcessed: result.documentsProcessed,
-            }, "Scraping completed");
+                newDocuments: result.newDocuments,
+                llmAnalyses: result.llmAnalyses,
+            }, "Intelligent scrape completed");
             return reply.send({
-                message: result.success ? "Scraping completed" : "Scraping failed",
+                message: result.success
+                    ? "Intelligent scrape completed"
+                    : "Intelligent scrape failed",
                 source_id: id,
                 status: result.success ? "success" : "error",
-                pages_scraped: result.pagesScraped,
+                site_map_size: result.siteMap.length,
+                pages_analyzed: result.pagesAnalyzed,
                 documents_found: result.documentsFound,
                 documents_processed: result.documentsProcessed,
+                new_documents: result.newDocuments,
+                skipped_documents: result.skippedDocuments,
+                llm_analyses: result.llmAnalyses,
                 errors: result.errors,
+                processing_time_ms: result.processingTimeMs,
             });
         }
         catch (error) {
             request.log.error("Trigger scraping error:", error);
+            return reply.status(500).send({ error: "Internal server error" });
+        }
+    });
+    // POST /api/data-sources/:id/semantic-search - Semantic search w źródle danych
+    fastify.post("/data-sources/:id/semantic-search", async (request, reply) => {
+        try {
+            const userId = request.headers["x-user-id"];
+            if (!userId) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const { id } = request.params;
+            const { query, maxResults, minRelevance, deepCrawl, extractPDFs, enableIntelligentScraping, minResultsBeforeScraping, } = request.body;
+            if (!query || query.trim().length === 0) {
+                return reply.status(400).send({ error: "Query is required" });
+            }
+            // Sprawdź czy źródło należy do użytkownika
+            const { data: source } = await supabase
+                .from("data_sources")
+                .select("*")
+                .eq("id", id)
+                .eq("user_id", userId)
+                .single();
+            if (!source) {
+                return reply.status(404).send({ error: "Source not found" });
+            }
+            request.log.info({ sourceId: id, query, enableIntelligentScraping }, "Starting semantic document search");
+            const result = await semanticDocumentSearch(userId, {
+                query,
+                sourceId: id,
+                maxResults: maxResults || 20,
+                minRelevance: minRelevance || 0.3,
+                deepCrawl: deepCrawl || false,
+                extractPDFs: extractPDFs || false,
+                enableIntelligentScraping: enableIntelligentScraping ?? true, // Domyślnie włączone
+                minResultsBeforeScraping: minResultsBeforeScraping || 3,
+            });
+            request.log.info({
+                sourceId: id,
+                success: result.success,
+                totalFound: result.totalFound,
+                newDocumentsProcessed: result.newDocumentsProcessed,
+            }, "Semantic search completed");
+            return reply.send(result);
+        }
+        catch (error) {
+            request.log.error("Semantic search error:", String(error));
+            return reply.status(500).send({ error: "Internal server error" });
+        }
+    });
+    // POST /api/data-sources/semantic-search - Semantic search we wszystkich źródłach
+    fastify.post("/data-sources/semantic-search", async (request, reply) => {
+        try {
+            const userId = request.headers["x-user-id"];
+            if (!userId) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const { query, maxResults, minRelevance, deepCrawl, extractPDFs } = request.body;
+            if (!query || query.trim().length === 0) {
+                return reply.status(400).send({ error: "Query is required" });
+            }
+            request.log.info({ query }, "Starting global semantic document search");
+            const result = await semanticDocumentSearch(userId, {
+                query,
+                maxResults: maxResults || 20,
+                minRelevance: minRelevance || 0.3,
+                deepCrawl: deepCrawl || false,
+                extractPDFs: extractPDFs || false,
+            });
+            request.log.info({
+                success: result.success,
+                totalFound: result.totalFound,
+                newDocumentsProcessed: result.newDocumentsProcessed,
+            }, "Global semantic search completed");
+            return reply.send(result);
+        }
+        catch (error) {
+            request.log.error("Global semantic search error:", String(error));
             return reply.status(500).send({ error: "Internal server error" });
         }
     });
@@ -345,24 +441,20 @@ export async function dataSourcesRoutes(fastify) {
                 acc[doc.document_type] = (acc[doc.document_type] || 0) + 1;
                 return acc;
             }, {});
-            // Pobierz IDs źródeł użytkownika
+            // Pobierz źródła użytkownika z datą ostatniego scrapingu
             const { data: userSources } = await supabase
                 .from("data_sources")
-                .select("id")
-                .eq("user_id", userId);
+                .select("id, last_scraped_at")
+                .eq("user_id", userId)
+                .order("last_scraped_at", { ascending: false, nullsFirst: false });
             const sourceIds = (userSources || []).map((s) => s.id);
-            // Ostatni scraping
+            // Ostatni scraping - pobierz z last_scraped_at źródeł
             let lastScrapeDate = null;
             let errorsCount = 0;
+            // Znajdź najnowszą datę scrapingu ze źródeł
+            const lastScrapedSource = (userSources || []).find((s) => s.last_scraped_at);
+            lastScrapeDate = lastScrapedSource?.last_scraped_at || null;
             if (sourceIds.length > 0) {
-                const { data: lastLog } = await supabase
-                    .from("scraping_logs")
-                    .select("created_at")
-                    .in("source_id", sourceIds)
-                    .order("created_at", { ascending: false })
-                    .limit(1)
-                    .single();
-                lastScrapeDate = lastLog?.created_at || null;
                 // Błędy w ostatnich 24h
                 const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
                 const { count } = await supabase
@@ -440,11 +532,26 @@ export async function dataSourcesRoutes(fastify) {
                     publish_date: "2025-11-15",
                 },
             ];
-            // Inicjalizuj OpenAI do generowania embeddingów
-            const openaiApiKey = process.env.OPENAI_API_KEY;
+            // Pobierz konfigurację OpenAI z bazy danych (api_configurations)
+            const { data: apiConfig } = await supabase
+                .from("api_configurations")
+                .select("*")
+                .eq("user_id", userId)
+                .eq("provider", "openai")
+                .eq("is_active", true)
+                .eq("is_default", true)
+                .single();
             let openai = null;
-            if (openaiApiKey && openaiApiKey !== "your_openai_api_key") {
-                openai = new OpenAI({ apiKey: openaiApiKey });
+            if (apiConfig) {
+                const openaiApiKey = Buffer.from(apiConfig.api_key_encrypted, "base64").toString("utf-8");
+                openai = new OpenAI({
+                    apiKey: openaiApiKey,
+                    baseURL: apiConfig.base_url || undefined,
+                });
+                request.log.info("Using OpenAI API key from database");
+            }
+            else {
+                request.log.warn("No OpenAI API key found in database for user");
             }
             let created = 0;
             for (const doc of testDocuments) {
@@ -470,7 +577,7 @@ export async function dataSourcesRoutes(fastify) {
                             model: "text-embedding-3-small",
                             input: `${doc.title}\n\n${doc.content}`,
                         });
-                        embedding = embeddingResponse.data[0].embedding;
+                        embedding = embeddingResponse.data[0]?.embedding ?? null;
                     }
                     catch (e) {
                         request.log.warn("Failed to generate embedding:", e);

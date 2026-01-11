@@ -69,6 +69,7 @@ export class YouTubeSessionService {
 
     this.openai = new OpenAI({
       apiKey: decodedApiKey,
+      baseURL: config.base_url || undefined,
     });
   }
 

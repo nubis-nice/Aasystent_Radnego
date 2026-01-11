@@ -268,12 +268,10 @@ function FormattedDocumentContent({ content }: { content: string }) {
         </div>
       );
     } else {
-      // Fallback - jeśli nie znaleziono punktów, wyświetl jako tekst
+      // Fallback - formatuj tekst jako czytelny dokument
       elements.push(
         <div key="content-fallback" className="prose prose-slate max-w-none">
-          <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">
-            {text}
-          </p>
+          {formatPlainText(text)}
         </div>
       );
     }
@@ -281,8 +279,97 @@ function FormattedDocumentContent({ content }: { content: string }) {
     return elements;
   };
 
+  // Funkcja formatująca zwykły tekst na czytelny dokument
+  const formatPlainText = (text: string) => {
+    // Podziel na akapity (podwójne nowe linie lub --- separatory stron)
+    const paragraphs = text.split(/(?:\n\s*\n|---\s*Strona\s*\d+\s*---)/);
+
+    return paragraphs
+      .map((paragraph, idx) => {
+        const trimmed = paragraph.trim();
+        if (!trimmed) return null;
+
+        // Sprawdź czy to nagłówek (krótki tekst zakończony dwukropkiem lub wielkie litery)
+        const isHeader =
+          (trimmed.length < 100 && trimmed.endsWith(":")) ||
+          (trimmed.length < 80 &&
+            trimmed === trimmed.toUpperCase() &&
+            trimmed.length > 3);
+
+        // Sprawdź czy to lista (zaczyna się od myślnika, gwiazdki lub numeru)
+        const listItems = trimmed
+          .split("\n")
+          .filter(
+            (line) => /^\s*[-•*]\s+/.test(line) || /^\s*\d+[.)]\s+/.test(line)
+          );
+        const isList = listItems.length > 1;
+
+        // Sprawdź czy to separator strony
+        const isPageSeparator = /^---\s*Strona\s*\d+\s*---$/i.test(trimmed);
+
+        if (isPageSeparator) {
+          return (
+            <div key={idx} className="my-6 flex items-center gap-4">
+              <div className="flex-1 h-px bg-slate-300"></div>
+              <span className="text-xs text-slate-400 font-medium">
+                {trimmed.replace(/---/g, "").trim()}
+              </span>
+              <div className="flex-1 h-px bg-slate-300"></div>
+            </div>
+          );
+        }
+
+        if (isHeader) {
+          return (
+            <h3
+              key={idx}
+              className="text-lg font-bold text-slate-800 mt-6 mb-3 pb-2 border-b border-slate-200"
+            >
+              {trimmed}
+            </h3>
+          );
+        }
+
+        if (isList) {
+          const lines = trimmed.split("\n");
+          return (
+            <ul key={idx} className="my-4 space-y-2 pl-4">
+              {lines.map((line, lineIdx) => {
+                const cleanLine = line
+                  .replace(/^\s*[-•*]\s+/, "")
+                  .replace(/^\s*\d+[.)]\s+/, "")
+                  .trim();
+                if (!cleanLine) return null;
+                return (
+                  <li
+                    key={lineIdx}
+                    className="text-slate-700 leading-relaxed pl-2 border-l-2 border-primary-300 text-justify"
+                  >
+                    {cleanLine}
+                  </li>
+                );
+              })}
+            </ul>
+          );
+        }
+
+        // Zwykły akapit - justowany z wcięciem
+        return (
+          <p
+            key={idx}
+            className="text-slate-700 leading-7 text-justify indent-8 my-4"
+          >
+            {trimmed}
+          </p>
+        );
+      })
+      .filter(Boolean);
+  };
+
   return (
-    <div className="document-content space-y-4">{parseDocument(content)}</div>
+    <div className="document-content space-y-4 font-serif">
+      {parseDocument(content)}
+    </div>
   );
 }
 

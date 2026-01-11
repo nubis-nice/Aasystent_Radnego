@@ -1,0 +1,884 @@
+/**
+ * Intelligent Scraper Service
+ * Zaawansowany scraper z analizą LLM, pełnym mapowaniem strony i inkrementalnym scrapingiem
+ */
+import { createClient } from "@supabase/supabase-js";
+import * as cheerio from "cheerio";
+import OpenAI from "openai";
+import crypto from "crypto";
+import { DocumentProcessor } from "./document-processor.js";
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
+// ============================================================================
+// DEFAULT CONFIG
+// ============================================================================
+const DEFAULT_CONFIG = {
+    maxPages: 100,
+    maxDepth: 5,
+    delayMs: 800,
+    enableLLMAnalysis: true,
+    councilLocation: "Drawno",
+    focusAreas: [
+        "sesje rady",
+        "kalendarz posiedzeń",
+        "materiały dla radnych",
+        "uchwały",
+        "protokoły",
+        "porządek obrad",
+        "projekty uchwał",
+        "interpelacje",
+        "zapytania radnych",
+    ],
+    incrementalMode: true,
+};
+// ============================================================================
+// INTELLIGENT SCRAPER CLASS
+// ============================================================================
+export class IntelligentScraper {
+    config;
+    baseUrl;
+    visitedUrls = new Set();
+    siteMap = new Map();
+    errors = [];
+    openai = null;
+    userId;
+    sourceId;
+    constructor(baseUrl, userId, sourceId, customConfig) {
+        this.baseUrl = this.normalizeUrl(baseUrl);
+        this.userId = userId;
+        this.sourceId = sourceId;
+        this.config = { ...DEFAULT_CONFIG, ...customConfig };
+    }
+    normalizeUrl(url) {
+        try {
+            const parsed = new URL(url);
+            return `${parsed.protocol}//${parsed.host}`;
+        }
+        catch {
+            return url;
+        }
+    }
+    async initializeOpenAI() {
+        const { data: apiConfig } = await supabase
+            .from("api_configurations")
+            .select("*")
+            .eq("user_id", this.userId)
+            .eq("is_default", true)
+            .eq("is_active", true)
+            .single();
+        if (apiConfig) {
+            const decodedApiKey = Buffer.from(apiConfig.api_key_encrypted, "base64").toString("utf-8");
+            this.openai = new OpenAI({
+                apiKey: decodedApiKey,
+                baseURL: apiConfig.base_url || undefined,
+            });
+        }
+        else if (process.env.OPENAI_API_KEY) {
+            this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        }
+    }
+    // ============================================================================
+    // PHASE 1: FULL SITE MAP GENERATION
+    // ============================================================================
+    async generateSiteMap() {
+        console.log(`[IntelligentScraper] Generating site map for: ${this.baseUrl}`);
+        const queue = [
+            { url: this.baseUrl, depth: 0 },
+        ];
+        while (queue.length > 0 && this.siteMap.size < this.config.maxPages) {
+            const { url, depth } = queue.shift();
+            if (this.visitedUrls.has(url) || depth > this.config.maxDepth) {
+                continue;
+            }
+            this.visitedUrls.add(url);
+            try {
+                const html = await this.fetchPage(url);
+                if (!html)
+                    continue;
+                const $ = cheerio.load(html);
+                const title = $("title").text().trim() || $("h1").first().text().trim() || url;
+                const links = this.extractLinks($, url);
+                const contentType = this.classifyPageType($, url, title);
+                const priority = this.calculatePriority(url, title, contentType);
+                const node = {
+                    url,
+                    title,
+                    depth,
+                    children: links,
+                    contentType,
+                    priority,
+                    contentHash: this.generateContentHash($.text()),
+                };
+                this.siteMap.set(url, node);
+                // Dodaj linki do kolejki z priorytetem
+                const prioritizedLinks = links
+                    .filter((link) => !this.visitedUrls.has(link))
+                    .map((link) => ({
+                    url: link,
+                    depth: depth + 1,
+                    priority: this.calculateUrlPriority(link),
+                }))
+                    .sort((a, b) => b.priority - a.priority);
+                for (const link of prioritizedLinks) {
+                    queue.push({ url: link.url, depth: link.depth });
+                }
+                await this.delay(this.config.delayMs);
+            }
+            catch (error) {
+                this.errors.push(`Site map error for ${url}: ${error instanceof Error ? error.message : "Unknown"}`);
+            }
+        }
+        console.log(`[IntelligentScraper] Site map generated: ${this.siteMap.size} pages`);
+        return Array.from(this.siteMap.values());
+    }
+    extractLinks($, currentUrl) {
+        const links = [];
+        $("a[href]").each((_, el) => {
+            const href = $(el).attr("href");
+            if (!href)
+                return;
+            try {
+                const absoluteUrl = new URL(href, currentUrl).href;
+                // Tylko linki z tej samej domeny
+                if (!absoluteUrl.startsWith(this.baseUrl))
+                    return;
+                // Pomiń pliki binarne (oprócz PDF)
+                const skipExtensions = [
+                    ".jpg",
+                    ".jpeg",
+                    ".png",
+                    ".gif",
+                    ".css",
+                    ".js",
+                    ".ico",
+                    ".svg",
+                    ".woff",
+                    ".woff2",
+                    ".mp3",
+                    ".mp4",
+                ];
+                if (skipExtensions.some((ext) => absoluteUrl.toLowerCase().endsWith(ext)))
+                    return;
+                // Pomiń anchory i query strings dla unikalności
+                const cleanUrl = absoluteUrl.split("#")[0].split("?")[0];
+                if (!links.includes(cleanUrl)) {
+                    links.push(cleanUrl);
+                }
+            }
+            catch {
+                // Ignoruj nieprawidłowe URLe
+            }
+        });
+        return links;
+    }
+    classifyPageType($, url, title) {
+        const urlLower = url.toLowerCase();
+        const titleLower = title.toLowerCase();
+        const bodyText = $("body").text().toLowerCase();
+        // Kalendarz
+        if (urlLower.includes("kalendarz") ||
+            titleLower.includes("kalendarz") ||
+            urlLower.includes("harmonogram") ||
+            titleLower.includes("harmonogram")) {
+            return "calendar";
+        }
+        // Sesje
+        if (urlLower.includes("sesj") ||
+            titleLower.includes("sesj") ||
+            urlLower.includes("posiedzeni") ||
+            titleLower.includes("posiedzeni")) {
+            return "session";
+        }
+        // Materiały dla radnych
+        if (urlLower.includes("material") ||
+            titleLower.includes("material") ||
+            urlLower.includes("radny") ||
+            titleLower.includes("radny") ||
+            bodyText.includes("materiały dla radnych") ||
+            bodyText.includes("projekty uchwał")) {
+            return "materials";
+        }
+        // Dokumenty
+        if (urlLower.includes("dokument") ||
+            urlLower.includes("uchwal") ||
+            urlLower.includes("protokol") ||
+            urlLower.includes("zarzadzeni") ||
+            $('a[href$=".pdf"]').length > 0) {
+            return "document";
+        }
+        return "page";
+    }
+    calculatePriority(url, title, contentType) {
+        let priority = 50;
+        // Priorytet bazowy na typie
+        const typePriorities = {
+            calendar: 90,
+            session: 85,
+            materials: 80,
+            document: 70,
+            page: 40,
+            unknown: 30,
+        };
+        priority = typePriorities[contentType];
+        // Bonus za słowa kluczowe
+        const urlLower = url.toLowerCase();
+        const titleLower = title.toLowerCase();
+        for (const focus of this.config.focusAreas) {
+            if (urlLower.includes(focus.toLowerCase()) ||
+                titleLower.includes(focus.toLowerCase())) {
+                priority += 10;
+            }
+        }
+        // Bonus za lokalizację
+        if (urlLower.includes(this.config.councilLocation.toLowerCase()) ||
+            titleLower.includes(this.config.councilLocation.toLowerCase())) {
+            priority += 15;
+        }
+        return Math.min(priority, 100);
+    }
+    calculateUrlPriority(url) {
+        const urlLower = url.toLowerCase();
+        let priority = 0;
+        // Słowa kluczowe zwiększające priorytet
+        const highPriorityKeywords = [
+            "sesj",
+            "posiedzeni",
+            "kalendarz",
+            "material",
+            "radny",
+            "uchwal",
+            "protokol",
+            "porządek",
+            "projekt",
+            "interpelacj",
+        ];
+        for (const keyword of highPriorityKeywords) {
+            if (urlLower.includes(keyword)) {
+                priority += 20;
+            }
+        }
+        // Lokalizacja
+        if (urlLower.includes(this.config.councilLocation.toLowerCase())) {
+            priority += 30;
+        }
+        return priority;
+    }
+    generateContentHash(content) {
+        return crypto
+            .createHash("md5")
+            .update(content.slice(0, 10000))
+            .digest("hex");
+    }
+    // ============================================================================
+    // PHASE 2: LLM CONTENT ANALYSIS
+    // ============================================================================
+    async analyzeContentWithLLM(url, title, content) {
+        if (!this.config.enableLLMAnalysis || !this.openai) {
+            return null;
+        }
+        try {
+            const truncatedContent = content.slice(0, 8000);
+            const response = await this.openai.chat.completions.create({
+                model: "gpt-4o-mini",
+                messages: [
+                    {
+                        role: "system",
+                        content: `Jesteś asystentem analizującym treści ze stron internetowych rad miejskich i gminnych.
+Twoim zadaniem jest ocena przydatności treści dla radnego z ${this.config.councilLocation}.
+
+Obszary zainteresowania radnego:
+${this.config.focusAreas.map((f) => `- ${f}`).join("\n")}
+
+Odpowiedz w formacie JSON:
+{
+  "relevanceScore": 0-100,
+  "contentType": "sesja|kalendarz|materiały|uchwała|protokół|interpelacja|inne",
+  "summary": "krótkie podsumowanie max 200 znaków",
+  "keyTopics": ["temat1", "temat2"],
+  "isRelevantForCouncilor": true/false,
+  "extractedDates": ["2024-01-15", "2024-02-20"],
+  "extractedEntities": ["nazwa komisji", "nazwisko radnego"],
+  "recommendedAction": "scrape|skip|priority"
+}`,
+                    },
+                    {
+                        role: "user",
+                        content: `URL: ${url}\nTytuł: ${title}\n\nTreść:\n${truncatedContent}`,
+                    },
+                ],
+                temperature: 0.3,
+                response_format: { type: "json_object" },
+            });
+            const result = JSON.parse(response.choices[0]?.message?.content || "{}");
+            return result;
+        }
+        catch (error) {
+            console.error(`[IntelligentScraper] LLM analysis error for ${url}:`, error);
+            return null;
+        }
+    }
+    // ============================================================================
+    // PHASE 3: INCREMENTAL SCRAPING
+    // ============================================================================
+    async checkIfContentChanged(url, newHash) {
+        const { data: existing } = await supabase
+            .from("scraped_content")
+            .select("content_hash")
+            .eq("url", url)
+            .eq("source_id", this.sourceId)
+            .order("scraped_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (!existing) {
+            return true; // Nowa treść
+        }
+        return existing.content_hash !== newHash;
+    }
+    // ============================================================================
+    // PHASE 4: FULL INTELLIGENT SCRAPE
+    // ============================================================================
+    async scrape() {
+        const startTime = Date.now();
+        const result = {
+            success: false,
+            siteMap: [],
+            pagesAnalyzed: 0,
+            documentsFound: 0,
+            documentsProcessed: 0,
+            newDocuments: 0,
+            skippedDocuments: 0,
+            llmAnalyses: 0,
+            errors: [],
+            processingTimeMs: 0,
+        };
+        try {
+            // Inicjalizacja OpenAI
+            await this.initializeOpenAI();
+            // PHASE 1: Generowanie mapy strony
+            console.log("[IntelligentScraper] Phase 1: Generating site map...");
+            result.siteMap = await this.generateSiteMap();
+            // PHASE 2: Sortowanie po priorytecie i filtrowanie
+            const prioritizedPages = result.siteMap
+                .filter((node) => node.priority >= 50 || node.contentType !== "page")
+                .sort((a, b) => b.priority - a.priority);
+            console.log(`[IntelligentScraper] Phase 2: Analyzing ${prioritizedPages.length} priority pages...`);
+            // PHASE 3: Analiza i scraping
+            for (const node of prioritizedPages) {
+                try {
+                    result.pagesAnalyzed++;
+                    // Sprawdź czy treść się zmieniła (incremental mode)
+                    if (this.config.incrementalMode && node.contentHash) {
+                        const hasChanged = await this.checkIfContentChanged(node.url, node.contentHash);
+                        if (!hasChanged) {
+                            result.skippedDocuments++;
+                            continue;
+                        }
+                    }
+                    // Pobierz pełną treść
+                    const html = await this.fetchPage(node.url);
+                    if (!html)
+                        continue;
+                    const $ = cheerio.load(html);
+                    const content = this.extractMainContent($);
+                    const pdfLinks = this.extractPdfLinks($, node.url);
+                    // Analiza LLM
+                    let llmAnalysis = null;
+                    if (this.config.enableLLMAnalysis && content.length > 200) {
+                        llmAnalysis = await this.analyzeContentWithLLM(node.url, node.title, content);
+                        if (llmAnalysis) {
+                            result.llmAnalyses++;
+                            // Pomiń treści nieistotne dla radnego
+                            if (llmAnalysis.recommendedAction === "skip" &&
+                                llmAnalysis.relevanceScore < 30) {
+                                result.skippedDocuments++;
+                                continue;
+                            }
+                        }
+                    }
+                    // Zapisz do bazy
+                    result.documentsFound++;
+                    const savedDoc = await this.saveScrapedContent(node, content, pdfLinks, llmAnalysis);
+                    if (savedDoc) {
+                        result.documentsProcessed++;
+                        result.newDocuments++;
+                    }
+                    await this.delay(this.config.delayMs);
+                }
+                catch (error) {
+                    result.errors.push(`Error processing ${node.url}: ${error instanceof Error ? error.message : "Unknown"}`);
+                }
+            }
+            // PHASE 4: Przetwarzanie na embeddingi
+            console.log("[IntelligentScraper] Phase 4: Generating embeddings...");
+            await this.processToRAG();
+            // PHASE 5: Przetwarzanie załączników PDF (z OCR dla skanów)
+            console.log("[IntelligentScraper] Phase 5: Processing PDF attachments with OCR...");
+            const pdfProcessed = await this.processPDFAttachments();
+            console.log(`[IntelligentScraper] Processed ${pdfProcessed} PDF attachments`);
+            result.success = true;
+            result.errors = [...this.errors, ...result.errors];
+        }
+        catch (error) {
+            result.errors.push(`Fatal error: ${error instanceof Error ? error.message : "Unknown"}`);
+        }
+        result.processingTimeMs = Date.now() - startTime;
+        console.log(`[IntelligentScraper] Completed in ${result.processingTimeMs}ms`);
+        return result;
+    }
+    extractMainContent($) {
+        // Usuń niepotrzebne elementy
+        $("script, style, nav, header, footer, .menu, .sidebar, .advertisement").remove();
+        // Priorytetowe selektory dla treści
+        const contentSelectors = [
+            "main",
+            "article",
+            ".content",
+            ".main-content",
+            "#content",
+            ".entry-content",
+            ".post-content",
+            ".tresc",
+            ".document-content",
+        ];
+        for (const selector of contentSelectors) {
+            const content = $(selector).text().trim();
+            if (content && content.length > 100) {
+                return this.cleanText(content);
+            }
+        }
+        // Fallback do body
+        return this.cleanText($("body").text());
+    }
+    cleanText(text) {
+        return text
+            .replace(/\s+/g, " ")
+            .replace(/\n\s*\n/g, "\n")
+            .trim()
+            .slice(0, 50000);
+    }
+    extractPdfLinks($, baseUrl) {
+        const pdfLinks = [];
+        $('a[href$=".pdf"], a[href*="pdf"]').each((_, el) => {
+            const href = $(el).attr("href");
+            if (!href)
+                return;
+            try {
+                const absoluteUrl = new URL(href, baseUrl).href;
+                if (!pdfLinks.includes(absoluteUrl)) {
+                    pdfLinks.push(absoluteUrl);
+                }
+            }
+            catch {
+                // Ignoruj nieprawidłowe URLe
+            }
+        });
+        return pdfLinks;
+    }
+    async saveScrapedContent(node, content, pdfLinks, llmAnalysis) {
+        try {
+            const { error } = await supabase.from("scraped_content").upsert({
+                source_id: this.sourceId,
+                url: node.url,
+                title: node.title,
+                raw_content: content,
+                content_hash: node.contentHash,
+                pdf_links: pdfLinks,
+                metadata: {
+                    contentType: node.contentType,
+                    priority: node.priority,
+                    depth: node.depth,
+                    llmAnalysis: llmAnalysis
+                        ? {
+                            relevanceScore: llmAnalysis.relevanceScore,
+                            contentType: llmAnalysis.contentType,
+                            summary: llmAnalysis.summary,
+                            keyTopics: llmAnalysis.keyTopics,
+                            isRelevantForCouncilor: llmAnalysis.isRelevantForCouncilor,
+                            extractedDates: llmAnalysis.extractedDates,
+                            extractedEntities: llmAnalysis.extractedEntities,
+                        }
+                        : null,
+                },
+                scraped_at: new Date().toISOString(),
+            }, {
+                onConflict: "source_id,url",
+            });
+            if (error) {
+                console.error(`[IntelligentScraper] Save error for ${node.url}:`, error);
+                return false;
+            }
+            return true;
+        }
+        catch (error) {
+            console.error(`[IntelligentScraper] Save exception for ${node.url}:`, error);
+            return false;
+        }
+    }
+    async processToRAG() {
+        let processedCount = 0;
+        // Pobierz nieprzetworzone treści
+        const { data: unprocessedContent } = await supabase
+            .from("scraped_content")
+            .select("*")
+            .eq("source_id", this.sourceId)
+            .order("scraped_at", { ascending: false })
+            .limit(100);
+        console.log(`[IntelligentScraper] ${unprocessedContent?.length || 0} documents to process for RAG`);
+        if (!unprocessedContent || unprocessedContent.length === 0) {
+            return 0;
+        }
+        // Pobierz konfigurację OpenAI
+        const { data: apiConfig } = await supabase
+            .from("api_configurations")
+            .select("*")
+            .eq("user_id", this.userId)
+            .eq("provider", "openai")
+            .eq("is_active", true)
+            .eq("is_default", true)
+            .single();
+        let openaiApiKey = process.env.OPENAI_API_KEY;
+        let openaiBaseUrl = undefined;
+        let embeddingModel = "text-embedding-3-small";
+        if (apiConfig) {
+            openaiApiKey = Buffer.from(apiConfig.api_key_encrypted, "base64").toString("utf-8");
+            openaiBaseUrl = apiConfig.base_url || undefined;
+            if (apiConfig.embedding_model) {
+                embeddingModel = apiConfig.embedding_model;
+            }
+        }
+        if (!openaiApiKey) {
+            console.warn("[IntelligentScraper] No OpenAI API key, skipping embeddings");
+            return 0;
+        }
+        const openai = new OpenAI({ apiKey: openaiApiKey, baseURL: openaiBaseUrl });
+        for (const content of unprocessedContent) {
+            try {
+                // Sprawdź czy już przetworzony
+                const { data: existing } = await supabase
+                    .from("processed_documents")
+                    .select("id")
+                    .eq("scraped_content_id", content.id)
+                    .maybeSingle();
+                if (existing)
+                    continue;
+                // Pomiń zbyt krótkie treści
+                if (!content.raw_content || content.raw_content.length < 100)
+                    continue;
+                // Określ typ dokumentu
+                const documentType = this.classifyDocumentType(content.title || "", content.raw_content);
+                // Generuj embedding
+                let embedding = null;
+                try {
+                    const embeddingResponse = await openai.embeddings.create({
+                        model: embeddingModel,
+                        input: `${content.title || ""}\n\n${content.raw_content.substring(0, 5000)}`,
+                    });
+                    embedding = embeddingResponse.data[0]?.embedding ?? null;
+                }
+                catch (e) {
+                    console.warn("[IntelligentScraper] Embedding generation failed:", e);
+                    continue;
+                }
+                // Wyciągnij słowa kluczowe
+                const keywords = this.extractKeywords(content.title || "", content.raw_content);
+                // Użyj podsumowania z LLM jeśli dostępne
+                const llmAnalysis = content.metadata?.llmAnalysis;
+                const summary = llmAnalysis?.summary || content.raw_content.substring(0, 300) + "...";
+                // Zapisz przetworzony dokument
+                const { error } = await supabase.from("processed_documents").insert({
+                    scraped_content_id: content.id,
+                    user_id: this.userId,
+                    document_type: documentType,
+                    title: content.title || "Bez tytułu",
+                    content: content.raw_content,
+                    summary,
+                    keywords,
+                    source_url: content.url,
+                    embedding,
+                    metadata: {
+                        llmAnalysis,
+                        pdfLinks: content.pdf_links,
+                    },
+                    processed_at: new Date().toISOString(),
+                });
+                if (!error) {
+                    processedCount++;
+                    console.log(`[IntelligentScraper] Processed: ${content.title || content.url}`);
+                }
+            }
+            catch (error) {
+                console.error("[IntelligentScraper] Error processing content:", error);
+            }
+        }
+        console.log(`[IntelligentScraper] Processed ${processedCount} documents to RAG`);
+        return processedCount;
+    }
+    classifyDocumentType(title, content) {
+        const lowerTitle = title.toLowerCase();
+        const lowerContent = content.toLowerCase().substring(0, 2000);
+        if (lowerTitle.includes("uchwał") || lowerContent.includes("uchwała nr"))
+            return "resolution";
+        if (lowerTitle.includes("protokół") || lowerContent.includes("protokół z"))
+            return "protocol";
+        if (lowerTitle.includes("ogłoszeni") || lowerTitle.includes("obwieszczeni"))
+            return "announcement";
+        if (lowerTitle.includes("zarządzeni") ||
+            lowerContent.includes("zarządzenie nr"))
+            return "ordinance";
+        if (lowerTitle.includes("ustaw") || lowerTitle.includes("rozporządz"))
+            return "legal_act";
+        if (lowerTitle.includes("sesj") || lowerContent.includes("sesja rady"))
+            return "session";
+        if (lowerTitle.includes("kalendarz") || lowerContent.includes("kalendarz"))
+            return "calendar";
+        if (lowerTitle.includes("budżet") || lowerContent.includes("budżet"))
+            return "budget";
+        if (lowerTitle.includes("aktualnoś") || lowerTitle.includes("informacj"))
+            return "news";
+        return "article";
+    }
+    extractKeywords(title, content) {
+        const text = `${title} ${content}`.toLowerCase();
+        const keywords = [];
+        const importantWords = [
+            "uchwała",
+            "budżet",
+            "sesja",
+            "rada",
+            "gmina",
+            "miasto",
+            "wójt",
+            "burmistrz",
+            "podatek",
+            "opłata",
+            "inwestycja",
+            "projekt",
+            "dotacja",
+            "fundusz",
+            "plan",
+            "zagospodarowanie",
+            "przestrzenne",
+            "ochrona",
+            "środowisko",
+            "droga",
+            "szkoła",
+            "przedszkole",
+            "wodociąg",
+            "kanalizacja",
+            "oświetlenie",
+            "remont",
+            "przetarg",
+            "konkurs",
+            "nabór",
+            "wybory",
+            "referendum",
+            "konsultacje",
+            "kalendarz",
+            "posiedzenie",
+        ];
+        for (const word of importantWords) {
+            if (text.includes(word)) {
+                keywords.push(word);
+            }
+        }
+        return [...new Set(keywords)].slice(0, 15);
+    }
+    async fetchPage(url) {
+        try {
+            const response = await fetch(url, {
+                headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "pl-PL,pl;q=0.9,en;q=0.8",
+                },
+                signal: AbortSignal.timeout(30000),
+            });
+            if (!response.ok) {
+                return null;
+            }
+            return await response.text();
+        }
+        catch (error) {
+            this.errors.push(`Fetch error for ${url}: ${error instanceof Error ? error.message : "Unknown"}`);
+            return null;
+        }
+    }
+    delay(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+    /**
+     * Przetwarza załączniki PDF znalezione podczas scrapingu
+     * Automatycznie wykrywa skany bez warstwy tekstowej i używa OCR (GPT-4 Vision)
+     */
+    async processPDFAttachments() {
+        let processedCount = 0;
+        // Pobierz wszystkie PDF linki ze scraped_content dla tego źródła
+        const { data: scrapedContent } = await supabase
+            .from("scraped_content")
+            .select("id, url, pdf_links")
+            .eq("source_id", this.sourceId)
+            .not("pdf_links", "is", null);
+        if (!scrapedContent || scrapedContent.length === 0) {
+            console.log("[IntelligentScraper] No PDF links found in scraped content");
+            return 0;
+        }
+        // Zbierz wszystkie unikalne linki PDF
+        const allPdfLinks = [];
+        for (const content of scrapedContent) {
+            const pdfLinks = content.pdf_links || [];
+            for (const link of pdfLinks) {
+                if (!allPdfLinks.includes(link)) {
+                    allPdfLinks.push(link);
+                }
+            }
+        }
+        console.log(`[IntelligentScraper] Found ${allPdfLinks.length} unique PDF links to process`);
+        if (allPdfLinks.length === 0)
+            return 0;
+        // Inicjalizuj DocumentProcessor
+        const processor = new DocumentProcessor();
+        try {
+            await processor.initializeWithUserConfig(this.userId);
+        }
+        catch (error) {
+            console.error("[IntelligentScraper] Failed to initialize DocumentProcessor:", error);
+            return 0;
+        }
+        // Limit PDF-ów do przetworzenia (unikaj przeciążenia)
+        const maxPdfsToProcess = 20;
+        const pdfsToProcess = allPdfLinks.slice(0, maxPdfsToProcess);
+        for (const pdfUrl of pdfsToProcess) {
+            try {
+                // Sprawdź czy PDF już został przetworzony
+                const { data: existingDoc } = await supabase
+                    .from("processed_documents")
+                    .select("id")
+                    .eq("source_url", pdfUrl)
+                    .maybeSingle();
+                if (existingDoc) {
+                    console.log(`[IntelligentScraper] PDF already processed: ${pdfUrl}`);
+                    continue;
+                }
+                console.log(`[IntelligentScraper] Downloading PDF: ${pdfUrl}`);
+                // Pobierz PDF
+                const response = await fetch(pdfUrl, {
+                    headers: {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    },
+                    signal: AbortSignal.timeout(60000),
+                });
+                if (!response.ok) {
+                    console.warn(`[IntelligentScraper] Failed to download PDF: ${response.status}`);
+                    continue;
+                }
+                const arrayBuffer = await response.arrayBuffer();
+                const pdfBuffer = Buffer.from(arrayBuffer);
+                // Wyciągnij nazwę pliku z URL
+                const urlParts = pdfUrl.split("/");
+                const fileName = decodeURIComponent(urlParts[urlParts.length - 1] || "document.pdf");
+                console.log(`[IntelligentScraper] Processing PDF: ${fileName} (${pdfBuffer.length} bytes)`);
+                // Przetwórz PDF - DocumentProcessor automatycznie wykryje czy to skan i użyje OCR
+                const result = await processor.processFile(pdfBuffer, fileName, "application/pdf");
+                if (!result.success) {
+                    console.warn(`[IntelligentScraper] PDF processing failed: ${fileName} - ${result.error}`);
+                    continue;
+                }
+                if (!result.text || result.text.length < 50) {
+                    console.warn(`[IntelligentScraper] PDF text too short: ${fileName}`);
+                    continue;
+                }
+                console.log(`[IntelligentScraper] Extracted ${result.text.length} chars from ${fileName} ` +
+                    `(method: ${result.metadata.processingMethod})`);
+                // Zapisz do RAG
+                const saveResult = await processor.saveToRAG(this.userId, result.text, fileName.replace(".pdf", "").replace(/_/g, " "), fileName, "pdf_attachment");
+                if (saveResult.success) {
+                    processedCount++;
+                    console.log(`[IntelligentScraper] Saved PDF to RAG: ${fileName} ` +
+                        `(ID: ${saveResult.documentId}, OCR: ${result.metadata.processingMethod === "ocr"})`);
+                }
+                // Krótkie opóźnienie między PDF-ami
+                await this.delay(500);
+            }
+            catch (error) {
+                console.error(`[IntelligentScraper] Error processing PDF ${pdfUrl}:`, error);
+            }
+        }
+        return processedCount;
+    }
+}
+// ============================================================================
+// EXPORT MAIN FUNCTION
+// ============================================================================
+export async function intelligentScrapeDataSource(sourceId, userId, customConfig) {
+    console.log(`[IntelligentScraper] Starting intelligent scrape for source: ${sourceId}`);
+    // Pobierz konfigurację źródła
+    const { data: source, error } = await supabase
+        .from("data_sources")
+        .select("*")
+        .eq("id", sourceId)
+        .single();
+    if (error || !source) {
+        return {
+            success: false,
+            siteMap: [],
+            pagesAnalyzed: 0,
+            documentsFound: 0,
+            documentsProcessed: 0,
+            newDocuments: 0,
+            skippedDocuments: 0,
+            llmAnalyses: 0,
+            errors: [`Source not found: ${sourceId}`],
+            processingTimeMs: 0,
+        };
+    }
+    // Stwórz log scrapingu
+    const { data: log } = await supabase
+        .from("scraping_logs")
+        .insert({
+        source_id: sourceId,
+        status: "running",
+        started_at: new Date().toISOString(),
+    })
+        .select("id")
+        .single();
+    // Uruchom inteligentny scraping
+    const scraper = new IntelligentScraper(source.url, userId, sourceId, {
+        ...customConfig,
+        councilLocation: source.metadata?.councilLocation ||
+            customConfig?.councilLocation ||
+            "Drawno",
+    });
+    const result = await scraper.scrape();
+    // Zaktualizuj log
+    if (log?.id) {
+        await supabase
+            .from("scraping_logs")
+            .update({
+            status: result.success ? "success" : "error",
+            items_scraped: result.pagesAnalyzed,
+            items_processed: result.documentsProcessed,
+            duration_ms: result.processingTimeMs,
+            error_message: result.errors.length > 0
+                ? result.errors.slice(0, 5).join("; ")
+                : null,
+            metadata: {
+                siteMapSize: result.siteMap.length,
+                newDocuments: result.newDocuments,
+                skippedDocuments: result.skippedDocuments,
+                llmAnalyses: result.llmAnalyses,
+            },
+        })
+            .eq("id", log.id);
+    }
+    // Zaktualizuj źródło
+    await supabase
+        .from("data_sources")
+        .update({
+        last_scraped_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+    })
+        .eq("id", sourceId);
+    return result;
+}
+//# sourceMappingURL=intelligent-scraper.js.map

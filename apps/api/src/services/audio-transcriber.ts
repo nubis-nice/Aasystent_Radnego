@@ -2,14 +2,10 @@ import { Buffer } from "node:buffer";
 import { createRequire } from "node:module";
 import { Readable } from "node:stream";
 import OpenAI from "openai";
-import { createClient } from "@supabase/supabase-js";
+import { getSTTClient, getLLMClient, getAIConfig } from "../ai/index.js";
 
 const require = createRequire(import.meta.url);
 const { toFile } = require("openai");
-
-const supabaseUrl = process.env.SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 export interface TranscriptSegment {
   timestamp: string;
@@ -68,43 +64,32 @@ const VIDEO_MIME_TYPES = [
 ];
 
 export class AudioTranscriber {
-  private openai: OpenAI | null = null;
+  private sttClient: OpenAI | null = null;
+  private llmClient: OpenAI | null = null;
+  private sttModel: string = "whisper-1";
 
   constructor() {}
 
+  /**
+   * Inicjalizacja z konfiguracją użytkownika przez AIClientFactory
+   */
   async initializeWithUserConfig(userId: string): Promise<void> {
-    const { data: config } = await supabase
-      .from("api_configurations")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("is_default", true)
-      .eq("is_active", true)
-      .single();
+    // Pobierz klienta STT (Speech-to-Text) z fabryki
+    this.sttClient = await getSTTClient(userId);
 
-    if (!config) {
-      throw new Error("Brak skonfigurowanego klucza API. Przejdź do ustawień.");
-    }
+    // Pobierz konfigurację STT aby znać model
+    const sttConfig = await getAIConfig(userId, "stt");
+    this.sttModel = sttConfig.modelName;
 
-    const decodedApiKey = Buffer.from(
-      config.api_key_encrypted,
-      "base64"
-    ).toString("utf-8");
+    // Pobierz klienta LLM do analizy transkryptu
+    this.llmClient = await getLLMClient(userId);
 
-    this.openai = new OpenAI({
-      apiKey: decodedApiKey,
-      baseURL: this.getProviderBaseUrl(config.provider),
-    });
-  }
-
-  private getProviderBaseUrl(provider: string): string | undefined {
-    switch (provider) {
-      case "openai":
-        return undefined;
-      case "openrouter":
-        return "https://openrouter.ai/api/v1";
-      default:
-        return undefined;
-    }
+    console.log(
+      `[AudioTranscriber] Initialized for user ${userId.substring(0, 8)}...`
+    );
+    console.log(
+      `[AudioTranscriber] STT: provider=${sttConfig.provider}, model=${this.sttModel}`
+    );
   }
 
   isAudioOrVideo(mimeType: string): boolean {
@@ -148,8 +133,10 @@ export class AudioTranscriber {
       };
     }
 
-    if (!this.openai) {
-      throw new Error("OpenAI client not initialized");
+    if (!this.sttClient) {
+      throw new Error(
+        "STT client not initialized. Call initializeWithUserConfig first."
+      );
     }
 
     try {
@@ -238,14 +225,14 @@ export class AudioTranscriber {
     fileBuffer: Buffer,
     fileName: string
   ): Promise<string> {
-    if (!this.openai) throw new Error("OpenAI not initialized");
+    if (!this.sttClient) throw new Error("STT client not initialized");
 
     // Convert buffer to File-like object for OpenAI
     const file = await toFile(Readable.from(fileBuffer), fileName);
 
-    const response = await this.openai.audio.transcriptions.create({
+    const response = await this.sttClient.audio.transcriptions.create({
       file,
-      model: "whisper-1",
+      model: this.sttModel,
       language: "pl",
       response_format: "text",
     });
@@ -264,7 +251,7 @@ export class AudioTranscriber {
       duration: string;
     };
   }> {
-    if (!this.openai) throw new Error("OpenAI not initialized");
+    if (!this.llmClient) throw new Error("LLM client not initialized");
 
     const systemPrompt = `Jesteś ekspertem analizy lingwistycznej i psychologicznej. Przeanalizuj transkrypcję i zwróć szczegółową analizę w formacie JSON.
 
@@ -308,7 +295,7 @@ Odpowiedz TYLKO w formacie JSON:
   }
 }`;
 
-    const response = await this.openai.chat.completions.create({
+    const response = await this.llmClient.chat.completions.create({
       model: "gpt-4o",
       messages: [
         { role: "system", content: systemPrompt },

@@ -188,6 +188,44 @@
 
 ---
 
+## Refaktoring Providerów AI (2026-01-11) - W TRAKCIE
+
+### Cel
+
+Centralizacja obsługi providerów AI z podziałem na 5 niezależnych funkcji:
+
+- **LLM** - modele językowe (chat)
+- **Embeddings** - wektory semantyczne
+- **Vision** - analiza obrazów
+- **STT** - Speech-to-Text (transkrypcja)
+- **TTS** - Text-to-Speech (synteza mowy)
+
+### Presety
+
+- **OpenAI** - pełna konfiguracja OpenAI API
+- **Ollama (Local)** - lokalne modele + faster-whisper-server dla STT
+- **Custom** - dowolny endpoint z wyborem protokołu API
+
+### Zadania
+
+- [x] Dokumentacja projektowa (`docs/ai_provider_refactoring_plan.md`)
+- [x] Aktualizacja `docs/architecture.md`
+- [ ] Utworzenie struktury `apps/api/src/ai/`
+- [ ] Implementacja `defaults.ts` z presetami
+- [ ] Implementacja `types.ts`
+- [ ] Migracja bazy danych (tabele `ai_configurations`, `ai_providers`)
+- [ ] Implementacja `AIConfigResolver`
+- [ ] Implementacja `AIClientFactory`
+- [ ] Klienty: `LLMClient`, `EmbeddingsClient`, `VisionClient`, `STTClient`, `TTSClient`
+- [ ] Migracja serwisów (youtube-downloader, audio-transcriber, chat, ...)
+- [ ] Frontend - modal konfiguracji z zakładkami
+
+### Dokumentacja
+
+- `docs/ai_provider_refactoring_plan.md` - Szczegółowy plan
+
+---
+
 ## Deep Internet Researcher ZAIMPLEMENTOWANE (2026-01-09)
 
 - [x] **Backend**: `DeepResearchService` z multi-provider orchestration

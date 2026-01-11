@@ -13,6 +13,8 @@ import {
   ArrowUpDown,
   ChevronDown,
   X,
+  Paperclip,
+  Database,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -312,13 +314,53 @@ export default function DocumentsPage() {
             Zarządzaj dokumentami Rady Miejskiej i analizuj ich treść
           </p>
         </div>
-        <Link
-          href="/documents/upload"
-          className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-primary-500/30 hover:from-primary-600 hover:to-primary-700 transition-all duration-200"
-        >
-          <Upload className="h-5 w-5" />
-          <span>Dodaj dokument</span>
-        </Link>
+        <div className="flex items-center gap-3">
+          {/* Przycisk transkrypcji YouTube */}
+          <button
+            onClick={() => router.push("/documents/youtube")}
+            className="inline-flex items-center gap-2 rounded-xl border-2 border-red-200 bg-white px-4 py-3 text-sm font-semibold text-red-600 hover:border-red-300 hover:bg-red-50 transition-all duration-200"
+            title="Transkrypcja sesji Rady (YouTube)"
+          >
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+            </svg>
+            <span>Transkrypcja YouTube</span>
+          </button>
+
+          {/* Przycisk OCR/przetwarzania dokumentów */}
+          <button
+            onClick={() => router.push("/documents/process")}
+            className="inline-flex items-center gap-2 rounded-xl border-2 border-primary-200 bg-white px-4 py-3 text-sm font-semibold text-primary-600 hover:border-primary-300 hover:bg-primary-50 transition-all duration-200"
+            title="Przetwórz dokument (OCR) lub audio/video (transkrypcja)"
+          >
+            <Paperclip className="h-5 w-5" />
+            <span>OCR / Transkrypcja</span>
+          </button>
+
+          {/* Przycisk pobierania dokumentacji do RAG */}
+          <button
+            onClick={() => router.push("/documents/fetch-rag")}
+            className="inline-flex items-center gap-2 rounded-xl border-2 border-amber-200 bg-white px-4 py-3 text-sm font-semibold text-amber-600 hover:border-amber-300 hover:bg-amber-50 transition-all duration-200"
+            title="Pobierz dokumentację do zasilenia RAG"
+          >
+            <Database className="h-5 w-5" />
+            <span className="flex items-center gap-1.5">
+              Zasilanie RAG
+              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-bold">
+                BETA
+              </span>
+            </span>
+          </button>
+
+          {/* Przycisk dodawania dokumentu */}
+          <Link
+            href="/documents/upload"
+            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-primary-500/30 hover:from-primary-600 hover:to-primary-700 transition-all duration-200"
+          >
+            <Upload className="h-5 w-5" />
+            <span>Dodaj dokument</span>
+          </Link>
+        </div>
       </div>
 
       {/* Zaawansowane filtry i wyszukiwanie */}

@@ -387,6 +387,8 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
       minRelevance?: number;
       deepCrawl?: boolean;
       extractPDFs?: boolean;
+      enableIntelligentScraping?: boolean;
+      minResultsBeforeScraping?: number;
     };
   }>("/data-sources/:id/semantic-search", async (request, reply) => {
     try {
@@ -396,8 +398,15 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
       }
 
       const { id } = request.params;
-      const { query, maxResults, minRelevance, deepCrawl, extractPDFs } =
-        request.body;
+      const {
+        query,
+        maxResults,
+        minRelevance,
+        deepCrawl,
+        extractPDFs,
+        enableIntelligentScraping,
+        minResultsBeforeScraping,
+      } = request.body;
 
       if (!query || query.trim().length === 0) {
         return reply.status(400).send({ error: "Query is required" });
@@ -416,7 +425,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
       }
 
       request.log.info(
-        { sourceId: id, query },
+        { sourceId: id, query, enableIntelligentScraping },
         "Starting semantic document search"
       );
 
@@ -427,6 +436,8 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
         minRelevance: minRelevance || 0.3,
         deepCrawl: deepCrawl || false,
         extractPDFs: extractPDFs || false,
+        enableIntelligentScraping: enableIntelligentScraping ?? true, // Domyślnie włączone
+        minResultsBeforeScraping: minResultsBeforeScraping || 3,
       });
 
       request.log.info(

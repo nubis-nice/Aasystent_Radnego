@@ -128,10 +128,9 @@ export const apiModelsRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
 
-      // Filtruj i sortuj modele - preferuj chat/completion modele
+      // Kategoryzuj modele według typu
       const chatModels = models.filter((m) => {
         const id = m.id.toLowerCase();
-        // Wyklucz modele embedding, whisper, dall-e, tts, imagen, veo
         return (
           !id.includes("embedding") &&
           !id.includes("whisper") &&
@@ -144,11 +143,31 @@ export const apiModelsRoutes: FastifyPluginAsync = async (fastify) => {
         );
       });
 
-      // Sortuj - najnowsze/najlepsze na górze
+      const embeddingModels = models.filter((m) => {
+        const id = m.id.toLowerCase();
+        return id.includes("embedding") || id.includes("embed");
+      });
+
+      const transcriptionModels = models.filter((m) => {
+        const id = m.id.toLowerCase();
+        return id.includes("whisper");
+      });
+
+      const visionModels = models.filter((m) => {
+        const id = m.id.toLowerCase();
+        return (
+          (id.includes("gpt-4") && id.includes("vision")) ||
+          id.includes("gpt-4o") ||
+          id.includes("gpt-4-turbo") ||
+          (id.includes("gemini") && id.includes("vision")) ||
+          (id.includes("claude") && id.includes("vision"))
+        );
+      });
+
+      // Sortuj modele chat
       chatModels.sort((a, b) => {
         const aId = a.id.toLowerCase();
         const bId = b.id.toLowerCase();
-        // Priorytet dla najnowszych modeli
         if (aId.includes("gpt-4o") && !bId.includes("gpt-4o")) return -1;
         if (bId.includes("gpt-4o") && !aId.includes("gpt-4o")) return 1;
         if (aId.includes("gpt-4") && !bId.includes("gpt-4")) return -1;
@@ -162,22 +181,23 @@ export const apiModelsRoutes: FastifyPluginAsync = async (fastify) => {
         return a.id.localeCompare(b.id);
       });
 
-      // Wzbogać modele o metadane (koszty, wydajność)
-      const enrichedModels = chatModels.map((model) =>
+      // Wzbogać modele o metadane
+      const enrichedChatModels = chatModels.map((model) =>
         enrichModelMetadata(model)
       );
-
-      // Dodaj wskaźniki (badges)
-      addModelBadges(enrichedModels);
+      addModelBadges(enrichedChatModels);
 
       console.log(
-        `[FetchModels] Found ${enrichedModels.length} chat models with metadata`
+        `[FetchModels] Found ${enrichedChatModels.length} chat, ${embeddingModels.length} embedding, ${transcriptionModels.length} transcription, ${visionModels.length} vision models`
       );
 
       return reply.send({
         success: true,
-        models: enrichedModels,
-        total: enrichedModels.length,
+        models: enrichedChatModels,
+        embeddingModels: embeddingModels,
+        transcriptionModels: transcriptionModels,
+        visionModels: visionModels,
+        total: enrichedChatModels.length,
       });
     } catch (error) {
       console.error("[FetchModels] Error:", error);

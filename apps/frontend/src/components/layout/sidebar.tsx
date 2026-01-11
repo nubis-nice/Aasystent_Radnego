@@ -14,6 +14,7 @@ import {
   LogOut,
   KeyRound,
   Shield,
+  Bell,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { signOut, isAdmin } from "@/lib/supabase/auth";
@@ -99,7 +100,7 @@ export function Sidebar() {
     >
       {/* Logo/Brand Section */}
       {!isCollapsed && (
-        <div className="px-6 py-5 border-b border-border dark:border-border-dark">
+        <div className="flex-shrink-0 px-6 py-5 border-b border-border dark:border-border-dark">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-lg dark:shadow-lg dark:shadow-secondary-800">
               <FileCheck className="h-6 w-6 text-white" />
@@ -178,16 +179,21 @@ export function Sidebar() {
         </nav>
       </div>
 
-      {/* Herb Drawna i Menu Użytkownika */}
-      <div className="border-t border-border dark:border-border-dark">
-        {/* Herb Drawna */}
+      {/* Herb Drawna i Menu Użytkownika - FIXED do dołu */}
+      <div className="flex-shrink-0 border-t border-border dark:border-border-dark bg-white dark:bg-secondary-900">
+        {/* Herb Drawna z przyciskiem powiadomień */}
         {!isCollapsed && (
-          <div className="px-6 py-4 flex items-center justify-center border-b border-border dark:border-border-dark">
+          <div className="px-6 py-4 flex items-center justify-center gap-4 border-b border-border dark:border-border-dark">
             <img
               src="/herb.png"
               alt="Herb Gminy Drawno"
               className="w-16 h-16 object-contain"
             />
+            <button className="relative rounded-xl p-2.5 text-secondary-600 hover:bg-secondary-50 hover:text-secondary-900 transition-all duration-200">
+              <span className="sr-only">Powiadomienia</span>
+              <Bell className="h-5 w-5" />
+              <span className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-danger ring-2 ring-white"></span>
+            </button>
           </div>
         )}
 

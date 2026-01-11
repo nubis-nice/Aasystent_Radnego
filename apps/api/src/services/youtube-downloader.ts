@@ -5,11 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
-import { createClient } from "@supabase/supabase-js";
-
-const supabaseUrl = process.env.SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+import { getSTTClient, getLLMClient, getAIConfig } from "../ai/index.js";
 
 export interface DownloadResult {
   success: boolean;
@@ -53,8 +49,11 @@ export interface TranscriptionWithAnalysis {
 }
 
 export class YouTubeDownloader {
-  private openai: OpenAI | null = null;
+  private sttClient: OpenAI | null = null;
+  private llmClient: OpenAI | null = null;
   private tempDir: string;
+  private userId: string | null = null;
+  private sttModel: string = "whisper-1";
 
   constructor() {
     this.tempDir = join(tmpdir(), "aasystent-youtube");
@@ -63,27 +62,28 @@ export class YouTubeDownloader {
     }
   }
 
+  /**
+   * Inicjalizacja z konfiguracją użytkownika przez AIClientFactory
+   */
   async initializeWithUserConfig(userId: string): Promise<void> {
-    const { data: config } = await supabase
-      .from("api_configurations")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("is_default", true)
-      .eq("is_active", true)
-      .single();
+    this.userId = userId;
 
-    if (!config) {
-      throw new Error("Brak skonfigurowanego klucza API. Przejdź do ustawień.");
-    }
+    // Pobierz klienta STT (Speech-to-Text) z fabryki
+    this.sttClient = await getSTTClient(userId);
 
-    const decodedApiKey = Buffer.from(
-      config.api_key_encrypted,
-      "base64"
-    ).toString("utf-8");
+    // Pobierz konfigurację STT aby znać model
+    const sttConfig = await getAIConfig(userId, "stt");
+    this.sttModel = sttConfig.modelName;
 
-    this.openai = new OpenAI({
-      apiKey: decodedApiKey,
-    });
+    // Pobierz klienta LLM do analizy transkryptu
+    this.llmClient = await getLLMClient(userId);
+
+    console.log(
+      `[YouTubeDownloader] Initialized for user ${userId.substring(0, 8)}...`
+    );
+    console.log(
+      `[YouTubeDownloader] STT: provider=${sttConfig.provider}, model=${this.sttModel}, baseUrl=${sttConfig.baseUrl}`
+    );
   }
 
   async downloadAudio(videoUrl: string): Promise<DownloadResult> {
@@ -127,18 +127,8 @@ export class YouTubeDownloader {
       // Remove .mp3 extension - yt-dlp will add it
       const outputBase = outputPath.replace(/\.mp3$/, "");
 
-      // FFmpeg and Deno locations (winget installation)
-      const ffmpegPath =
-        "C:\\Users\\nubis\\AppData\\Local\\Microsoft\\WinGet\\Packages\\yt-dlp.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-N-121938-g2456a39581-win64-gpl\\bin";
-      const denoPath =
-        "C:\\Users\\nubis\\AppData\\Local\\Microsoft\\WinGet\\Links\\deno.exe";
-
       // yt-dlp arguments for audio extraction (64kbps mono for smaller files)
       const args = [
-        "--ffmpeg-location",
-        ffmpegPath,
-        "--js-runtimes",
-        `deno:${denoPath}`, // JavaScript runtime for YouTube extraction
         "-x", // Extract audio
         "--audio-format",
         "mp3",
@@ -156,13 +146,22 @@ export class YouTubeDownloader {
         videoUrl,
       ];
 
-      // Use full path to yt-dlp (winget installation location)
-      const ytdlpPath: string =
-        globalThis.process?.env?.YTDLP_PATH ||
-        "C:\\Users\\nubis\\AppData\\Local\\Microsoft\\WinGet\\Links\\yt-dlp.exe";
+      // Add FFmpeg location if specified in environment
+      const ffmpegPath = process.env.FFMPEG_PATH;
+      if (ffmpegPath) {
+        args.unshift("--ffmpeg-location", ffmpegPath);
+      }
 
+      // Use full path to yt-dlp
+      const ytdlpPath: string =
+        process.env.YTDLP_PATH ||
+        "C:\\ProgramData\\chocolatey\\lib\\yt-dlp\\tools\\x64\\yt-dlp.exe";
+
+      console.log(`[YouTubeDownloader] Using yt-dlp path: ${ytdlpPath}`);
       console.log(
-        `[YouTubeDownloader] Running: ${ytdlpPath} ${args.join(" ")}`
+        `[YouTubeDownloader] Running command with args: ${args
+          .slice(0, 5)
+          .join(" ")}...`
       );
 
       const childProcess = spawn(ytdlpPath, args);
@@ -247,8 +246,10 @@ export class YouTubeDownloader {
     videoTitle: string,
     videoUrl: string
   ): Promise<TranscriptionWithAnalysis> {
-    if (!this.openai) {
-      throw new Error("OpenAI not initialized");
+    if (!this.sttClient) {
+      throw new Error(
+        "STT client not initialized. Call initializeWithUserConfig first."
+      );
     }
 
     try {
@@ -263,9 +264,12 @@ export class YouTubeDownloader {
       const { createReadStream } = await import("node:fs");
       const audioStream = createReadStream(audioPath);
 
-      const transcription = await this.openai.audio.transcriptions.create({
-        file: audioStream as unknown as File,
-        model: "whisper-1",
+      console.log(`[YouTubeDownloader] Using STT model: ${this.sttModel}`);
+
+      const transcription = await this.sttClient.audio.transcriptions.create({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        file: audioStream as any,
+        model: this.sttModel,
         language: "pl",
         response_format: "text",
       });
@@ -352,7 +356,7 @@ export class YouTubeDownloader {
   }
 
   private async correctTranscript(rawTranscript: string): Promise<string> {
-    if (!this.openai) throw new Error("OpenAI not initialized");
+    if (!this.llmClient) throw new Error("LLM client not initialized");
 
     console.log("[YouTubeDownloader] Correcting transcript errors...");
 
@@ -371,7 +375,7 @@ ZASADY:
 
 Zwróć TYLKO poprawiony tekst, bez komentarzy.`;
 
-    const response = await this.openai.chat.completions.create({
+    const response = await this.llmClient.chat.completions.create({
       model: "gpt-4o",
       messages: [
         { role: "system", content: correctionPrompt },
@@ -394,7 +398,7 @@ Zwróć TYLKO poprawiony tekst, bez komentarzy.`;
       duration: string;
     };
   }> {
-    if (!this.openai) throw new Error("OpenAI not initialized");
+    if (!this.llmClient) throw new Error("LLM client not initialized");
 
     const systemPrompt = `Jesteś ekspertem analizy lingwistycznej sesji rady miejskiej/gminnej. Przeanalizuj transkrypcję i zwróć szczegółową analizę w formacie JSON.
 
@@ -432,7 +436,7 @@ Odpowiedz TYLKO w formacie JSON:
   }
 }`;
 
-    const response = await this.openai.chat.completions.create({
+    const response = await this.llmClient.chat.completions.create({
       model: "gpt-4o",
       messages: [
         { role: "system", content: systemPrompt },
@@ -551,7 +555,7 @@ Odpowiedz TYLKO w formacie JSON:
 
     for (const pattern of patterns) {
       const match = url.match(pattern);
-      if (match) return match[1];
+      if (match && match[1]) return match[1];
     }
     return null;
   }

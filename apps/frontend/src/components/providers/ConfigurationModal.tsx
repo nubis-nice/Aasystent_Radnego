@@ -60,7 +60,7 @@ export function ConfigurationModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Stan dla dynamicznych modeli z metadanami
+  // Stan dla dynamicznych modeli z metadanymi
   const [dynamicModels, setDynamicModels] = useState<
     {
       id: string;
@@ -73,6 +73,15 @@ export function ConfigurationModal({
       };
       badges?: string[];
     }[]
+  >([]);
+  const [dynamicEmbeddingModels, setDynamicEmbeddingModels] = useState<
+    { id: string; name: string }[]
+  >([]);
+  const [dynamicTranscriptionModels, setDynamicTranscriptionModels] = useState<
+    { id: string; name: string }[]
+  >([]);
+  const [dynamicVisionModels, setDynamicVisionModels] = useState<
+    { id: string; name: string }[]
   >([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
@@ -88,6 +97,9 @@ export function ConfigurationModal({
     setLoadingModels(true);
     setModelsError(null);
     setDynamicModels([]);
+    setDynamicEmbeddingModels([]);
+    setDynamicTranscriptionModels([]);
+    setDynamicVisionModels([]);
 
     try {
       const response = await fetch(
@@ -109,6 +121,9 @@ export function ConfigurationModal({
 
       if (data.success && data.models) {
         setDynamicModels(data.models);
+        setDynamicEmbeddingModels(data.embeddingModels || []);
+        setDynamicTranscriptionModels(data.transcriptionModels || []);
+        setDynamicVisionModels(data.visionModels || []);
       } else {
         setModelsError(data.error || "Nie udało się pobrać modeli");
       }
@@ -444,35 +459,58 @@ export function ConfigurationModal({
               disabled={saving}
               className="w-full px-4 py-3 border border-secondary-300 rounded-xl focus:border-primary-500 focus:ring-2 focus:ring-primary-100 transition-all disabled:bg-secondary-50 disabled:cursor-not-allowed"
             >
-              {formData.provider === "openai" && (
-                <>
+              {/* Dynamiczne modele z API */}
+              {dynamicEmbeddingModels.length > 0 && (
+                <optgroup label="📡 Pobrane z API">
+                  {dynamicEmbeddingModels.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name || model.id}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {/* Statyczne modele jako fallback */}
+              {dynamicEmbeddingModels.length === 0 &&
+                formData.provider === "openai" && (
+                  <>
+                    <option value="text-embedding-3-small">
+                      text-embedding-3-small (zalecany, 1536 dim)
+                    </option>
+                    <option value="text-embedding-3-large">
+                      text-embedding-3-large (dokładniejszy, 3072 dim)
+                    </option>
+                    <option value="text-embedding-ada-002">
+                      text-embedding-ada-002 (legacy, 1536 dim)
+                    </option>
+                  </>
+                )}
+              {dynamicEmbeddingModels.length === 0 &&
+                formData.provider === "local" && (
+                  <>
+                    <option value="nomic-embed-text">
+                      Nomic Embed Text (Ollama)
+                    </option>
+                    <option value="mxbai-embed-large">
+                      MxBai Embed Large (Ollama)
+                    </option>
+                    <option value="all-minilm">All-MiniLM (Ollama)</option>
+                  </>
+                )}
+              {dynamicEmbeddingModels.length === 0 &&
+                formData.provider === "other" && (
                   <option value="text-embedding-3-small">
-                    text-embedding-3-small (zalecany, 1536 dim)
+                    text-embedding-3-small (compatible)
                   </option>
-                  <option value="text-embedding-3-large">
-                    text-embedding-3-large (dokładniejszy, 3072 dim)
-                  </option>
-                  <option value="text-embedding-ada-002">
-                    text-embedding-ada-002 (legacy, 1536 dim)
-                  </option>
-                </>
-              )}
-              {formData.provider === "local" && (
-                <>
-                  <option value="nomic-embed-text">nomic-embed-text</option>
-                  <option value="mxbai-embed-large">mxbai-embed-large</option>
-                  <option value="all-minilm">all-minilm</option>
-                </>
-              )}
-              {formData.provider === "other" && (
-                <option value="text-embedding-3-small">
-                  text-embedding-3-small (compatible)
-                </option>
-              )}
+                )}
             </select>
             <p className="mt-1 text-xs text-text-secondary">
               Używany do generowania embeddingów dla RAG i wyszukiwania
               semantycznego
+              {dynamicEmbeddingModels.length > 0 && (
+                <span className="text-green-600 ml-2">
+                  ✓ {dynamicEmbeddingModels.length} modeli z API
+                </span>
+              )}
             </p>
           </div>
 
@@ -489,23 +527,95 @@ export function ConfigurationModal({
               disabled={saving}
               className="w-full px-4 py-3 border border-secondary-300 rounded-xl focus:border-primary-500 focus:ring-2 focus:ring-primary-100 transition-all disabled:bg-secondary-50 disabled:cursor-not-allowed"
             >
-              {formData.provider === "openai" && (
-                <option value="whisper-1">whisper-1 (OpenAI Whisper)</option>
+              {/* Dynamiczne modele z API */}
+              {dynamicTranscriptionModels.length > 0 && (
+                <optgroup label="📡 Pobrane z API">
+                  {dynamicTranscriptionModels.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name || model.id}
+                    </option>
+                  ))}
+                </optgroup>
               )}
-              {formData.provider === "local" && (
-                <>
+              {/* Statyczne modele jako fallback */}
+              {dynamicTranscriptionModels.length === 0 &&
+                formData.provider === "openai" && (
+                  <option value="whisper-1">whisper-1 (OpenAI Whisper)</option>
+                )}
+              {dynamicTranscriptionModels.length === 0 &&
+                formData.provider === "local" && (
+                  <>
+                    <option value="whisper-1">
+                      Whisper-1 (Ollama compatible)
+                    </option>
+                    <option value="whisper-large-v3">
+                      Whisper Large v3 (Ollama)
+                    </option>
+                  </>
+                )}
+              {dynamicTranscriptionModels.length === 0 &&
+                formData.provider === "other" && (
                   <option value="whisper-1">whisper-1 (compatible)</option>
-                  <option value="whisper-large-v3">
-                    whisper-large-v3 (local)
-                  </option>
-                </>
-              )}
-              {formData.provider === "other" && (
-                <option value="whisper-1">whisper-1 (compatible)</option>
-              )}
+                )}
             </select>
             <p className="mt-1 text-xs text-text-secondary">
               Używany do transkrypcji audio z YouTube i innych źródeł
+              {dynamicTranscriptionModels.length > 0 && (
+                <span className="text-green-600 ml-2">
+                  ✓ {dynamicTranscriptionModels.length} modeli z API
+                </span>
+              )}
+            </p>
+          </div>
+
+          {/* Vision Model */}
+          <div>
+            <label className="block text-sm font-medium text-text-primary mb-2">
+              Model Vision (opcjonalny)
+            </label>
+            <select
+              value={formData.visionModel}
+              onChange={(e) =>
+                setFormData({ ...formData, visionModel: e.target.value })
+              }
+              disabled={saving}
+              className="w-full px-4 py-3 border border-secondary-300 rounded-xl focus:border-primary-500 focus:ring-2 focus:ring-primary-100 transition-all disabled:bg-secondary-50 disabled:cursor-not-allowed"
+            >
+              <option value="">Brak (użyj modelu głównego)</option>
+              {/* Dynamiczne modele z API */}
+              {dynamicVisionModels.length > 0 && (
+                <optgroup label="📡 Pobrane z API">
+                  {dynamicVisionModels.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name || model.id}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {/* Statyczne modele jako fallback */}
+              {dynamicVisionModels.length === 0 &&
+                formData.provider === "openai" && (
+                  <>
+                    <option value="gpt-4o">GPT-4o (vision)</option>
+                    <option value="gpt-4o-mini">GPT-4o Mini (vision)</option>
+                    <option value="gpt-4-turbo">GPT-4 Turbo (vision)</option>
+                  </>
+                )}
+              {dynamicVisionModels.length === 0 &&
+                formData.provider === "local" && (
+                  <>
+                    <option value="llava">LLaVA (Ollama)</option>
+                    <option value="bakllava">BakLLaVA (Ollama)</option>
+                  </>
+                )}
+            </select>
+            <p className="mt-1 text-xs text-text-secondary">
+              Używany do analizy obrazów i dokumentów wizualnych
+              {dynamicVisionModels.length > 0 && (
+                <span className="text-green-600 ml-2">
+                  ✓ {dynamicVisionModels.length} modeli z API
+                </span>
+              )}
             </p>
           </div>
 

@@ -144,9 +144,9 @@ const getEmbeddingModels = (
       },
     ],
     local: [
-      { value: "nomic-embed-text", label: "Nomic Embed Text" },
-      { value: "mxbai-embed-large", label: "MxBai Embed Large" },
-      { value: "all-minilm", label: "All-MiniLM" },
+      { value: "nomic-embed-text", label: "Nomic Embed Text (Ollama)" },
+      { value: "mxbai-embed-large", label: "MxBai Embed Large (Ollama)" },
+      { value: "all-minilm", label: "All-MiniLM (Ollama)" },
     ],
     other: [
       {

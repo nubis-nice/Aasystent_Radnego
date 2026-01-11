@@ -35,6 +35,18 @@ services:
     ports:
       - "8080:8080"
 
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cpu
+    container_name: aasystent-whisper
+    ports:
+      - "8000:8000"
+    environment:
+      - WHISPER__MODEL=Systran/faster-whisper-medium
+      - WHISPER__INFERENCE_DEVICE=cpu
+    volumes:
+      - whisper_cache:/root/.cache
+
 volumes:
   postgres_data:
   redis_data:
+  whisper_cache:

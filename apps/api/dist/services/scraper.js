@@ -302,7 +302,7 @@ async function processScrapedContent(sourceId, userId) {
                             },
                         ],
                         temperature: 0,
-                        max_tokens: 200,
+                        max_completion_tokens: 200,
                     });
                     summary = summaryResponse.choices[0]?.message?.content || null;
                 }

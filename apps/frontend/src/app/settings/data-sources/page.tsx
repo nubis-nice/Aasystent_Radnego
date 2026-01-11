@@ -18,6 +18,7 @@ import {
   AlertCircle,
   Pencil,
   X,
+  Search,
 } from "lucide-react";
 import {
   getDataSources,
@@ -538,11 +539,24 @@ function SourceCard({
   }) => Promise<void>;
 }) {
   const [scraping, setScraping] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [scrapeResult, setScrapeResult] = useState<{
     success: boolean;
     message: string;
   } | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<{
+    documents: Array<{
+      id: string;
+      title: string;
+      excerpt: string;
+      relevanceScore: number;
+      url: string;
+    }>;
+    totalFound: number;
+  } | null>(null);
   const [editData, setEditData] = useState({
     name: name,
     base_url: url,
@@ -579,6 +593,42 @@ function SourceCard({
       setTimeout(() => setScrapeResult(null), 5000);
     }
   };
+
+  const handleSemanticSearch = async () => {
+    if (!searchQuery.trim()) return;
+    setSearching(true);
+    setSearchResults(null);
+    try {
+      const token = localStorage.getItem("supabase_access_token");
+      const response = await fetch(`/api/data-sources/${id}/semantic-search`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          query: searchQuery,
+          maxResults: 15,
+          minRelevance: 0.3,
+          deepCrawl: false,
+          enableIntelligentScraping: true, // Włącz inteligentny scraping gdy brak wyników
+          minResultsBeforeScraping: 3,
+        }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setSearchResults({
+          documents: data.documents || [],
+          totalFound: data.totalFound || 0,
+        });
+      }
+    } catch (e) {
+      console.error("Semantic search error:", e);
+    } finally {
+      setSearching(false);
+    }
+  };
+
   const typeColors = {
     municipality: "bg-blue-100 text-blue-700",
     bip: "bg-purple-100 text-purple-700",
@@ -689,6 +739,113 @@ function SourceCard({
         </div>
       )}
 
+      {/* Semantic Search Modal */}
+      {showSearchModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-background-primary border border-border rounded-xl p-6 w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <Search className="h-5 w-5 text-primary-500" />
+                Semantic Search w &quot;{name}&quot;
+              </h2>
+              <button
+                onClick={() => {
+                  setShowSearchModal(false);
+                  setSearchResults(null);
+                  setSearchQuery("");
+                }}
+                className="p-1 hover:bg-background-secondary rounded"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex gap-2 mb-4">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSemanticSearch()}
+                placeholder="Wpisz zapytanie, np. 'uchwały dotyczące budżetu'"
+                className="flex-1 px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+              />
+              <button
+                onClick={handleSemanticSearch}
+                disabled={searching || !searchQuery.trim()}
+                className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50 flex items-center gap-2"
+              >
+                {searching ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Search className="h-4 w-4" />
+                )}
+                Szukaj
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {searchResults && (
+                <div className="space-y-3">
+                  <p className="text-sm text-text-secondary">
+                    Znaleziono {searchResults.totalFound} dokumentów
+                  </p>
+                  {searchResults.documents.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="border border-border rounded-lg p-3 hover:border-primary-300 transition-colors"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <h4 className="font-medium text-text-primary">
+                            {doc.title}
+                          </h4>
+                          <p className="text-sm text-text-secondary mt-1 line-clamp-2">
+                            {doc.excerpt}
+                          </p>
+                          {doc.url && (
+                            <a
+                              href={doc.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-primary-500 hover:underline mt-1 inline-flex items-center gap-1"
+                            >
+                              {doc.url.slice(0, 50)}...
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          )}
+                        </div>
+                        <span className="text-xs bg-primary-100 text-primary-700 px-2 py-1 rounded-full ml-2">
+                          {Math.round(doc.relevanceScore * 100)}%
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {searchResults.documents.length === 0 && (
+                    <p className="text-center text-text-secondary py-8">
+                      Brak wyników dla tego zapytania
+                    </p>
+                  )}
+                </div>
+              )}
+              {!searchResults && !searching && (
+                <p className="text-center text-text-secondary py-8">
+                  Wpisz zapytanie i kliknij &quot;Szukaj&quot; aby znaleźć
+                  dokumenty
+                </p>
+              )}
+              {searching && (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary-500" />
+                  <span className="ml-2 text-text-secondary">
+                    Wyszukiwanie...
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="border border-border rounded-xl p-4 hover:border-primary-200 transition-colors">
         <div className="flex items-start justify-between">
           <div className="flex-1">
@@ -745,6 +902,14 @@ function SourceCard({
                   <RefreshCw className="h-4 w-4" />
                 )}
                 {scraping ? "Scrapuję..." : "Scrapuj"}
+              </button>
+              <button
+                onClick={() => setShowSearchModal(true)}
+                className="px-3 py-2 rounded-lg bg-accent-500 text-white hover:bg-accent-600 transition-colors flex items-center gap-2 text-sm font-medium"
+                title="Semantic Search - wyszukaj dokumenty"
+              >
+                <Search className="h-4 w-4" />
+                Szukaj
               </button>
               <button
                 onClick={() => setShowEditModal(true)}

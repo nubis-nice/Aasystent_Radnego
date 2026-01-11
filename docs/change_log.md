@@ -1,5 +1,281 @@
 # Change Log
 
+## 2026-01-11 - Refaktoring Architektury Providerów AI
+
+### Nowa funkcjonalność: Centralna fabryka klientów AI z presetami
+
+**Problem:** 19 serwisów miało zduplikowaną logikę konfiguracji OpenAI (~50 linii kodu każdy), niespójne obsługi providerów (Ollama, OpenAI), brak rozdzielenia funkcji AI (LLM, Embeddings, STT, TTS, Vision).
+
+**Rozwiązanie:** Nowa architektura `apps/api/src/ai/` z centralną fabryką klientów:
+
+#### Nowa struktura katalogów:
+
+```
+apps/api/src/ai/
+├── index.ts                    # Eksport publiczny
+├── types.ts                    # Typy i interfejsy
+├── defaults.ts                 # Presety konfiguracji
+├── ai-config-resolver.ts       # Resolver konfiguracji z cache
+└── ai-client-factory.ts        # Fabryka klientów AI (singleton)
+```
+
+#### Presety konfiguracji (defaults.ts):
+
+- **OpenAI** - pełna konfiguracja OpenAI API (LLM, Embeddings, Vision, STT, TTS)
+- **Ollama (Local)** - lokalne modele + faster-whisper-server dla STT
+- **Custom** - dowolny endpoint z wyborem protokołu API
+
+#### 5 niezależnych funkcji AI:
+
+| Funkcja    | Opis                | OpenAI                 | Ollama                |
+| ---------- | ------------------- | ---------------------- | --------------------- |
+| LLM        | Chat/completions    | gpt-4-turbo            | llama3.2              |
+| Embeddings | Wektory semantyczne | text-embedding-3-small | nomic-embed-text      |
+| Vision     | Analiza obrazów     | gpt-4-vision           | llava                 |
+| STT        | Speech-to-Text      | whisper-1              | faster-whisper-medium |
+| TTS        | Text-to-Speech      | tts-1                  | piper                 |
+
+#### AIClientFactory - użycie:
+
+```typescript
+// PRZED (50 linii w każdym serwisie):
+const { data: config } = await supabase.from("api_configurations")...
+const decodedApiKey = Buffer.from(config.api_key_encrypted, "base64")...
+this.openai = new OpenAI({ apiKey, baseURL });
+
+// PO (1 linia):
+const sttClient = await getSTTClient(userId);
+```
+
+#### Migracja bazy danych:
+
+- `docs/supabase_migrations/020_create_ai_configurations.sql`
+- Nowe tabele: `ai_configurations`, `ai_providers`
+- RLS policies dla bezpieczeństwa
+- Trigger dla jednej domyślnej konfiguracji per użytkownik
+
+#### Zmigrowane serwisy:
+
+- `youtube-downloader.ts` - używa `getSTTClient()` i `getLLMClient()`
+
+**Nowe pliki:**
+
+- `apps/api/src/ai/types.ts`
+- `apps/api/src/ai/defaults.ts`
+- `apps/api/src/ai/ai-config-resolver.ts`
+- `apps/api/src/ai/ai-client-factory.ts`
+- `apps/api/src/ai/index.ts`
+- `docs/supabase_migrations/020_create_ai_configurations.sql`
+- `docs/ai_provider_refactoring_plan.md`
+
+**Zaktualizowane pliki:**
+
+- `apps/api/src/services/youtube-downloader.ts` - refaktoring do nowej architektury
+- `docs/architecture.md` - sekcja 7 o providerach AI
+- `docs/todo.md` - sekcja o refaktoringu
+
+**Korzyści:**
+
+- Centralizacja konfiguracji AI
+- Cache klientów (5 min TTL)
+- Niezależna konfiguracja każdej funkcji AI
+- Fallback do zmiennych środowiskowych
+- Kompatybilność wsteczna ze starą tabelą `api_configurations`
+
+**Status:** ✅ Infrastruktura zaimplementowana, youtube-downloader zmigrowany
+
+---
+
+## 2026-01-11 - Inteligentne Wykrywanie Dokumentów w Chacie
+
+### Nowa funkcjonalność: DocumentQueryService - wykrywanie dokumentów bez przekazywania pełnej treści
+
+**Problem:** Przy analizie dokumentu cała treść + załączników była przekazywana do LLM jako prompt, powodując przekroczenie limitu tokenów.
+
+**Rozwiązanie:** Nowy przepływ analizy dokumentów:
+
+#### Nowy przepływ:
+
+```
+1. Użytkownik pisze wiadomość z ID/nazwą dokumentu
+2. DocumentQueryService wykrywa referencje (UUID, druk, uchwała, protokół, sesja)
+3. Szukaj w RAG (processed_documents)
+4. Jeśli znaleziono → "Znalazłem dokument X. Analizować?" (potwierdzenie)
+5. Jeśli TAK → pobierz CHUNKI (nie pełną treść!) + relacje z Document Graph
+6. Jeśli NIE → fallback do intelligent scraping → Exa semantic search
+```
+
+#### DocumentQueryService (`document-query-service.ts`):
+
+**Wykrywane referencje:**
+
+- UUID (ID dokumentu): `a1b2c3d4-e5f6-...`
+- Druki: `druk nr 109`, `(druk 110)`
+- Uchwały: `uchwała XV/123/2024`
+- Protokoły: `protokół z sesji XIV`
+- Sesje: `sesja nr 15`, `XV sesja`
+- Nazwy w cudzysłowach: `"Porządek obrad..."`
+
+**Metody wyszukiwania:**
+
+- `findDocumentById()` - dokładne dopasowanie po UUID
+- `findDocumentsByTitle()` - fulltext search po tytule
+- `findDocumentsSemantic()` - semantic search z embeddings
+
+**Kontekst dokumentu (bez pełnej treści!):**
+
+- `relevantChunks` - tylko relevantne fragmenty (max 5 chunków × 1000 znaków)
+- `relatedDocuments` - powiązane dokumenty z Document Graph
+- `attachments` - załączniki z relacji
+
+#### Integracja z chat.ts:
+
+**Przed (problem):**
+
+```typescript
+// Cała treść dokumentu przekazywana do LLM
+content: mainDocument.content; // 50000+ znaków = 20000+ tokenów
+```
+
+**Po (rozwiązanie):**
+
+```typescript
+// Tylko relevantne chunki
+content: documentContext.relevantChunks.map((c) => c.content).join("\n\n");
+// Max 5000 znaków = ~2000 tokenów
+```
+
+**Nowe pliki:**
+
+- `apps/api/src/services/document-query-service.ts`
+
+**Zmienione pliki:**
+
+- `apps/api/src/routes/chat.ts` - integracja DocumentQueryService
+
+**Szacowane oszczędności:**
+
+- Redukcja tokenów kontekstu: 80-90% (z 20000 do 2000 tokenów)
+- Eliminacja błędów "context length exceeded"
+
+**Status:** ✅ Zaimplementowane
+
+---
+
+## 2026-01-11 - System Kompresji Kontekstu AI i Batch Embeddings
+
+### Nowa funkcjonalność: Optymalizacja kosztów tokenów AI
+
+**Problem:** Wysokie koszty tokenów AI przy długich konwersacjach i dużych dokumentach RAG.
+
+**Rozwiązanie:** Dwupoziomowy system optymalizacji:
+
+#### 1. Context Compressor (`context-compressor.ts`)
+
+**Funkcje:**
+
+- **Estymacja tokenów** - bez zewnętrznych bibliotek (~2.5 znaku/token dla polskiego)
+- **Kompresja dokumentów RAG** - sortowanie wg relevance, skracanie z zachowaniem struktury
+- **Summaryzacja historii** - ostatnie 4 wiadomości w pełni, starsze → podsumowanie
+- **Limity modeli** - automatyczne dostosowanie do gpt-4o (128k), gpt-4 (8k), claude (200k)
+
+**Budżet tokenów:**
+
+- System prompt: stały
+- RAG context: 65% elastycznego budżetu
+- Historia: 35% elastycznego budżetu
+- Twardy limit: 6000 tokenów dla bezpieczeństwa
+
+**Logi oszczędności:**
+
+```
+[Chat] Context optimization: {
+  originalTokens: 15420,
+  compressedTokens: 6200,
+  savedTokens: 9220,
+  savingsPercent: "60%"
+}
+```
+
+#### 2. Batch Embedding Service (`batch-embedding-service.ts`)
+
+**OpenAI Batch API - 50% taniej:**
+
+- Asynchroniczne przetwarzanie (do 24h, zazwyczaj szybciej)
+- Osobna pula rate limits
+- Max 50,000 requestów/batch, 300,000 tokenów sumowanych
+
+**Użycie:**
+
+- ✅ Przetwarzanie dokumentów (worker)
+- ✅ Indeksowanie źródeł danych
+- ✅ Re-embedding przy zmianie modelu
+- ❌ Chat w czasie rzeczywistym (sync API)
+
+**API:**
+
+```typescript
+const batchService = new BatchEmbeddingService(apiKey);
+const batchId = await batchService.createBatchJob(requests);
+const results = await batchService.waitForCompletion(batchId);
+```
+
+#### 3. Batch Embedding dla długich wiadomości (chat.ts)
+
+**Problem:** Wiadomość użytkownika > 8192 tokenów powodowała błąd embeddingu.
+
+**Rozwiązanie:** `generateBatchEmbedding()`:
+
+- Dzieli tekst na chunki (18000 znaków) z overlap (500 znaków)
+- Batch API dla wszystkich chunków jednocześnie
+- Agregacja: średnia ważona wektorów + normalizacja L2
+
+**Nowe pliki:**
+
+- `apps/api/src/services/context-compressor.ts`
+- `apps/api/src/services/batch-embedding-service.ts`
+
+**Zmienione pliki:**
+
+- `apps/api/src/routes/chat.ts` - integracja kompresji i batch embeddingu
+
+**Szacowane oszczędności:**
+
+- Kompresja kontekstu: 40-60% tokenów
+- Batch API dla dokumentów: 50% kosztów embeddingów
+
+**Status:** ✅ Zaimplementowane
+
+---
+
+## 2026-01-11 - Naprawa PDF Processing
+
+### Naprawa błędu wersji pdfjs-dist
+
+**Problem:** `The API version "5.4.530" does not match the Worker version "5.4.296"`
+
+**Przyczyna:** Konflikt wersji między `pdf-parse` (5.4.296) i `pdf-to-png-converter` (5.4.530).
+
+**Rozwiązanie:** Dodano `overrides` w `package.json`:
+
+```json
+"overrides": {
+  "pdfjs-dist": "5.4.530"
+}
+```
+
+### Naprawa OCR z Tesseract.js + Sharp
+
+**Implementacja adaptacyjnej normalizacji obrazów:**
+
+- Analiza statystyk obrazu (brightness, contrast, sharpness, noise)
+- Dynamiczne dostosowanie parametrów Sharp
+- Fallback do GPT-4 Vision przy niskiej jakości OCR
+
+**Status:** ✅ Zaimplementowane
+
+---
+
 ## 2026-01-10 - Graf Powiązań Dokumentów (Document Graph)
 
 ### Nowa funkcjonalność: System relacji między dokumentami

@@ -128,6 +128,11 @@ export default function ChatPage() {
     new Set()
   );
 
+  // Zwijanie długich wiadomości - domyślnie zwinięte
+  const [expandedMessages, setExpandedMessages] = useState<Set<string>>(
+    new Set()
+  );
+
   const toggleSources = (messageId: string) => {
     setExpandedSources((prev) => {
       const next = new Set(prev);
@@ -138,6 +143,37 @@ export default function ChatPage() {
       }
       return next;
     });
+  };
+
+  const toggleMessageExpand = (messageId: string) => {
+    setExpandedMessages((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  };
+
+  // Sprawdź czy wiadomość jest długa (>8 linii)
+  const isLongMessage = (content: string): boolean => {
+    const lines = content.split("\n").length;
+    const chars = content.length;
+    return lines > 8 || chars > 800;
+  };
+
+  // Skróć wiadomość do pierwszych 8 linii
+  const truncateMessage = (content: string): string => {
+    const lines = content.split("\n");
+    if (lines.length > 8) {
+      return lines.slice(0, 8).join("\n") + "\n...";
+    }
+    if (content.length > 800) {
+      return content.slice(0, 800) + "...";
+    }
+    return content;
   };
 
   // Funkcja wykrywania kategorii analizy na podstawie zapytania
@@ -354,16 +390,46 @@ export default function ChatPage() {
 
         setMessages((prev) => [...prev, notificationMessage]);
 
-        // Poczekaj chwilę i wyślij prompt analizy
+        // Poczekaj chwilę i wyślij prompt analizy bezpośrednio (bez ustawiania w input)
         setTimeout(async () => {
           if (analysis.prompt) {
-            setMessage(analysis.prompt);
-            // Auto-wyślij po krótkim opóźnieniu
-            const sendBtn = document.querySelector(
-              "[data-send-button]"
-            ) as HTMLButtonElement;
-            if (sendBtn) {
-              sendBtn.click();
+            // Wyślij wiadomość bezpośrednio do API bez ustawiania w polu input
+            setLoading(true);
+
+            const tempUserMessage: Message = {
+              id: `temp-analysis-${Date.now()}`,
+              role: "user",
+              content: analysis.prompt,
+              citations: [],
+            };
+            setMessages((prev) => [...prev, tempUserMessage]);
+
+            try {
+              const response = await sendMessage({
+                message: analysis.prompt,
+                conversationId: undefined,
+                includeDocuments: true,
+                includeMunicipalData: true,
+              });
+
+              if (response.conversationId) {
+                setConversationId(response.conversationId);
+              }
+
+              const aiMessage: Message = {
+                id: response.message?.id || `ai-${Date.now()}`,
+                role: "assistant",
+                content: response.message?.content || "Brak odpowiedzi",
+                citations: response.message?.citations || [],
+              };
+              setMessages((prev) => [...prev, aiMessage]);
+            } catch (err) {
+              console.error("Error sending analysis:", err);
+              setError({
+                message: err instanceof Error ? err.message : "Błąd analizy",
+              });
+            } finally {
+              setLoading(false);
             }
           }
         }, 800);
@@ -557,7 +623,7 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="h-[calc(100vh-8rem)] flex relative">
+    <div className="h-full flex relative">
       {/* Sidebar z animacją */}
       <div
         className={`transition-all duration-300 ease-in-out ${
@@ -663,7 +729,64 @@ export default function ChatPage() {
                         </ReactMarkdown>
                       </div>
                     ) : (
-                      <p className="text-sm leading-relaxed">{msg.content}</p>
+                      /* Wiadomości użytkownika - z zwijaniem dla długich i formatowaniem Markdown */
+                      <div className="text-sm leading-relaxed">
+                        {isLongMessage(msg.content) &&
+                        !expandedMessages.has(msg.id) ? (
+                          <>
+                            <div
+                              className="prose prose-sm prose-invert max-w-none
+                              prose-headings:text-white prose-headings:font-semibold
+                              prose-h2:text-base prose-h3:text-sm
+                              prose-p:text-white/90 prose-p:my-1
+                              prose-strong:text-white prose-strong:font-semibold
+                              prose-ul:my-1 prose-li:my-0.5 prose-li:text-white/90
+                              prose-code:bg-white/20 prose-code:text-white prose-code:px-1 prose-code:rounded
+                              prose-pre:bg-black/30 prose-pre:text-white/90 prose-pre:text-xs prose-pre:max-h-32 prose-pre:overflow-hidden"
+                            >
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {truncateMessage(msg.content)}
+                              </ReactMarkdown>
+                            </div>
+                            <button
+                              onClick={() => toggleMessageExpand(msg.id)}
+                              className="mt-2 flex items-center gap-1 text-xs text-white/80 hover:text-white transition-colors"
+                            >
+                              <ChevronDown className="h-3 w-3" />
+                              Rozwiń wiadomość ({
+                                msg.content.split("\n").length
+                              }{" "}
+                              linii)
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <div
+                              className="prose prose-sm prose-invert max-w-none
+                              prose-headings:text-white prose-headings:font-semibold
+                              prose-h2:text-base prose-h3:text-sm
+                              prose-p:text-white/90 prose-p:my-1
+                              prose-strong:text-white prose-strong:font-semibold
+                              prose-ul:my-1 prose-li:my-0.5 prose-li:text-white/90
+                              prose-code:bg-white/20 prose-code:text-white prose-code:px-1 prose-code:rounded
+                              prose-pre:bg-black/30 prose-pre:text-white/90 prose-pre:text-xs prose-pre:max-h-96 prose-pre:overflow-auto"
+                            >
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {msg.content}
+                              </ReactMarkdown>
+                            </div>
+                            {isLongMessage(msg.content) && (
+                              <button
+                                onClick={() => toggleMessageExpand(msg.id)}
+                                className="mt-2 flex items-center gap-1 text-xs text-white/80 hover:text-white transition-colors"
+                              >
+                                <ChevronRight className="h-3 w-3" />
+                                Zwiń wiadomość
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
                     )}
 
                     {/* Przyciski akcji dla odpowiedzi AI */}
@@ -1080,21 +1203,6 @@ export default function ChatPage() {
                 }}
                 onError={(err) => setError({ message: err })}
               />
-
-              {/* YouTube Sesje Rady */}
-              <button
-                onClick={() => setShowYouTubeTool(true)}
-                className="h-full px-3 rounded-xl border-2 border-secondary-200 hover:border-red-300 hover:bg-red-50 transition-colors"
-                title="Sesje Rady (YouTube)"
-              >
-                <svg
-                  className="h-4 w-4 text-red-600"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                >
-                  <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
-                </svg>
-              </button>
 
               {/* System Status */}
               <SystemStatus apiError={error} />

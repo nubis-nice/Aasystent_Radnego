@@ -1,8 +1,13 @@
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
 import { DeepResearchService } from "./deep-research-service.js";
+import { DocumentProcessor } from "./document-processor.js";
+import * as cheerio from "cheerio";
 
 declare const Buffer: typeof globalThis.Buffer;
+declare const fetch: typeof globalThis.fetch;
+declare const URL: typeof globalThis.URL;
+declare const AbortSignal: typeof globalThis.AbortSignal;
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -351,7 +356,294 @@ export class DocumentAnalysisService {
     return data;
   }
 
-  // Szukaj brakujących druków przez Deep Research
+  // ============================================================================
+  // NOWA FAZA: Przeszukaj stronę źródłową dokumentu w poszukiwaniu załączników
+  // ============================================================================
+
+  async searchSourcePageForAttachments(
+    userId: string,
+    sourceUrl: string | undefined,
+    references: DocumentReference[]
+  ): Promise<DocumentReference[]> {
+    const missingRefs = references.filter((r) => !r.found);
+    if (missingRefs.length === 0 || !sourceUrl) return references;
+
+    console.log(
+      `[DocumentAnalysis] Searching source page for ${missingRefs.length} missing attachments: ${sourceUrl}`
+    );
+
+    try {
+      // Pobierz stronę źródłową
+      const baseUrl = new URL(sourceUrl).origin;
+      const visitedUrls = new Set<string>();
+      const foundAttachments: Map<
+        string,
+        { url: string; title: string; content?: string }
+      > = new Map();
+
+      // Głębokie przeszukiwanie strony źródłowej (bez limitu głębokości)
+      await this.crawlSourcePageDeep(
+        sourceUrl,
+        baseUrl,
+        visitedUrls,
+        foundAttachments,
+        missingRefs,
+        0,
+        10 // max depth
+      );
+
+      console.log(
+        `[DocumentAnalysis] Source page crawl found ${foundAttachments.size} potential attachments`
+      );
+
+      // Dopasuj znalezione załączniki do referencji
+      for (const ref of missingRefs) {
+        const matchKey = this.findMatchingAttachment(ref, foundAttachments);
+        if (matchKey) {
+          const attachment = foundAttachments.get(matchKey)!;
+          console.log(
+            `[DocumentAnalysis] Found ${ref.type} ${ref.number} on source page: ${attachment.url}`
+          );
+
+          // Pobierz i przetwórz załącznik
+          const content = await this.fetchAndProcessAttachment(
+            userId,
+            attachment.url,
+            ref
+          );
+
+          if (content) {
+            ref.found = true;
+            ref.title = attachment.title;
+            ref.content = content;
+            ref.sourceUrl = attachment.url;
+          }
+        }
+      }
+    } catch (error) {
+      console.error(
+        `[DocumentAnalysis] Source page search error:`,
+        error instanceof Error ? error.message : error
+      );
+    }
+
+    return references;
+  }
+
+  private async crawlSourcePageDeep(
+    url: string,
+    baseUrl: string,
+    visitedUrls: Set<string>,
+    foundAttachments: Map<
+      string,
+      { url: string; title: string; content?: string }
+    >,
+    targetRefs: DocumentReference[],
+    depth: number,
+    maxDepth: number
+  ): Promise<void> {
+    if (depth > maxDepth || visitedUrls.has(url)) return;
+    visitedUrls.add(url);
+
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(15000),
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; AsystentRadnego/1.0)",
+        },
+      });
+
+      if (!response.ok) return;
+
+      const contentType = response.headers.get("content-type") || "";
+
+      // Jeśli to PDF - dodaj do znalezionych
+      if (contentType.includes("pdf") || url.toLowerCase().endsWith(".pdf")) {
+        const title = url.split("/").pop() || "document.pdf";
+        foundAttachments.set(url, { url, title });
+        return;
+      }
+
+      // Jeśli to HTML - parsuj i szukaj linków
+      if (!contentType.includes("html")) return;
+
+      const html = await response.text();
+      const $ = cheerio.load(html);
+
+      // Szukaj linków do załączników (PDF, DOC, etc.)
+      $("a[href]").each((_, el) => {
+        const href = $(el).attr("href");
+        const linkText = $(el).text().trim();
+        if (!href) return;
+
+        try {
+          const absoluteUrl = new URL(href, url).href;
+
+          // Sprawdź czy to link do dokumentu
+          const isDocument =
+            absoluteUrl.toLowerCase().endsWith(".pdf") ||
+            absoluteUrl.toLowerCase().endsWith(".doc") ||
+            absoluteUrl.toLowerCase().endsWith(".docx") ||
+            absoluteUrl.toLowerCase().endsWith(".xls") ||
+            absoluteUrl.toLowerCase().endsWith(".xlsx") ||
+            absoluteUrl.toLowerCase().endsWith(".odt");
+
+          // Sprawdź czy tekst linku zawiera szukane referencje
+          const linkTextLower = linkText.toLowerCase();
+          const isRelevant = targetRefs.some((ref) => {
+            const num = ref.number.toLowerCase();
+            return (
+              linkTextLower.includes(`druk ${num}`) ||
+              linkTextLower.includes(`druk nr ${num}`) ||
+              linkTextLower.includes(`załącznik ${num}`) ||
+              linkTextLower.includes(`załącznik nr ${num}`) ||
+              linkTextLower.includes(`projekt ${num}`) ||
+              linkTextLower.includes(`uchwała ${num}`)
+            );
+          });
+
+          if (isDocument || isRelevant) {
+            foundAttachments.set(absoluteUrl, {
+              url: absoluteUrl,
+              title: linkText || absoluteUrl.split("/").pop() || "document",
+            });
+          }
+
+          // Kontynuuj crawling dla stron HTML z tej samej domeny
+          if (
+            absoluteUrl.startsWith(baseUrl) &&
+            !visitedUrls.has(absoluteUrl) &&
+            !isDocument
+          ) {
+            // Priorytetyzuj strony z "druk", "załącznik", "materiały", "sesja"
+            const urlLower = absoluteUrl.toLowerCase();
+            const isPriority =
+              urlLower.includes("druk") ||
+              urlLower.includes("zalacznik") ||
+              urlLower.includes("materialy") ||
+              urlLower.includes("sesja") ||
+              urlLower.includes("uchwala") ||
+              urlLower.includes("projekt");
+
+            if (isPriority || depth < 3) {
+              // Rekurencyjne przeszukiwanie
+              this.crawlSourcePageDeep(
+                absoluteUrl,
+                baseUrl,
+                visitedUrls,
+                foundAttachments,
+                targetRefs,
+                depth + 1,
+                maxDepth
+              );
+            }
+          }
+        } catch {
+          // Ignoruj nieprawidłowe URLe
+        }
+      });
+    } catch (error) {
+      console.error(
+        `[DocumentAnalysis] Crawl error for ${url}:`,
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+
+  private findMatchingAttachment(
+    ref: DocumentReference,
+    attachments: Map<string, { url: string; title: string }>
+  ): string | null {
+    const num = ref.number.toLowerCase();
+
+    for (const [key, attachment] of attachments) {
+      const titleLower = attachment.title.toLowerCase();
+      const urlLower = attachment.url.toLowerCase();
+
+      // Dopasowanie po numerze w tytule lub URL
+      const patterns = [
+        `druk ${num}`,
+        `druk_${num}`,
+        `druk-${num}`,
+        `druk${num}`,
+        `załącznik ${num}`,
+        `zalacznik_${num}`,
+        `załącznik_${num}`,
+        `projekt ${num}`,
+        `projekt_${num}`,
+        `nr ${num}`,
+        `nr_${num}`,
+        `_${num}.`,
+        `-${num}.`,
+        `(${num})`,
+      ];
+
+      for (const pattern of patterns) {
+        if (titleLower.includes(pattern) || urlLower.includes(pattern)) {
+          return key;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private async fetchAndProcessAttachment(
+    userId: string,
+    url: string,
+    ref: DocumentReference
+  ): Promise<string | null> {
+    try {
+      console.log(`[DocumentAnalysis] Fetching attachment: ${url}`);
+
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(30000),
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; AsystentRadnego/1.0)",
+        },
+      });
+
+      if (!response.ok) {
+        console.error(
+          `[DocumentAnalysis] Failed to fetch ${url}: ${response.status}`
+        );
+        return null;
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      const buffer = Buffer.from(await response.arrayBuffer());
+
+      // Użyj DocumentProcessor do przetworzenia dokumentu
+      const processor = new DocumentProcessor();
+      await processor.initializeWithUserConfig(userId);
+
+      const result = await processor.processFile(
+        buffer,
+        url.split("/").pop() || "document",
+        contentType
+      );
+
+      if (result.success && result.text) {
+        console.log(
+          `[DocumentAnalysis] Successfully processed ${ref.type} ${ref.number}: ${result.text.length} chars`
+        );
+        return result.text.substring(0, 3000); // Pierwsze 3000 znaków
+      }
+
+      return null;
+    } catch (error) {
+      console.error(
+        `[DocumentAnalysis] Attachment processing error:`,
+        error instanceof Error ? error.message : error
+      );
+      return null;
+    }
+  }
+
+  // ============================================================================
+  // Szukaj brakujących druków przez Deep Research (po przeszukaniu strony źródłowej)
+  // ============================================================================
+
   async searchMissingWithDeepResearch(
     userId: string,
     references: DocumentReference[]
@@ -360,7 +652,7 @@ export class DocumentAnalysisService {
     if (missingRefs.length === 0) return references;
 
     console.log(
-      `[DocumentAnalysis] Searching ${missingRefs.length} missing references with Deep Research`
+      `[DocumentAnalysis] Searching ${missingRefs.length} missing references with Deep Research (Exa)`
     );
 
     try {
@@ -424,14 +716,27 @@ export class DocumentAnalysisService {
       `[DocumentAnalysis] Found ${references.length} references in document`
     );
 
-    // Szukaj referencji w RAG
+    // FAZA 1: Szukaj referencji w RAG
     let updatedRefs = await this.searchReferencesInRAG(userId, references);
 
-    // Jeśli są brakujące referencje i włączony Deep Research - szukaj w internecie
-    const missingCount = updatedRefs.filter((r) => !r.found).length;
+    // FAZA 2: Jeśli są brakujące referencje - przeszukaj stronę źródłową dokumentu
+    let missingCount = updatedRefs.filter((r) => !r.found).length;
+    if (missingCount > 0 && mainDoc.source_url) {
+      console.log(
+        `[DocumentAnalysis] ${missingCount} references not found in RAG, searching source page: ${mainDoc.source_url}`
+      );
+      updatedRefs = await this.searchSourcePageForAttachments(
+        userId,
+        mainDoc.source_url,
+        updatedRefs
+      );
+    }
+
+    // FAZA 3: Jeśli nadal są brakujące referencje i włączony Deep Research - szukaj przez Exa
+    missingCount = updatedRefs.filter((r) => !r.found).length;
     if (useDeepResearch && missingCount > 0) {
       console.log(
-        `[DocumentAnalysis] ${missingCount} references not found in RAG, trying Deep Research...`
+        `[DocumentAnalysis] ${missingCount} references still missing after source page search, trying Deep Research (Exa)...`
       );
       updatedRefs = await this.searchMissingWithDeepResearch(
         userId,

@@ -7,11 +7,11 @@ export default function ChatLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="h-screen flex flex-col bg-background overflow-hidden">
       <Header />
-      <div className="flex flex-1 items-start">
+      <div className="flex flex-1 min-h-0">
         <Sidebar />
-        <main className="flex-1 p-6 md:p-8 overflow-x-hidden">{children}</main>
+        <main className="flex-1 p-4 overflow-hidden">{children}</main>
       </div>
     </div>
   );

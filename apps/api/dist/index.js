@@ -1,11 +1,21 @@
 import "dotenv/config";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
 import { authRoutes } from "./routes/auth.js";
 import { documentsRoutes } from "./routes/documents.js";
 import { testApiRoutes } from "./routes/test-api.js";
 import { chatRoutes } from "./routes/chat.js";
 import { dataSourcesRoutes } from "./routes/data-sources.js";
+import { legalAnalysisRoutes } from "./routes/legal-analysis.js";
+import { deepResearchRoutes } from "./routes/deep-research.js";
+import { providerRoutes } from "./routes/providers.js";
+import { testRoutes } from "./routes/test.js";
+import { dashboardRoutes } from "./routes/dashboard.js";
+import { youtubeRoutes } from "./routes/youtube.js";
+import { diagnosticsRoutes } from "./routes/diagnostics.js";
+import { apiModelsRoutes } from "./routes/api-models.js";
+import { documentGraphRoutes } from "./routes/document-graph.js";
 import { authMiddleware } from "./middleware/auth.js";
 const port = Number(process.env.API_PORT ?? 3001);
 const app = Fastify({
@@ -22,8 +32,16 @@ const app = Fastify({
 });
 // CORS
 app.register(cors, {
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: true, // Allow all origins in development
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+});
+// Multipart for file uploads
+app.register(multipart, {
+    limits: {
+        fileSize: 10 * 1024 * 1024, // 10MB
+    },
 });
 // Health check
 app.get("/health", async () => {
@@ -41,9 +59,18 @@ app.register(async (protectedApp) => {
     protectedApp.register(documentsRoutes, { prefix: "/api" });
     protectedApp.register(chatRoutes, { prefix: "/api" });
     protectedApp.register(dataSourcesRoutes, { prefix: "/api" });
+    protectedApp.register(legalAnalysisRoutes, { prefix: "/api" });
+    protectedApp.register(deepResearchRoutes, { prefix: "/api" });
+    protectedApp.register(dashboardRoutes, { prefix: "/api" });
+    protectedApp.register(youtubeRoutes, { prefix: "/api" });
+    protectedApp.register(diagnosticsRoutes, { prefix: "/api" });
+    protectedApp.register(documentGraphRoutes, { prefix: "/api" });
+    protectedApp.register(testRoutes, { prefix: "/api" });
 });
 // Public routes
 app.register(testApiRoutes, { prefix: "/api" });
+app.register(apiModelsRoutes, { prefix: "/api" });
+app.register(providerRoutes, { prefix: "/api" });
 // Error handler
 app.setErrorHandler((error, request, reply) => {
     app.log.error(error);

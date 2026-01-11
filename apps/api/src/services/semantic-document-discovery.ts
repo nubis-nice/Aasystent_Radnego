@@ -14,6 +14,7 @@ import OpenAI from "openai";
 import * as cheerio from "cheerio";
 import crypto from "crypto";
 import { DocumentProcessor } from "./document-processor.js";
+import { IntelligentScraper } from "./intelligent-scraper.js";
 
 /* eslint-disable no-undef */
 declare const fetch: typeof globalThis.fetch;
@@ -36,6 +37,8 @@ export interface SemanticSearchQuery {
   includeContent?: boolean;
   deepCrawl?: boolean; // Czy crawlować znalezione linki
   extractPDFs?: boolean; // Czy pobierać i OCR-ować PDFy
+  enableIntelligentScraping?: boolean; // Włącz inteligentny scraping gdy brak wyników
+  minResultsBeforeScraping?: number; // Minimalna liczba wyników przed uruchomieniem scrapingu
 }
 
 export interface DiscoveredDocument {
@@ -194,10 +197,47 @@ export class SemanticDocumentDiscovery {
 
       // Filtruj po minRelevance
       const minRelevance = query.minRelevance ?? 0.3;
-      result.documents = scoredResults
+      let filteredResults = scoredResults
         .filter((doc) => doc.relevanceScore >= minRelevance)
         .slice(0, query.maxResults || 20);
 
+      // PHASE 7: Intelligent Scraping - jeśli za mało wyników, uruchom scraping źródeł
+      const minResultsBeforeScraping = query.minResultsBeforeScraping ?? 3;
+      const shouldRunIntelligentScraping =
+        query.enableIntelligentScraping &&
+        filteredResults.length < minResultsBeforeScraping &&
+        query.sourceId;
+
+      if (shouldRunIntelligentScraping) {
+        console.log(
+          `[SemanticDiscovery] Not enough results (${filteredResults.length}), running intelligent scraping...`
+        );
+
+        const scrapingResults = await this.runIntelligentScraping(query);
+
+        if (scrapingResults.newDocuments > 0) {
+          console.log(
+            `[SemanticDiscovery] Intelligent scraping found ${scrapingResults.newDocuments} new documents, re-searching...`
+          );
+
+          // Re-run search po scrapingu
+          const newRagResults = await this.searchRAGDocuments(query);
+          const newScrapedResults = await this.searchScrapedContent(query);
+          const newMerged = this.mergeAndDeduplicate([
+            ...newRagResults,
+            ...newScrapedResults,
+          ]);
+          const newScored = await this.scoreRelevance(newMerged, query.query);
+
+          filteredResults = newScored
+            .filter((doc) => doc.relevanceScore >= minRelevance)
+            .slice(0, query.maxResults || 20);
+
+          result.newDocumentsProcessed += scrapingResults.newDocuments;
+        }
+      }
+
+      result.documents = filteredResults;
       result.totalFound = result.documents.length;
       result.success = true;
       result.errors = this.errors;
@@ -719,6 +759,90 @@ export class SemanticDocumentDiscovery {
     const cleaned = content.replace(/\s+/g, " ").trim();
     if (cleaned.length <= maxLength) return cleaned;
     return cleaned.slice(0, maxLength - 3) + "...";
+  }
+
+  // ============================================================================
+  // PHASE 7: INTELLIGENT SCRAPING
+  // ============================================================================
+
+  private async runIntelligentScraping(
+    query: SemanticSearchQuery
+  ): Promise<{ newDocuments: number; errors: string[] }> {
+    const result = { newDocuments: 0, errors: [] as string[] };
+
+    if (!query.sourceId) {
+      return result;
+    }
+
+    try {
+      // Pobierz konfigurację źródła
+      const { data: source } = await supabase
+        .from("data_sources")
+        .select("*")
+        .eq("id", query.sourceId)
+        .single();
+
+      if (!source || !source.url) {
+        result.errors.push("Source not found or has no URL");
+        return result;
+      }
+
+      console.log(
+        `[SemanticDiscovery] Running intelligent scraping on: ${source.url}`
+      );
+
+      // Uruchom IntelligentScraper z konfiguracją opartą na zapytaniu
+      const scraper = new IntelligentScraper(
+        source.url,
+        this.userId,
+        query.sourceId,
+        {
+          maxPages: 30, // Ograniczony scraping
+          maxDepth: 3,
+          delayMs: 500,
+          enableLLMAnalysis: true,
+          councilLocation: source.metadata?.councilLocation || "Drawno",
+          focusAreas: this.extractFocusAreasFromQuery(query.query),
+          incrementalMode: true,
+        }
+      );
+
+      const scrapingResult = await scraper.scrape();
+
+      result.newDocuments = scrapingResult.newDocuments;
+      result.errors = scrapingResult.errors;
+
+      console.log(
+        `[SemanticDiscovery] Intelligent scraping completed: ${result.newDocuments} new documents`
+      );
+    } catch (error) {
+      result.errors.push(
+        `Intelligent scraping error: ${
+          error instanceof Error ? error.message : "Unknown"
+        }`
+      );
+    }
+
+    return result;
+  }
+
+  private extractFocusAreasFromQuery(query: string): string[] {
+    // Wyciągnij kluczowe tematy z zapytania
+    const baseAreas = [
+      "sesje rady",
+      "uchwały",
+      "protokoły",
+      "materiały dla radnych",
+    ];
+
+    // Dodaj słowa kluczowe z zapytania
+    const queryWords = query
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((word) => word.length > 3);
+
+    // Połącz z bazowymi obszarami
+    return [...new Set([...baseAreas, ...queryWords])];
   }
 }
 

@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 export const testApiRoutes = async (fastify) => {
-    // POST /api/test-openai - Testowanie połączenia z OpenAI
+    // POST /api/test-openai - Testowanie połączenia z API providera
     fastify.post("/test-openai", {
         schema: {
             body: {
@@ -10,22 +10,46 @@ export const testApiRoutes = async (fastify) => {
                     apiKey: { type: "string" },
                     baseUrl: { type: "string" },
                     modelName: { type: "string" },
+                    provider: { type: "string" },
                 },
             },
         },
     }, async (request, reply) => {
-        const { apiKey, baseUrl, modelName } = request.body;
+        const { apiKey, baseUrl, modelName, provider } = request.body;
+        console.log("[TestAPI] Request params:", {
+            provider,
+            baseUrl,
+            modelName,
+            apiKeyLength: apiKey?.length,
+        });
         try {
-            // Utwórz klienta OpenAI
-            const openai = new OpenAI({
+            // Konfiguracja klienta z obsługą różnych metod autoryzacji
+            const clientConfig = {
                 apiKey,
                 baseURL: baseUrl || undefined,
-            });
-            // Test 1: Sprawdź dostępność modeli
-            const modelsResponse = await openai.models.list();
-            const models = modelsResponse.data.map((m) => m.id);
-            // Test 2: Jeśli podano model, sprawdź czy istnieje
-            if (modelName && !models.includes(modelName)) {
+            };
+            // Google Gemini native API używa x-goog-api-key
+            if (provider === "google" && baseUrl && !baseUrl.includes("/openai")) {
+                clientConfig.defaultHeaders = {
+                    "x-goog-api-key": apiKey,
+                };
+                clientConfig.apiKey = "dummy";
+            }
+            const openai = new OpenAI(clientConfig);
+            // Test 1: Sprawdź dostępność modeli (pomijamy dla Google native API)
+            let models = [];
+            if (provider !== "google" || (baseUrl && baseUrl.includes("/openai"))) {
+                try {
+                    const modelsResponse = await openai.models.list();
+                    models = modelsResponse.data.map((m) => m.id);
+                }
+                catch (e) {
+                    // Jeśli lista modeli nie działa, kontynuuj z testem completion
+                    console.log("Models list not available, skipping...");
+                }
+            }
+            // Test 2: Jeśli podano model, sprawdź czy istnieje (tylko jeśli mamy listę modeli)
+            if (modelName && models.length > 0 && !models.includes(modelName)) {
                 return reply.status(400).send({
                     success: false,
                     error: `Model ${modelName} nie jest dostępny`,
@@ -59,8 +83,10 @@ export const testApiRoutes = async (fastify) => {
         }
         catch (error) {
             fastify.log.error("OpenAI test failed:", error);
+            console.error("[TestAPI] Full error:", JSON.stringify(error, null, 2));
+            console.error("[TestAPI] Error message:", error.message);
+            console.error("[TestAPI] Error stack:", error.stack);
             let errorMessage = "Nieznany błąd";
-            let errorDetails = {};
             if (error.status === 401) {
                 errorMessage = "Nieprawidłowy klucz API";
             }
@@ -83,6 +109,7 @@ export const testApiRoutes = async (fastify) => {
                     status: error.status,
                     code: error.code,
                     type: error.type,
+                    message: error.message,
                 },
             });
         }

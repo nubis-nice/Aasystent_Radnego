@@ -505,28 +505,26 @@ export async function scrapeDataSourceV2(sourceId, userId) {
 async function processScrapedContentV2(sourceId, userId) {
     console.log("[Scraper] Starting processScrapedContentV2 for source:", sourceId, "user:", userId);
     let processedCount = 0;
-    const { data: unprocessedContent, error: fetchError } = await supabase
+    const { data: unprocessedContent } = await supabase
         .from("scraped_content")
         .select("*")
         .eq("source_id", sourceId)
         .order("scraped_at", { ascending: false })
         .limit(100);
-    if (fetchError) {
-        console.error("[Scraper] Error fetching scraped_content:", fetchError);
-        return 0;
-    }
     console.log("[Scraper] Found scraped content items:", unprocessedContent?.length || 0);
     if (!unprocessedContent || unprocessedContent.length === 0) {
         console.log("[Scraper] No unprocessed content found, returning 0");
         return 0;
     }
-    // Pobierz klucz OpenAI z bazy danych (api_keys) lub ze zmiennej środowiskowej
-    console.log("[Scraper] Looking for API key for user:", userId);
+    // Pobierz konfigurację OpenAI z bazy danych (api_configurations)
+    console.log("[Scraper] Looking for API config for user:", userId);
     const { data: apiConfig, error: apiError } = await supabase
-        .from("api_keys")
+        .from("api_configurations")
         .select("*")
         .eq("user_id", userId)
         .eq("provider", "openai")
+        .eq("is_active", true)
+        .eq("is_default", true)
         .single();
     if (apiError) {
         console.log("[Scraper] API key query error:", apiError.message);
@@ -534,10 +532,15 @@ async function processScrapedContentV2(sourceId, userId) {
     console.log("[Scraper] API config found:", apiConfig ? "yes" : "no");
     let openaiApiKey = process.env.OPENAI_API_KEY;
     let openaiBaseUrl = undefined;
+    let embeddingModel = "text-embedding-3-small"; // domyślny model
     if (apiConfig) {
         openaiApiKey = Buffer.from(apiConfig.api_key_encrypted, "base64").toString("utf-8");
         openaiBaseUrl = apiConfig.base_url || undefined;
-        console.log("[Scraper] Using OpenAI API key from database");
+        // Użyj modelu embeddings z konfiguracji jeśli określony
+        if (apiConfig.embedding_model) {
+            embeddingModel = apiConfig.embedding_model;
+        }
+        console.log("[Scraper] Using OpenAI API key from database, embedding model:", embeddingModel);
     }
     else {
         console.log("[Scraper] No API config in DB, checking env variable");
@@ -567,7 +570,7 @@ async function processScrapedContentV2(sourceId, userId) {
             let embedding = null;
             try {
                 const embeddingResponse = await openai.embeddings.create({
-                    model: "text-embedding-3-small",
+                    model: embeddingModel,
                     input: `${content.title || ""}\n\n${content.raw_content.substring(0, 5000)}`,
                 });
                 embedding = embeddingResponse.data[0]?.embedding ?? null;

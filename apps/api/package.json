@@ -21,6 +21,7 @@
     "dotenv": "^16.4.5",
     "fastify": "^5.2.1",
     "mammoth": "^1.11.0",
+    "node-poppler": "^9.1.0",
     "openai": "^6.15.0",
     "pdf-parse": "^2.4.5",
     "pino-pretty": "^13.1.3"

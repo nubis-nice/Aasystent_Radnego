@@ -106,7 +106,8 @@ export interface YouTubeTranscriptionResult {
 
 export async function transcribeYouTubeVideo(
   videoUrl: string,
-  videoTitle?: string
+  videoTitle?: string,
+  includeSentiment?: boolean
 ): Promise<YouTubeTranscriptionResult> {
   const token = await getAuthToken();
 
@@ -116,7 +117,7 @@ export async function transcribeYouTubeVideo(
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ videoUrl, videoTitle }),
+    body: JSON.stringify({ videoUrl, videoTitle, includeSentiment }),
   });
 
   const data = await response.json();

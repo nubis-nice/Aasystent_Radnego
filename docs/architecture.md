@@ -174,12 +174,56 @@ Minimalny zestaw (MVP):
 
 - `Document`, `DocumentVersion`, `ExtractedText`, `Metadata`, `Chunk`, `Analysis`, `Recording`, `Transcript`, `Screenplay`
 
-## 7. Konfiguracja OpenAI (bezpieczna)
+## 7. Konfiguracja Providerów AI (2026-01-11)
+
+### 7.1 Architektura Multi-Provider
+
+System obsługuje wielu providerów AI z podziałem na **5 niezależnych funkcji**:
+
+| Funkcja        | Opis                   | Przykładowe providery          |
+| -------------- | ---------------------- | ------------------------------ |
+| **LLM**        | Modele językowe (chat) | OpenAI, Ollama, Anthropic      |
+| **Embeddings** | Wektory semantyczne    | OpenAI, Ollama                 |
+| **Vision**     | Analiza obrazów        | OpenAI GPT-4V, Ollama LLaVA    |
+| **STT**        | Speech-to-Text         | OpenAI Whisper, faster-whisper |
+| **TTS**        | Text-to-Speech         | OpenAI TTS, Piper              |
+
+### 7.2 Presety Konfiguracji
+
+- **OpenAI** - pełna konfiguracja OpenAI API
+- **Ollama (Local)** - lokalne modele + faster-whisper-server dla STT
+- **Custom** - dowolny endpoint z wyborem protokołu API
+
+### 7.3 Struktura Kodu
+
+```text
+apps/api/src/ai/
+├── index.ts                    # Eksport publiczny
+├── defaults.ts                 # Presety konfiguracji
+├── types.ts                    # Typy i interfejsy
+├── ai-config-resolver.ts       # Resolver konfiguracji z cache
+├── ai-client-factory.ts        # Fabryka klientów AI
+└── clients/
+    ├── llm-client.ts           # Klient LLM
+    ├── embeddings-client.ts    # Klient embeddingów
+    ├── vision-client.ts        # Klient vision
+    ├── stt-client.ts           # Klient STT
+    └── tts-client.ts           # Klient TTS
+```
+
+### 7.4 Baza Danych
+
+- `ai_configurations` - główna konfiguracja użytkownika (preset, is_default)
+- `ai_providers` - konfiguracja każdej funkcji AI (LLM, Embeddings, Vision, STT, TTS)
+
+### 7.5 Zmienne Środowiskowe (fallback)
 
 - `OPENAI_API_KEY` (w `.env`, nie commitować)
 - `OPENAI_MODEL`
 - `OPENAI_EMBEDDING_MODEL`
 - opcjonalnie: `OPENAI_BASE_URL`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`
+
+Szczegóły: `docs/ai_provider_refactoring_plan.md`
 
 ## 8. Granice odpowiedzialności
 
@@ -219,6 +263,13 @@ Minimalny zestaw (MVP):
   - `deep-research-service.ts` - multi-provider research
   - `unified-data-service.ts` - orkiestrator pobierania danych
   - `scraper-v2.ts` - web scraping z Cheerio
+  - `semantic-document-discovery.ts` - semantic search z intelligent scraping
+  - `document-analysis-service.ts` - analiza dokumentów z crawlingiem źródeł
+  - `intelligent-scraper.ts` - zaawansowany scraper z LLM analysis
+  - `context-compressor.ts` - kompresja kontekstu AI (tokenizer, summaryzacja)
+  - `batch-embedding-service.ts` - OpenAI Batch API dla embeddingów (50% taniej)
+  - `document-processor.ts` - przetwarzanie PDF/DOCX z OCR (Tesseract.js + Sharp)
+  - `document-query-service.ts` - inteligentne wykrywanie dokumentów w chacie (ID/nazwa → RAG → potwierdzenie)
 
 - **Data Fetchers**:
 

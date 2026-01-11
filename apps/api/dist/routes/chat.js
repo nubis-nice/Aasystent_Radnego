@@ -2,9 +2,82 @@ import { ZodError } from "zod";
 import OpenAI from "openai";
 import { ChatRequestSchema, buildSystemPrompt, } from "@aasystent-radnego/shared";
 import { createClient } from "@supabase/supabase-js";
+import { decryptApiKey } from "../utils/encryption.js";
+import { optimizeContext, } from "../services/context-compressor.js";
+import { DocumentQueryService } from "../services/document-query-service.js";
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
+/**
+ * Generuje embedding dla długiego tekstu używając batch processing
+ * Dzieli tekst na chunki, generuje embedding dla każdego, agreguje wyniki
+ *
+ * Strategia agregacji: średnia ważona wektorów (weighted by chunk length)
+ * To zachowuje semantykę całego tekstu zamiast tracić informacje przez obcinanie
+ */
+async function generateBatchEmbedding(client, text, model, maxChunkChars = 18000) {
+    // Jeśli tekst mieści się w limicie - pojedyncze wywołanie
+    if (text.length <= maxChunkChars) {
+        console.log(`[Embedding] Single chunk: ${text.length} chars`);
+        const response = await client.embeddings.create({
+            model,
+            input: text,
+        });
+        return response.data[0].embedding;
+    }
+    // Podziel tekst na chunki z overlap dla zachowania kontekstu
+    const overlap = 500; // 500 znaków overlap między chunkami
+    const chunks = [];
+    let start = 0;
+    while (start < text.length) {
+        const end = Math.min(start + maxChunkChars, text.length);
+        let chunk = text.slice(start, end);
+        // Znajdź koniec zdania dla naturalnego podziału
+        if (end < text.length) {
+            const lastPeriod = chunk.lastIndexOf(". ");
+            const lastNewline = chunk.lastIndexOf("\n");
+            const breakPoint = Math.max(lastPeriod, lastNewline);
+            if (breakPoint > maxChunkChars * 0.7) {
+                chunk = chunk.slice(0, breakPoint + 1);
+                start += breakPoint + 1 - overlap;
+            }
+            else {
+                start = end - overlap;
+            }
+        }
+        else {
+            start = end;
+        }
+        if (chunk.trim().length > 100) {
+            chunks.push(chunk.trim());
+        }
+    }
+    console.log(`[Embedding] Batch processing: ${chunks.length} chunks from ${text.length} chars`);
+    // Generuj embeddingi dla wszystkich chunków (batch API)
+    const response = await client.embeddings.create({
+        model,
+        input: chunks,
+    });
+    // Agregacja: średnia ważona wektorów według długości chunków
+    const embeddings = response.data.map((d) => d.embedding);
+    const weights = chunks.map((c) => c.length);
+    const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+    // Oblicz średnią ważoną dla każdego wymiaru wektora
+    const dimensions = embeddings[0].length;
+    const aggregatedEmbedding = new Array(dimensions).fill(0);
+    for (let dim = 0; dim < dimensions; dim++) {
+        let weightedSum = 0;
+        for (let i = 0; i < embeddings.length; i++) {
+            weightedSum += embeddings[i][dim] * weights[i];
+        }
+        aggregatedEmbedding[dim] = weightedSum / totalWeight;
+    }
+    // Normalizacja wektora (L2 norm) - ważne dla similarity search
+    const norm = Math.sqrt(aggregatedEmbedding.reduce((sum, val) => sum + val * val, 0));
+    const normalizedEmbedding = aggregatedEmbedding.map((val) => val / norm);
+    console.log(`[Embedding] Aggregated ${chunks.length} embeddings into single vector`);
+    return normalizedEmbedding;
+}
 export const chatRoutes = async (fastify) => {
     // POST /api/chat/message - Wyślij wiadomość do AI
     fastify.post("/chat/message", async (request, reply) => {
@@ -23,33 +96,73 @@ export const chatRoutes = async (fastify) => {
                 .select("*")
                 .eq("user_id", userId)
                 .single();
-            // Pobierz konfigurację OpenAI użytkownika (domyślną i aktywną)
+            // Pobierz domyślną konfigurację API użytkownika (dowolny provider)
             const { data: apiConfig } = await supabase
                 .from("api_configurations")
                 .select("*")
                 .eq("user_id", userId)
                 .eq("is_active", true)
                 .eq("is_default", true)
-                .eq("provider", "openai")
                 .single();
+            // Domyślne URL dla providerów kompatybilnych z OpenAI API
+            const providerBaseUrls = {
+                openai: "https://api.openai.com/v1",
+                local: "http://localhost:11434/v1", // Ollama default
+                other: "", // Custom endpoint
+            };
             // Jeśli użytkownik nie ma konfiguracji, użyj zmiennej środowiskowej
-            let openaiApiKey = process.env.OPENAI_API_KEY;
-            let openaiModel = process.env.OPENAI_MODEL || "gpt-4-turbo-preview";
-            let openaiBaseUrl = undefined;
+            let apiKey = process.env.OPENAI_API_KEY;
+            let model = process.env.OPENAI_MODEL || "gpt-4-turbo-preview";
+            let baseUrl = undefined;
+            let embeddingModel = "text-embedding-3-small";
+            let provider = "openai";
             if (apiConfig) {
-                // Odszyfruj klucz API (base64)
-                openaiApiKey = Buffer.from(apiConfig.api_key_encrypted, "base64").toString("utf-8");
-                openaiModel = apiConfig.model_name || openaiModel;
-                openaiBaseUrl = apiConfig.base_url || undefined;
+                // Obsługa kluczy - base64 (domyślnie) lub AES-256-GCM (gdy encryption_iv istnieje)
+                const hasEncryptionIv = apiConfig.encryption_iv &&
+                    typeof apiConfig.encryption_iv === "string" &&
+                    apiConfig.encryption_iv.trim().length > 0;
+                if (hasEncryptionIv) {
+                    // Nowy format - AES-256-GCM
+                    console.log("[Chat] Decrypting API key using AES-256-GCM");
+                    try {
+                        apiKey = decryptApiKey(apiConfig.api_key_encrypted, apiConfig.encryption_iv);
+                    }
+                    catch (e) {
+                        console.error("[Chat] AES decryption failed, trying base64:", e);
+                        apiKey = Buffer.from(apiConfig.api_key_encrypted, "base64").toString("utf-8");
+                    }
+                }
+                else {
+                    // Stary format - base64
+                    console.log("[Chat] Decrypting API key using base64");
+                    const decoded = Buffer.from(apiConfig.api_key_encrypted, "base64").toString("utf-8");
+                    // Obsługa kodowania encodeURIComponent z frontendu
+                    try {
+                        apiKey = decodeURIComponent(decoded);
+                    }
+                    catch {
+                        // Jeśli nie jest URI encoded, użyj bezpośrednio
+                        apiKey = decoded;
+                    }
+                }
+                // Validate API key format
+                console.log(`[Chat] API key decrypted, length: ${apiKey?.length || 0}, starts with sk-: ${apiKey?.startsWith("sk-")}`);
+                model = apiConfig.model_name || model;
+                provider = apiConfig.provider;
+                // Ustaw baseUrl - użyj custom URL lub domyślnego dla providera
+                baseUrl = apiConfig.base_url || providerBaseUrls[provider] || undefined;
+                // Użyj embedding model z konfiguracji lub domyślny
+                embeddingModel = apiConfig.embedding_model || "text-embedding-3-small";
+                console.log(`[Chat] Using provider: ${provider}, model: ${model}, baseUrl: ${baseUrl}, embeddingModel: ${embeddingModel}`);
                 // Zaktualizuj last_used_at
                 await supabase
                     .from("api_configurations")
                     .update({ last_used_at: new Date().toISOString() })
                     .eq("id", apiConfig.id);
             }
-            if (!openaiApiKey) {
+            if (!apiKey) {
                 return reply.status(400).send({
-                    error: "Brak konfiguracji OpenAI. Przejdź do Ustawienia → Konfiguracja API i dodaj klucz OpenAI.",
+                    error: "Brak konfiguracji API. Przejdź do Ustawienia → Konfiguracja API i dodaj klucz API.",
                 });
             }
             // Pobierz lub utwórz konwersację
@@ -82,61 +195,157 @@ export const chatRoutes = async (fastify) => {
                 .eq("conversation_id", currentConversationId)
                 .order("created_at", { ascending: true })
                 .limit(10);
+            // ========================================================================
+            // PHASE 1: WYKRYWANIE DOKUMENTÓW W WIADOMOŚCI
+            // Zamiast przekazywać pełną treść, wykrywamy ID/nazwę i szukamy w RAG
+            // ========================================================================
+            const documentQueryService = new DocumentQueryService(userId);
+            await documentQueryService.initialize();
+            const documentQuery = await documentQueryService.queryDocuments(message);
+            // Jeśli wykryto dokument i wymaga potwierdzenia - zwróć pytanie
+            if (documentQuery.found &&
+                documentQuery.needsConfirmation &&
+                documentQuery.confirmationMessage) {
+                console.log(`[Chat] Document detected, asking for confirmation`);
+                // Zapisz odpowiedź asystenta z pytaniem o potwierdzenie
+                const confirmationResponse = documentQuery.confirmationMessage;
+                const { data: confirmationMessage } = await supabase
+                    .from("messages")
+                    .insert({
+                    conversation_id: currentConversationId,
+                    role: "assistant",
+                    content: confirmationResponse,
+                })
+                    .select()
+                    .single();
+                return reply.send({
+                    conversationId: currentConversationId,
+                    message: confirmationMessage || {
+                        id: `temp-${Date.now()}`,
+                        conversationId: currentConversationId,
+                        role: "assistant",
+                        content: confirmationResponse,
+                        citations: [],
+                        createdAt: new Date().toISOString(),
+                    },
+                    citations: [],
+                    documentQuery: {
+                        found: true,
+                        matches: documentQuery.matches,
+                        needsConfirmation: true,
+                    },
+                });
+            }
+            // Jeśli dokument znaleziony bez potrzeby potwierdzenia - pobierz kontekst
+            let documentContext = null;
+            if (documentQuery.found &&
+                !documentQuery.needsConfirmation &&
+                documentQuery.matches.length > 0) {
+                const primaryDoc = documentQuery.matches[0];
+                if (primaryDoc) {
+                    console.log(`[Chat] Document found by ID: ${primaryDoc.id}, fetching context`);
+                    documentContext = await documentQueryService.getDocumentContext(primaryDoc.id, message);
+                }
+            }
             // Przygotuj kontekst RAG
             let ragContext;
             if (includeDocuments || includeMunicipalData) {
-                // Generuj embedding dla zapytania (używamy konfiguracji użytkownika)
-                const embeddingOpenai = new OpenAI({
-                    apiKey: openaiApiKey,
-                    baseURL: openaiBaseUrl,
-                });
-                const embeddingResponse = await embeddingOpenai.embeddings.create({
-                    model: "text-embedding-3-small",
-                    input: message,
-                });
-                const queryEmbedding = embeddingResponse.data[0].embedding;
-                ragContext = {
-                    documents: [],
-                    municipalData: [],
-                };
-                // Wyszukaj w przetworzonych dokumentach (źródła danych)
-                if (includeDocuments || includeMunicipalData) {
-                    const { data: relevantDocs } = await supabase.rpc("search_processed_documents", {
-                        query_embedding: queryEmbedding,
-                        match_threshold: 0.7,
-                        match_count: 5,
-                        filter_user_id: userId,
-                        filter_types: null, // Wszystkie typy dokumentów
-                    });
-                    if (relevantDocs && relevantDocs.length > 0) {
-                        // Rozdziel dokumenty na kategorie
-                        relevantDocs.forEach((doc) => {
-                            const docData = {
-                                id: doc.id,
-                                title: doc.title,
-                                content: doc.content,
-                                relevanceScore: doc.similarity,
-                                metadata: {
-                                    documentType: doc.document_type,
-                                    publishDate: doc.publish_date,
-                                    sourceUrl: doc.source_url,
-                                },
-                            };
-                            // Dokumenty użytkownika vs dane gminy
-                            if (includeDocuments && doc.document_type !== "news") {
-                                ragContext.documents.push(docData);
-                            }
-                            if (includeMunicipalData &&
-                                ["news", "resolution", "protocol", "announcement"].includes(doc.document_type)) {
-                                ragContext.municipalData.push({
+                // ZAWSZE używaj OpenAI API dla embeddings (zunifikowany format 1536 wymiarów)
+                // Niezależnie od providera używanego do chatu
+                // Fallback: jeśli OPENAI_API_KEY nie jest w env, użyj klucza użytkownika (jeśli provider to OpenAI)
+                const openaiApiKey = process.env.OPENAI_API_KEY ||
+                    (provider === "openai" ? apiKey : undefined);
+                if (!openaiApiKey) {
+                    console.log("[Chat] Skipping RAG - no OpenAI API key available");
+                    ragContext = undefined;
+                }
+                else {
+                    const embeddingConfig = {
+                        apiKey: openaiApiKey,
+                        baseURL: undefined, // Zawsze oficjalne OpenAI API
+                    };
+                    const embeddingOpenai = new OpenAI(embeddingConfig);
+                    // Batch embedding dla długich wiadomości
+                    // text-embedding-3-small: limit 8192 tokenów ≈ 20000 znaków
+                    const maxChunkChars = 18000;
+                    const queryEmbedding = await generateBatchEmbedding(embeddingOpenai, message, embeddingModel, maxChunkChars);
+                    ragContext = {
+                        documents: [],
+                        municipalData: [],
+                    };
+                    // Wyszukaj w przetworzonych dokumentach (źródła danych)
+                    if (includeDocuments || includeMunicipalData) {
+                        console.log("[Chat] Searching documents for user:", userId);
+                        console.log("[Chat] Embedding generated, length:", queryEmbedding.length);
+                        // Diagnostyka: ile dokumentów ma embeddingi
+                        const { count: totalDocs } = await supabase
+                            .from("processed_documents")
+                            .select("*", { count: "exact", head: true })
+                            .eq("user_id", userId);
+                        const { count: docsWithEmbedding } = await supabase
+                            .from("processed_documents")
+                            .select("*", { count: "exact", head: true })
+                            .eq("user_id", userId)
+                            .not("embedding", "is", null);
+                        console.log("[Chat] Documents stats:", {
+                            total: totalDocs,
+                            withEmbedding: docsWithEmbedding,
+                        });
+                        const { data: relevantDocs, error: searchError } = await supabase.rpc("search_processed_documents", {
+                            query_embedding: queryEmbedding,
+                            match_threshold: 0.3, // Obniżony próg dla lepszych wyników
+                            match_count: 10,
+                            filter_user_id: userId,
+                            filter_types: null, // Wszystkie typy dokumentów
+                        });
+                        console.log("[Chat] Search result:", {
+                            found: relevantDocs?.length || 0,
+                            error: searchError?.message || null,
+                        });
+                        if (relevantDocs && relevantDocs.length > 0) {
+                            // Log document types for debugging
+                            const docTypes = relevantDocs.map((d) => d.document_type);
+                            console.log("[Chat] Found document types:", docTypes);
+                            // Dodaj wszystkie znalezione dokumenty do kontekstu
+                            relevantDocs.forEach((doc) => {
+                                const docData = {
                                     id: doc.id,
                                     title: doc.title,
-                                    content: doc.content || "",
-                                    dataType: doc.document_type,
+                                    content: doc.content,
                                     relevanceScore: doc.similarity,
-                                });
-                            }
-                        });
+                                    metadata: {
+                                        documentType: doc.document_type,
+                                        publishDate: doc.publish_date,
+                                        sourceUrl: doc.source_url,
+                                    },
+                                };
+                                // Zawsze dodaj do dokumentów jeśli włączone
+                                if (includeDocuments) {
+                                    ragContext.documents.push(docData);
+                                }
+                                // Dodaj do danych gminnych jeśli to odpowiedni typ
+                                if (includeMunicipalData &&
+                                    [
+                                        "news",
+                                        "resolution",
+                                        "protocol",
+                                        "announcement",
+                                        "article",
+                                    ].includes(doc.document_type)) {
+                                    ragContext.municipalData.push({
+                                        id: doc.id,
+                                        title: doc.title,
+                                        content: doc.content || "",
+                                        dataType: doc.document_type,
+                                        relevanceScore: doc.similarity,
+                                    });
+                                }
+                            });
+                            console.log("[Chat] RAG context built:", {
+                                documents: ragContext.documents.length,
+                                municipalData: ragContext.municipalData.length,
+                            });
+                        }
                     }
                 }
             }
@@ -148,56 +357,141 @@ export const chatRoutes = async (fastify) => {
                 userPosition: profile?.position,
             };
             const systemPrompt = buildSystemPrompt(systemPromptContext);
+            // ========================================================================
+            // CONTEXT COMPRESSION - optymalizacja kontekstu dla oszczędności tokenów
+            // ========================================================================
+            // Przygotuj dokumenty do kompresji
+            // WAŻNE: Jeśli mamy documentContext z wykrytego dokumentu, użyj chunków zamiast pełnej treści
+            let ragDocuments = [];
+            if (documentContext && documentContext.relevantChunks.length > 0) {
+                // Użyj chunków z wykrytego dokumentu (nie pełnej treści!)
+                console.log(`[Chat] Using ${documentContext.relevantChunks.length} chunks from detected document`);
+                ragDocuments = [
+                    {
+                        id: documentContext.documentId,
+                        title: documentContext.title,
+                        content: documentContext.relevantChunks
+                            .map((c) => c.content)
+                            .join("\n\n---\n\n"),
+                        relevanceScore: 1.0,
+                        metadata: { documentType: documentContext.documentType },
+                    },
+                ];
+                // Dodaj powiązane dokumenty i załączniki (tylko metadane)
+                documentContext.relatedDocuments.forEach((doc) => {
+                    ragDocuments.push({
+                        id: doc.id,
+                        title: `[Powiązany] ${doc.title}`,
+                        content: doc.summary || `Dokument typu: ${doc.documentType}`,
+                        relevanceScore: doc.similarity,
+                        metadata: { documentType: doc.documentType, isRelated: true },
+                    });
+                });
+                documentContext.attachments.forEach((att) => {
+                    ragDocuments.push({
+                        id: att.id,
+                        title: `[Załącznik] ${att.title}`,
+                        content: att.summary || `Załącznik typu: ${att.documentType}`,
+                        relevanceScore: 1.0,
+                        metadata: { documentType: att.documentType, isAttachment: true },
+                    });
+                });
+            }
+            else {
+                // Standardowy RAG z wyszukiwania semantycznego
+                ragDocuments =
+                    ragContext?.documents.map((doc) => ({
+                        id: doc.id,
+                        title: doc.title,
+                        content: doc.content,
+                        relevanceScore: doc.relevanceScore,
+                        metadata: doc.metadata,
+                    })) || [];
+            }
+            const ragMunicipalData = ragContext?.municipalData.map((item) => ({
+                id: item.id,
+                title: item.title,
+                content: item.content,
+                relevanceScore: item.relevanceScore,
+                metadata: { dataType: item.dataType },
+            })) || [];
+            // Przygotuj historię konwersacji
+            const conversationHistory = (history || []).map((msg) => ({
+                role: msg.role,
+                content: msg.content,
+            }));
+            // Optymalizuj kontekst z kompresją
+            const optimized = optimizeContext(systemPrompt, ragDocuments, ragMunicipalData, conversationHistory, message, model, 2000 // max completion tokens
+            );
+            // Log oszczędności
+            console.log(`[Chat] Context optimization:`, {
+                originalTokens: optimized.savings.originalTokens,
+                compressedTokens: optimized.savings.compressedTokens,
+                savedTokens: optimized.savings.savedTokens,
+                savingsPercent: `${optimized.savings.savingsPercent}%`,
+                model,
+            });
             // Przygotuj kontekst dla AI
             const messages = [
                 {
                     role: "system",
-                    content: systemPrompt,
+                    content: optimized.systemPrompt,
                 },
             ];
-            // Dodaj kontekst RAG jeśli dostępny
-            if (ragContext &&
-                (ragContext.documents.length > 0 || ragContext.municipalData.length > 0)) {
-                let contextMessage = "# DOSTĘPNY KONTEKST\n\n";
-                if (ragContext.documents.length > 0) {
-                    contextMessage += "## Dokumenty użytkownika:\n\n";
-                    ragContext.documents.forEach((doc, idx) => {
-                        contextMessage += `### [${idx + 1}] ${doc.title}\n${doc.content}\n\n`;
-                    });
-                }
-                if (ragContext.municipalData.length > 0) {
-                    contextMessage += "## Dane z gminy/miasta:\n\n";
-                    ragContext.municipalData.forEach((item, idx) => {
-                        contextMessage += `### [${idx + 1}] ${item.title} (${item.dataType})\n${item.content}\n\n`;
-                    });
-                }
-                contextMessage +=
-                    "\nOdpowiadając na pytanie użytkownika, wykorzystaj powyższy kontekst i zawsze cytuj źródła.";
+            // Dodaj skompresowany kontekst RAG jeśli dostępny
+            if (optimized.ragContextMessage) {
                 messages.push({
                     role: "system",
-                    content: contextMessage,
+                    content: optimized.ragContextMessage,
                 });
             }
-            // Dodaj historię konwersacji
-            if (history) {
-                history.forEach((msg) => {
+            // Dodaj skompresowaną historię konwersacji
+            if (optimized.historyMessages.length > 0) {
+                optimized.historyMessages.forEach((msg) => {
                     messages.push({
                         role: msg.role,
                         content: msg.content,
                     });
                 });
             }
-            // Wywołaj OpenAI z konfiguracją użytkownika
-            const openai = new OpenAI({
-                apiKey: openaiApiKey,
-                baseURL: openaiBaseUrl,
+            // Dodaj aktualną wiadomość użytkownika
+            messages.push({
+                role: "user",
+                content: optimized.userMessage,
             });
-            const completion = await openai.chat.completions.create({
-                model: openaiModel,
+            // Wywołaj AI z konfiguracją użytkownika
+            const clientConfig = {
+                apiKey: apiKey,
+                baseURL: baseUrl,
+            };
+            // Google Gemini native API używa x-goog-api-key
+            if (provider === "google" && baseUrl && !baseUrl.includes("/openai")) {
+                clientConfig.defaultHeaders = {
+                    "x-goog-api-key": apiKey,
+                };
+                clientConfig.apiKey = "dummy"; // OpenAI client wymaga apiKey, ale nie jest używany
+            }
+            const openai = new OpenAI(clientConfig);
+            // Użyj max_completion_tokens dla nowych modeli OpenAI, max_tokens dla starszych
+            const completionParams = {
+                model: model,
                 messages,
                 temperature: temperature || 0.7,
-                max_tokens: 2000,
-            });
+            };
+            // Nowe modele OpenAI używają max_completion_tokens
+            // Wszystkie modele gpt-4o* (gpt-4o, gpt-4o-mini) i gpt-4-turbo
+            if (model.includes("gpt-4o") ||
+                model.includes("gpt-4-turbo") ||
+                model.includes("o1")) {
+                completionParams.max_completion_tokens = 2000;
+            }
+            else {
+                completionParams.max_tokens = 2000;
+            }
+            // Log przed wywołaniem API
+            console.log(`[Chat] Calling LLM with ${messages.length} messages, model: ${model}`);
+            console.log(`[Chat] Estimated total tokens: ${optimized.totalTokens}`);
+            const completion = await openai.chat.completions.create(completionParams);
             const aiResponse = completion.choices[0]?.message?.content ||
                 "Przepraszam, nie mogę wygenerować odpowiedzi.";
             // Przygotuj cytaty
@@ -206,15 +500,15 @@ export const chatRoutes = async (fastify) => {
                 ragContext.documents.forEach((doc) => {
                     citations.push({
                         documentId: doc.id,
-                        documentTitle: doc.title,
-                        text: doc.content.substring(0, 200) + "...",
+                        documentTitle: doc.title || "Bez tytułu",
+                        text: (doc.content || "").substring(0, 200) + "...",
                         relevanceScore: doc.relevanceScore,
                     });
                 });
                 ragContext.municipalData.forEach((item) => {
                     citations.push({
-                        documentTitle: `${item.title} (${item.dataType})`,
-                        text: item.content.substring(0, 200) + "...",
+                        documentTitle: `${item.title || "Bez tytułu"} (${item.dataType})`,
+                        text: (item.content || "").substring(0, 200) + "...",
                         relevanceScore: item.relevanceScore,
                     });
                 });
@@ -230,10 +524,17 @@ export const chatRoutes = async (fastify) => {
             })
                 .select()
                 .single();
-            // Zwróć odpowiedź
+            // Zwróć odpowiedź - zawsze z message zawierającym id
             return reply.send({
                 conversationId: currentConversationId,
-                message: aiMessage,
+                message: aiMessage || {
+                    id: `temp-${Date.now()}`,
+                    conversationId: currentConversationId,
+                    role: "assistant",
+                    content: aiResponse,
+                    citations: citations,
+                    createdAt: new Date().toISOString(),
+                },
                 relatedDocuments: ragContext?.documents.map((doc) => ({
                     id: doc.id,
                     title: doc.title,
@@ -247,14 +548,42 @@ export const chatRoutes = async (fastify) => {
                     .status(400)
                     .send({ error: "Validation error", details: error.issues });
             }
-            fastify.log.error("Chat error:", error);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            const errorStack = error instanceof Error ? error.stack : undefined;
+            console.error("[Chat] Error:", errorMessage);
+            if (errorStack) {
+                console.error("[Chat] Stack:", errorStack);
+            }
+            // Obsługa błędu wyczerpania limitu OpenAI (429)
+            if (errorMessage.includes("exceeded your current quota") ||
+                errorMessage.includes("insufficient_quota") ||
+                errorMessage.includes("429")) {
+                return reply.status(402).send({
+                    error: "QUOTA_EXCEEDED",
+                    message: "Wyczerpano limit API OpenAI. Doładuj konto lub zmień klucz API.",
+                    details: "Twój klucz API OpenAI wyczerpał dostępny limit. Aby kontynuować korzystanie z Asystenta AI, musisz doładować konto OpenAI.",
+                    billingUrl: "https://platform.openai.com/account/billing/overview",
+                    settingsUrl: "/settings/api",
+                });
+            }
+            // Obsługa błędu nieprawidłowego klucza API
+            if (errorMessage.includes("invalid_api_key") ||
+                errorMessage.includes("Incorrect API key")) {
+                return reply.status(401).send({
+                    error: "INVALID_API_KEY",
+                    message: "Nieprawidłowy klucz API OpenAI.",
+                    details: "Sprawdź poprawność klucza API w ustawieniach.",
+                    settingsUrl: "/settings/api",
+                });
+            }
             return reply.status(500).send({
-                error: "Failed to process chat message",
+                error: "CHAT_ERROR",
+                message: "Nie udało się przetworzyć wiadomości.",
                 details: error instanceof Error ? error.message : "Unknown error",
             });
         }
     });
-    // GET /api/chat/conversations - Pobierz listę konwersacji
+    // GET /api/chat/conversations - Pobierz listę konwersacji z ostatnią wiadomością
     fastify.get("/chat/conversations", async (request, reply) => {
         try {
             const userId = request.headers["x-user-id"];
@@ -270,7 +599,30 @@ export const chatRoutes = async (fastify) => {
             if (error) {
                 throw error;
             }
-            return reply.send({ conversations });
+            // Dla każdej konwersacji pobierz ostatnią wiadomość i liczbę wiadomości
+            const conversationsWithDetails = await Promise.all((conversations || []).map(async (conv) => {
+                // Pobierz ostatnią wiadomość
+                const { data: lastMessage } = await supabase
+                    .from("messages")
+                    .select("content, created_at, role")
+                    .eq("conversation_id", conv.id)
+                    .order("created_at", { ascending: false })
+                    .limit(1)
+                    .single();
+                // Policz wiadomości
+                const { count } = await supabase
+                    .from("messages")
+                    .select("*", { count: "exact", head: true })
+                    .eq("conversation_id", conv.id);
+                return {
+                    ...conv,
+                    lastMessage: lastMessage?.content || null,
+                    lastMessageAt: lastMessage?.created_at || conv.updated_at,
+                    lastMessageRole: lastMessage?.role || null,
+                    messageCount: count || 0,
+                };
+            }));
+            return reply.send({ conversations: conversationsWithDetails });
         }
         catch (error) {
             fastify.log.error("Error fetching conversations:", error);
@@ -321,21 +673,26 @@ export const chatRoutes = async (fastify) => {
         try {
             const userId = request.headers["x-user-id"];
             if (!userId) {
+                console.log("[DELETE] Unauthorized - no user ID");
                 return reply.status(401).send({ error: "Unauthorized" });
             }
             const { id } = request.params;
+            console.log("[DELETE] Deleting conversation:", { id, userId });
             const { error } = await supabase
                 .from("conversations")
                 .delete()
                 .eq("id", id)
                 .eq("user_id", userId);
             if (error) {
+                console.error("[DELETE] Supabase error:", error);
                 throw error;
             }
+            console.log("[DELETE] Successfully deleted conversation:", id);
             return reply.send({ success: true });
         }
         catch (error) {
             fastify.log.error("Error deleting conversation:", error);
+            console.error("[DELETE] Full error:", error);
             return reply.status(500).send({ error: "Failed to delete conversation" });
         }
     });
@@ -498,7 +855,7 @@ export const chatRoutes = async (fastify) => {
                 contextMessage += `Treść: ${doc.content}\n\n`;
             });
             // Poproś AI o podsumowanie
-            const completion = await openai.chat.completions.create({
+            const summaryParams = {
                 model: openaiModel,
                 messages: [
                     {
@@ -511,8 +868,17 @@ export const chatRoutes = async (fastify) => {
                     },
                 ],
                 temperature: 0.3,
-                max_tokens: 2000,
-            });
+            };
+            // Użyj max_completion_tokens dla nowych modeli OpenAI
+            if (openaiModel.includes("gpt-4o") ||
+                openaiModel.includes("gpt-4-turbo") ||
+                openaiModel.includes("o1")) {
+                summaryParams.max_completion_tokens = 2000;
+            }
+            else {
+                summaryParams.max_tokens = 2000;
+            }
+            const completion = await openai.chat.completions.create(summaryParams);
             const summaryContent = completion.choices[0]?.message?.content ||
                 "Nie udało się wygenerować podsumowania";
             // Zapisz podsumowanie jako nowy dokument
@@ -557,70 +923,124 @@ export const chatRoutes = async (fastify) => {
             });
         }
     });
-    // GET /dashboard/stats - Statystyki dla Dashboard
-    fastify.get("/dashboard/stats", async (request, reply) => {
+    // POST /api/fetch-models - Pobierz listę modeli z API providera
+    fastify.post("/api/fetch-models", async (request, reply) => {
         try {
-            const userId = request.headers["x-user-id"];
-            if (!userId) {
-                return reply.status(401).send({ error: "Unauthorized" });
+            const { provider, apiKey, baseUrl } = request.body;
+            if (!provider || !apiKey) {
+                return reply.status(400).send({
+                    error: "Provider i klucz API są wymagane",
+                });
             }
-            // Pobierz liczbę dokumentów
-            const { count: documentsCount } = await supabase
-                .from("processed_documents")
-                .select("*", { count: "exact", head: true })
-                .eq("user_id", userId);
-            // Pobierz dokumenty z ostatniego tygodnia
-            const weekAgo = new Date();
-            weekAgo.setDate(weekAgo.getDate() - 7);
-            const { count: documentsThisWeek } = await supabase
-                .from("processed_documents")
-                .select("*", { count: "exact", head: true })
-                .eq("user_id", userId)
-                .gte("processed_at", weekAgo.toISOString());
-            // Pobierz liczbę konwersacji
-            const { count: conversationsCount } = await supabase
-                .from("conversations")
-                .select("*", { count: "exact", head: true })
-                .eq("user_id", userId);
-            // Pobierz liczbę wiadomości
-            const { data: conversations } = await supabase
-                .from("conversations")
-                .select("id")
-                .eq("user_id", userId);
-            const conversationIds = conversations?.map((c) => c.id) || [];
-            let messagesCount = 0;
-            if (conversationIds.length > 0) {
-                const { count } = await supabase
-                    .from("messages")
-                    .select("*", { count: "exact", head: true })
-                    .in("conversation_id", conversationIds);
-                messagesCount = count || 0;
+            // Domyślne URL dla providerów - tylko OpenAI API compatible
+            const providerBaseUrls = {
+                openai: "https://api.openai.com/v1",
+                local: "http://localhost:11434/v1", // Ollama default
+                other: "", // Custom endpoint
+            };
+            const finalBaseUrl = baseUrl || providerBaseUrls[provider];
+            if (!finalBaseUrl) {
+                return reply.status(400).send({
+                    error: "Nieznany provider lub brak URL API",
+                });
             }
-            // Pobierz ostatnią aktywność
-            const { data: recentDocs } = await supabase
-                .from("processed_documents")
-                .select("id, title, processed_at")
-                .eq("user_id", userId)
-                .order("processed_at", { ascending: false })
-                .limit(3);
-            const recentActivity = (recentDocs || []).map((doc) => ({
-                id: doc.id,
-                type: "document",
-                title: `Przetworzono "${doc.title}"`,
-                timestamp: doc.processed_at,
-            }));
+            // Pobierz listę modeli z API
+            const modelsUrl = `${finalBaseUrl.replace(/\/$/, "")}/models`;
+            console.log(`[FetchModels] Fetching from: ${modelsUrl}`);
+            // Różne providery używają różnych metod autoryzacji
+            const headers = {
+                "Content-Type": "application/json",
+            };
+            // Google Gemini używa x-goog-api-key dla native API
+            if (provider === "google" && !finalBaseUrl.includes("/openai")) {
+                headers["x-goog-api-key"] = apiKey;
+            }
+            else {
+                // Pozostali providerzy używają Bearer token
+                headers["Authorization"] = `Bearer ${apiKey}`;
+            }
+            const response = await fetch(modelsUrl, {
+                method: "GET",
+                headers: headers,
+            });
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error(`[FetchModels] Error: ${response.status} - ${errorText}`);
+                return reply.status(response.status).send({
+                    error: `Błąd API: ${response.status}`,
+                    details: errorText,
+                });
+            }
+            const data = await response.json();
+            // Różne providery zwracają różne formaty
+            let models = [];
+            // Google Gemini: { models: [{ name: "models/gemini-...", displayName: "..." }] }
+            if (data.models && Array.isArray(data.models)) {
+                models = data.models.map((m) => ({
+                    id: m.name?.replace("models/", "") || m.displayName || "",
+                    name: m.displayName || m.name?.replace("models/", "") || "",
+                    owned_by: "google",
+                }));
+            }
+            // OpenAI: { data: [{ id, object, ... }] }
+            else if (data.data && Array.isArray(data.data)) {
+                models = data.data.map((m) => ({
+                    id: m.id,
+                    name: m.name || m.id,
+                    owned_by: m.owned_by,
+                }));
+            }
+            // Inne formaty: bezpośrednia tablica
+            else if (Array.isArray(data)) {
+                models = data.map((m) => ({
+                    id: m.id || m.model || m.name || "",
+                    name: m.name || m.id || m.model || "",
+                }));
+            }
+            // Filtruj i sortuj modele - preferuj chat/completion modele
+            const chatModels = models.filter((m) => {
+                const id = m.id.toLowerCase();
+                // Wyklucz modele embedding, whisper, dall-e, tts
+                return (!id.includes("embedding") &&
+                    !id.includes("whisper") &&
+                    !id.includes("dall-e") &&
+                    !id.includes("tts") &&
+                    !id.includes("moderation"));
+            });
+            // Sortuj - najnowsze/najlepsze na górze
+            chatModels.sort((a, b) => {
+                const aId = a.id.toLowerCase();
+                const bId = b.id.toLowerCase();
+                // Priorytet dla najnowszych modeli
+                if (aId.includes("gpt-4o") && !bId.includes("gpt-4o"))
+                    return -1;
+                if (bId.includes("gpt-4o") && !aId.includes("gpt-4o"))
+                    return 1;
+                if (aId.includes("gpt-4") && !bId.includes("gpt-4"))
+                    return -1;
+                if (bId.includes("gpt-4") && !aId.includes("gpt-4"))
+                    return 1;
+                if (aId.includes("gemini-2") && !bId.includes("gemini-2"))
+                    return -1;
+                if (bId.includes("gemini-2") && !aId.includes("gemini-2"))
+                    return 1;
+                if (aId.includes("claude-3") && !bId.includes("claude-3"))
+                    return -1;
+                if (bId.includes("claude-3") && !aId.includes("claude-3"))
+                    return 1;
+                return a.id.localeCompare(b.id);
+            });
+            console.log(`[FetchModels] Found ${chatModels.length} chat models`);
             return reply.send({
-                documentsCount: documentsCount || 0,
-                documentsThisWeek: documentsThisWeek || 0,
-                conversationsCount: conversationsCount || 0,
-                messagesCount: messagesCount,
-                recentActivity: recentActivity,
+                success: true,
+                models: chatModels,
+                total: chatModels.length,
             });
         }
         catch (error) {
-            fastify.log.error("Error fetching dashboard stats:", error);
+            console.error("[FetchModels] Error:", error);
             return reply.status(500).send({
-                error: "Failed to fetch dashboard stats",
+                error: "Nie udało się pobrać listy modeli",
                 details: error instanceof Error ? error.message : "Unknown error",
             });
         }
