@@ -13,6 +13,10 @@ export interface ApiConfiguration {
   api_key_encrypted: string;
   base_url?: string;
   model_name?: string;
+  embedding_model?: string;
+  transcription_model?: string;
+  vision_model?: string;
+  tts_model?: string;
   search_endpoint?: string;
   results_limit?: number;
   provider_meta?: Record<string, unknown>;
@@ -32,6 +36,7 @@ export interface ApiConfigurationInput {
   model_name?: string;
   embedding_model?: string;
   transcription_model?: string;
+  vision_model?: string;
   search_endpoint?: string;
   results_limit?: number;
   provider_meta?: Record<string, unknown>;
@@ -44,6 +49,10 @@ export interface ApiConfigurationUpdate {
   api_key?: string; // Jeśli podany, zostanie zaszyfrowany
   base_url?: string;
   model_name?: string;
+  embedding_model?: string;
+  transcription_model?: string;
+  vision_model?: string | null;
+  tts_model?: string | null;
   config_type?: ConfigType;
   search_endpoint?: string;
   results_limit?: number;
@@ -139,6 +148,8 @@ export async function createApiConfiguration(
       api_key_encrypted: apiKeyEncrypted,
       base_url: config.base_url,
       model_name: config.model_name,
+      embedding_model: config.embedding_model,
+      transcription_model: config.transcription_model,
       search_endpoint: config.search_endpoint,
       results_limit: config.results_limit,
       provider_meta: config.provider_meta,
@@ -175,7 +186,7 @@ export async function updateApiConfiguration(
 ): Promise<ApiConfiguration | null> {
   const updateData: Record<
     string,
-    string | boolean | number | Record<string, unknown> | undefined
+    string | boolean | number | Record<string, unknown> | undefined | null
   > = {
     ...updates,
   };

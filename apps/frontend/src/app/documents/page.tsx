@@ -337,6 +337,16 @@ export default function DocumentsPage() {
             <span>OCR / Transkrypcja</span>
           </button>
 
+          {/* Przycisk historii przetworzonych dokumentów */}
+          <button
+            onClick={() => router.push("/documents/process/history")}
+            className="inline-flex items-center gap-2 rounded-xl border-2 border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-emerald-600 hover:border-emerald-300 hover:bg-emerald-50 transition-all duration-200"
+            title="Historia przetworzonych dokumentów OCR i transkrypcji"
+          >
+            <FileText className="h-5 w-5" />
+            <span>Historia dokumentów</span>
+          </button>
+
           {/* Przycisk pobierania dokumentacji do RAG */}
           <button
             onClick={() => router.push("/documents/fetch-rag")}

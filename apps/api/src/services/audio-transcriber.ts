@@ -67,6 +67,7 @@ export class AudioTranscriber {
   private sttClient: OpenAI | null = null;
   private llmClient: OpenAI | null = null;
   private sttModel: string = "whisper-1";
+  private llmModel: string = "gpt-4o";
 
   constructor() {}
 
@@ -84,12 +85,17 @@ export class AudioTranscriber {
     // Pobierz klienta LLM do analizy transkryptu
     this.llmClient = await getLLMClient(userId);
 
+    // Pobierz konfigurację LLM aby znać model
+    const llmConfig = await getAIConfig(userId, "llm");
+    this.llmModel = llmConfig.modelName;
+
     console.log(
       `[AudioTranscriber] Initialized for user ${userId.substring(0, 8)}...`
     );
     console.log(
       `[AudioTranscriber] STT: provider=${sttConfig.provider}, model=${this.sttModel}`
     );
+    console.log(`[AudioTranscriber] LLM: model=${this.llmModel}`);
   }
 
   isAudioOrVideo(mimeType: string): boolean {
@@ -296,7 +302,7 @@ Odpowiedz TYLKO w formacie JSON:
 }`;
 
     const response = await this.llmClient.chat.completions.create({
-      model: "gpt-4o",
+      model: this.llmModel,
       messages: [
         { role: "system", content: systemPrompt },
         {

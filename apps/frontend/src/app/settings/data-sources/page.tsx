@@ -34,6 +34,7 @@ import {
   type ProcessedDocument,
 } from "@/lib/api/data-sources";
 import { useToast } from "@/lib/notifications/toast";
+import { useDataCounts } from "@/lib/hooks/useDataCounts";
 
 export default function DataSourcesPage() {
   const [activeTab, setActiveTab] = useState<"sources" | "documents" | "stats">(
@@ -45,6 +46,11 @@ export default function DataSourcesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
+
+  // Liczniki w czasie rzeczywistym
+  const { counts, refresh: refreshCounts } = useDataCounts({
+    refreshInterval: 15000,
+  });
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -115,7 +121,7 @@ export default function DataSourcesPage() {
             }`}
           >
             <Database className="inline h-4 w-4 mr-2" />
-            Źródła ({sources.length})
+            Źródła ({counts.sources})
           </button>
           <button
             onClick={() => setActiveTab("documents")}
@@ -126,7 +132,7 @@ export default function DataSourcesPage() {
             }`}
           >
             <FileText className="inline h-4 w-4 mr-2" />
-            Dokumenty ({stats?.documents.total || 0})
+            Dokumenty ({counts.documents})
           </button>
           <button
             onClick={() => setActiveTab("stats")}
@@ -146,7 +152,10 @@ export default function DataSourcesPage() {
       {activeTab === "sources" && (
         <SourcesTab
           sources={sources}
-          onRefresh={loadData}
+          onRefresh={() => {
+            loadData();
+            refreshCounts();
+          }}
           onToggle={async (id, isActive) => {
             await updateDataSource(id, { is_active: !isActive });
             loadData();
@@ -582,7 +591,11 @@ function SourceCard({
     setScrapeResult(null);
     try {
       await onScrape();
-      setScrapeResult({ success: true, message: "Scraping zakończony!" });
+      // Scraping działa asynchronicznie w tle
+      setScrapeResult({
+        success: true,
+        message: "Scraping uruchomiony w tle!",
+      });
     } catch (e) {
       setScrapeResult({
         success: false,

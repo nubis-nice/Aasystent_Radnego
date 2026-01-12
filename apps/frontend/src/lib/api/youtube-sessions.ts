@@ -128,3 +128,118 @@ export async function transcribeYouTubeVideo(
 
   return data;
 }
+
+// Typy dla asynchronicznej transkrypcji
+export interface TranscriptionJob {
+  id: string;
+  status:
+    | "pending"
+    | "downloading"
+    | "transcribing"
+    | "analyzing"
+    | "saving"
+    | "completed"
+    | "failed";
+  progress: number;
+  progressMessage: string;
+  videoTitle: string;
+  videoDuration?: string; // np. "1:23:45"
+  createdAt: string;
+  completedAt?: string;
+  error?: string;
+  resultDocumentId?: string;
+}
+
+export interface TranscriptionJobResponse {
+  success: boolean;
+  jobId: string;
+  status: string;
+  message: string;
+}
+
+/**
+ * Rozpoczyna asynchroniczną transkrypcję z zapisem do RAG
+ */
+export async function startAsyncTranscription(
+  videoUrl: string,
+  videoTitle?: string,
+  options?: {
+    sessionId?: string;
+    includeSentiment?: boolean;
+    identifySpeakers?: boolean;
+  }
+): Promise<TranscriptionJobResponse> {
+  const token = await getAuthToken();
+
+  const response = await fetch(`${API_URL}/api/youtube/transcribe-async`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      videoUrl,
+      videoTitle,
+      sessionId: options?.sessionId,
+      includeSentiment: options?.includeSentiment ?? true,
+      identifySpeakers: options?.identifySpeakers ?? true,
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Błąd tworzenia zadania transkrypcji");
+  }
+
+  return data;
+}
+
+/**
+ * Pobiera status zadania transkrypcji
+ */
+export async function getTranscriptionJobStatus(
+  jobId: string
+): Promise<{ success: boolean; job: TranscriptionJob }> {
+  const token = await getAuthToken();
+
+  const response = await fetch(`${API_URL}/api/youtube/job/${jobId}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Błąd pobierania statusu zadania");
+  }
+
+  return data;
+}
+
+/**
+ * Pobiera listę zadań transkrypcji użytkownika
+ */
+export async function getTranscriptionJobs(): Promise<{
+  success: boolean;
+  jobs: TranscriptionJob[];
+}> {
+  const token = await getAuthToken();
+
+  const response = await fetch(`${API_URL}/api/youtube/jobs`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Błąd pobierania listy zadań");
+  }
+
+  return data;
+}

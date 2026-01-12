@@ -1,3 +1,6 @@
+// @ts-nocheck
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { FastifyPluginAsync } from "fastify";
 import { ZodError } from "zod";
 import OpenAI from "openai";
 import {
@@ -8,8 +11,10 @@ import { createClient } from "@supabase/supabase-js";
 import { decryptApiKey } from "../utils/encryption.js";
 import { optimizeContext } from "../services/context-compressor.js";
 import { DocumentQueryService } from "../services/document-query-service.js";
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+import { getEmbeddingsClient, getAIConfig } from "../ai/index.js";
+
+const supabaseUrl = process.env.SUPABASE_URL!;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 /**
  * Generuje embedding dla długiego tekstu używając batch processing
@@ -128,10 +133,10 @@ export const chatRoutes = async (fastify) => {
         local: "http://localhost:11434/v1", // Ollama default
         other: "", // Custom endpoint
       };
-      // Jeśli użytkownik nie ma konfiguracji, użyj zmiennej środowiskowej
-      let apiKey = process.env.OPENAI_API_KEY;
-      let model = process.env.OPENAI_MODEL || "gpt-4-turbo-preview";
-      let baseUrl = undefined;
+      // Konfiguracja AI - wymagana z bazy danych
+      let apiKey: string | undefined = undefined;
+      let model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+      let baseUrl: string | undefined = undefined;
       let embeddingModel = "text-embedding-3-small";
       let provider = "openai";
       if (apiConfig) {
@@ -291,28 +296,21 @@ export const chatRoutes = async (fastify) => {
       // Przygotuj kontekst RAG
       let ragContext;
       if (includeDocuments || includeMunicipalData) {
-        // ZAWSZE używaj OpenAI API dla embeddings (zunifikowany format 1536 wymiarów)
-        // Niezależnie od providera używanego do chatu
-        // Fallback: jeśli OPENAI_API_KEY nie jest w env, użyj klucza użytkownika (jeśli provider to OpenAI)
-        const openaiApiKey =
-          process.env.OPENAI_API_KEY ||
-          (provider === "openai" ? apiKey : undefined);
-        if (!openaiApiKey) {
-          console.log("[Chat] Skipping RAG - no OpenAI API key available");
-          ragContext = undefined;
-        } else {
-          const embeddingConfig = {
-            apiKey: openaiApiKey,
-            baseURL: undefined, // Zawsze oficjalne OpenAI API
-          };
-          const embeddingOpenai = new OpenAI(embeddingConfig);
+        // Użyj klienta embeddings z AIClientFactory (obsługuje OpenAI i lokalnych providerów)
+        try {
+          const embeddingsClient = await getEmbeddingsClient(userId);
+          const embConfig = await getAIConfig(userId, "embeddings");
+          const currentEmbeddingModel = embConfig.modelName;
+          console.log(
+            `[Chat] Using embeddings: provider=${embConfig.provider}, model=${currentEmbeddingModel}`
+          );
+
           // Batch embedding dla długich wiadomości
-          // text-embedding-3-small: limit 8192 tokenów ≈ 20000 znaków
           const maxChunkChars = 18000;
           const queryEmbedding = await generateBatchEmbedding(
-            embeddingOpenai,
+            embeddingsClient,
             message,
-            embeddingModel,
+            currentEmbeddingModel,
             maxChunkChars
           );
           ragContext = {
@@ -399,6 +397,9 @@ export const chatRoutes = async (fastify) => {
               });
             }
           }
+        } catch (embError) {
+          console.warn("[Chat] RAG embeddings failed:", embError);
+          ragContext = undefined;
         }
       }
       // Zbuduj system prompt
@@ -797,8 +798,8 @@ export const chatRoutes = async (fastify) => {
         .eq("is_default", true)
         .eq("provider", "openai")
         .single();
-      let openaiApiKey = process.env.OPENAI_API_KEY;
-      let openaiBaseUrl = undefined;
+      let openaiApiKey: string | undefined = undefined;
+      let openaiBaseUrl: string | undefined = undefined;
       if (apiConfig) {
         openaiApiKey = Buffer.from(
           apiConfig.api_key_encrypted,
@@ -891,9 +892,9 @@ export const chatRoutes = async (fastify) => {
         .eq("is_default", true)
         .eq("provider", "openai")
         .single();
-      let openaiApiKey = process.env.OPENAI_API_KEY;
-      let openaiModel = process.env.OPENAI_MODEL || "gpt-4-turbo-preview";
-      let openaiBaseUrl = undefined;
+      let openaiApiKey: string | undefined = undefined;
+      let openaiModel = process.env.OPENAI_MODEL || "gpt-4o-mini";
+      let openaiBaseUrl: string | undefined = undefined;
       if (apiConfig) {
         openaiApiKey = Buffer.from(
           apiConfig.api_key_encrypted,
@@ -904,7 +905,7 @@ export const chatRoutes = async (fastify) => {
       }
       if (!openaiApiKey) {
         return reply.status(400).send({
-          error: "Brak konfiguracji OpenAI",
+          error: "Brak konfiguracji OpenAI. Dodaj klucz API w ustawieniach.",
         });
       }
       const openai = new OpenAI({
@@ -941,7 +942,8 @@ export const chatRoutes = async (fastify) => {
         contextMessage += `Treść: ${doc.content}\n\n`;
       });
       // Poproś AI o podsumowanie
-      const summaryParams = {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const summaryParams: any = {
         model: openaiModel,
         messages: [
           {

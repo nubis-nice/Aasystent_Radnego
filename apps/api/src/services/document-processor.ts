@@ -8,6 +8,13 @@ import { createClient } from "@supabase/supabase-js";
 import sharp from "sharp";
 import Tesseract from "tesseract.js";
 import { Poppler } from "node-poppler";
+import {
+  getVisionClient,
+  getEmbeddingsClient,
+  getSTTClient,
+  getAIConfig,
+} from "../ai/index.js";
+// import { getAudioPreprocessor } from "./audio-preprocessor.js"; // Tymczasowo wyłączone
 
 const require = createRequire(import.meta.url);
 
@@ -79,7 +86,8 @@ export interface ProcessedDocument {
     pageCount?: number;
     confidence?: number;
     language?: string;
-    processingMethod: "ocr" | "text-extraction" | "direct";
+    processingMethod: "ocr" | "text-extraction" | "direct" | "stt";
+    sttModel?: string;
   };
   error?: string;
 }
@@ -100,7 +108,21 @@ type SupportedMimeType =
   | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
   | "text/plain"
   | "text/markdown"
-  | "application/octet-stream";
+  | "application/octet-stream"
+  // Audio formats
+  | "audio/mpeg"
+  | "audio/mp3"
+  | "audio/wav"
+  | "audio/x-wav"
+  | "audio/mp4"
+  | "audio/m4a"
+  | "audio/x-m4a"
+  | "audio/ogg"
+  | "audio/webm"
+  // Video formats
+  | "video/mp4"
+  | "video/webm"
+  | "video/ogg";
 
 // Mapowanie rozszerzeń plików na MIME types
 const EXTENSION_TO_MIME: Record<string, SupportedMimeType> = {
@@ -119,59 +141,39 @@ const EXTENSION_TO_MIME: Record<string, SupportedMimeType> = {
 };
 
 export class DocumentProcessor {
-  private openai: OpenAI | null = null;
+  private visionClient: OpenAI | null = null;
+  private embeddingsClient: OpenAI | null = null;
+  private embeddingModel: string = "nomic-embed-text";
+  private visionModel: string = "gpt-4o";
+  private userId: string | null = null;
 
   constructor() {}
 
   /**
-   * Initialize OpenAI client with user's API key
+   * Initialize AI clients with user's configuration via AIClientFactory
    */
   async initializeWithUserConfig(userId: string): Promise<void> {
-    const { data: config } = await supabase
-      .from("api_configurations")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("is_default", true)
-      .eq("is_active", true)
-      .single();
+    this.userId = userId;
 
-    if (!config) {
-      throw new Error("Brak skonfigurowanego klucza API. Przejdź do ustawień.");
-    }
+    // Pobierz klienta Vision z fabryki (do analizy obrazów)
+    this.visionClient = await getVisionClient(userId);
 
-    const decodedApiKey = Buffer.from(
-      config.api_key_encrypted,
-      "base64"
-    ).toString("utf-8");
+    // Pobierz klienta Embeddings z fabryki
+    this.embeddingsClient = await getEmbeddingsClient(userId);
 
-    // Użyj base_url z konfiguracji jeśli istnieje, w przeciwnym razie użyj domyślnego
-    const baseURL = config.base_url || this.getProviderBaseUrl(config.provider);
+    // Pobierz konfigurację embeddings aby znać model
+    const embConfig = await getAIConfig(userId, "embeddings");
+    this.embeddingModel = embConfig.modelName;
 
+    const visionConfig = await getAIConfig(userId, "vision");
+    this.visionModel = visionConfig.modelName;
     console.log(
-      `[DocumentProcessor] Initializing with provider: ${config.provider}, baseURL: ${baseURL}`
+      `[DocumentProcessor] Initialized for user ${userId.substring(0, 8)}...`
     );
-
-    this.openai = new OpenAI({
-      apiKey: decodedApiKey,
-      baseURL: baseURL,
-    });
-  }
-
-  private getProviderBaseUrl(provider: string): string | undefined {
-    switch (provider) {
-      case "openai":
-        return undefined;
-      case "local":
-        return "http://localhost:11434/v1"; // Ollama default
-      case "openrouter":
-        return "https://openrouter.ai/api/v1";
-      case "anthropic":
-        return "https://api.anthropic.com/v1";
-      case "groq":
-        return "https://api.groq.com/openai/v1";
-      default:
-        return undefined;
-    }
+    console.log(
+      `[DocumentProcessor] Vision: provider=${visionConfig.provider}, model=${this.visionModel}`
+    );
+    console.log(`[DocumentProcessor] Embeddings: model=${this.embeddingModel}`);
   }
 
   /**
@@ -248,6 +250,27 @@ export class DocumentProcessor {
         case "text/markdown":
           return this.processTextFile(fileBuffer, fileName, mimeType, fileSize);
 
+        // Audio formats
+        case "audio/mpeg":
+        case "audio/mp3":
+        case "audio/wav":
+        case "audio/x-wav":
+        case "audio/mp4":
+        case "audio/m4a":
+        case "audio/x-m4a":
+        case "audio/ogg":
+        case "audio/webm":
+        // Video formats
+        case "video/mp4":
+        case "video/webm":
+        case "video/ogg":
+          return await this.processAudio(
+            fileBuffer,
+            fileName,
+            mimeType,
+            fileSize
+          );
+
         default:
           return {
             success: false,
@@ -289,19 +312,21 @@ export class DocumentProcessor {
     mimeType: string,
     fileSize: number
   ): Promise<ProcessedDocument> {
-    if (!this.openai) {
-      throw new Error("OpenAI client not initialized");
+    if (!this.visionClient) {
+      throw new Error(
+        "Vision client not initialized. Call initializeWithUserConfig first."
+      );
     }
 
     const base64Image = fileBuffer.toString("base64");
     const dataUrl = `data:${mimeType};base64,${base64Image}`;
 
     console.log(
-      `[DocumentProcessor] Processing image with GPT-4 Vision: ${fileName}`
+      `[DocumentProcessor] Processing image with Vision model ${this.visionModel}: ${fileName}`
     );
 
-    const response = await this.openai.chat.completions.create({
-      model: "gpt-4o",
+    const response = await this.visionClient.chat.completions.create({
+      model: this.visionModel,
       messages: [
         {
           role: "system",
@@ -942,7 +967,7 @@ Zasady:
       }
 
       // Fallback do GPT-4 Vision dla słabych wyników Tesseract
-      if (this.openai) {
+      if (this.visionClient) {
         console.log(
           `[DocumentProcessor] Tesseract confidence too low (${tesseractResult.confidence.toFixed(
             1
@@ -955,8 +980,8 @@ Zasady:
           const base64Image = normalizedImage.toString("base64");
           const dataUrl = `data:image/png;base64,${base64Image}`;
 
-          const response = await this.openai.chat.completions.create({
-            model: "gpt-4o",
+          const response = await this.visionClient.chat.completions.create({
+            model: this.visionModel,
             messages: [
               {
                 role: "system",
@@ -1128,13 +1153,15 @@ Zasady:
     documentType: string = "uploaded"
   ): Promise<SaveToRAGResult> {
     try {
-      if (!this.openai) {
-        throw new Error("OpenAI client not initialized");
+      if (!this.embeddingsClient) {
+        throw new Error(
+          "Embeddings client not initialized. Call initializeWithUserConfig first."
+        );
       }
 
       // Generate embedding
-      const embeddingResponse = await this.openai.embeddings.create({
-        model: "text-embedding-3-small",
+      const embeddingResponse = await this.embeddingsClient.embeddings.create({
+        model: this.embeddingModel,
         input: text.slice(0, 8000), // Limit for embedding
       });
 
@@ -1174,6 +1201,145 @@ Zasady:
       return {
         success: false,
         error: error instanceof Error ? error.message : "Błąd zapisu do bazy",
+      };
+    }
+  }
+
+  /**
+   * Process audio/video file with STT transcription
+   */
+  private async processAudio(
+    fileBuffer: Buffer,
+    fileName: string,
+    mimeType: string,
+    fileSize: number
+  ): Promise<ProcessedDocument> {
+    if (!this.userId) {
+      return {
+        success: false,
+        text: "",
+        metadata: {
+          fileName,
+          fileType: "audio",
+          mimeType,
+          fileSize,
+          processingMethod: "stt",
+        },
+        error: "User not initialized. Call initializeWithUserConfig first.",
+      };
+    }
+
+    try {
+      console.log(`[DocumentProcessor] Processing audio file: ${fileName}`);
+
+      // Get STT client
+      const sttClient = await getSTTClient(this.userId);
+      const sttConfig = await getAIConfig(this.userId, "stt");
+
+      console.log(
+        `[DocumentProcessor] STT: provider=${sttConfig.provider}, model=${sttConfig.modelName}`
+      );
+
+      // Zapisz plik do temp
+      const tempDir = path.join(os.tmpdir(), "aasystent-documents");
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+      const tempPath = path.join(tempDir, `${Date.now()}-${fileName}`);
+      fs.writeFileSync(tempPath, fileBuffer);
+
+      // Adaptacyjny preprocessing audio
+      let processedPath = tempPath;
+      try {
+        const { getAudioPreprocessor } = await import(
+          "./audio-preprocessor.js"
+        );
+        const preprocessor = getAudioPreprocessor();
+        console.log(
+          `[DocumentProcessor] Starting adaptive audio preprocessing...`
+        );
+        const result = await preprocessor.preprocessAdaptive(tempPath, "wav");
+        processedPath = result.outputPath;
+        console.log(
+          `[DocumentProcessor] Preprocessing complete. Issues: ${
+            result.analysis.issues.map((i) => i.type).join(", ") || "none"
+          }`
+        );
+      } catch (preprocessError) {
+        console.warn(
+          `[DocumentProcessor] Preprocessing failed, using original audio:`,
+          preprocessError
+        );
+        processedPath = tempPath;
+      }
+
+      try {
+        // Create read stream for transcription
+        const audioStream = fs.createReadStream(processedPath);
+
+        const transcription = await sttClient.audio.transcriptions.create({
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          file: audioStream as any,
+          model: sttConfig.modelName,
+          language: "pl",
+          response_format: "text",
+        });
+
+        const text = transcription as unknown as string;
+
+        // Cleanup temp files
+        if (fs.existsSync(processedPath)) fs.unlinkSync(processedPath);
+        if (processedPath !== tempPath && fs.existsSync(tempPath))
+          fs.unlinkSync(tempPath);
+
+        if (!text || text.trim().length === 0) {
+          return {
+            success: false,
+            text: "",
+            metadata: {
+              fileName,
+              fileType: "audio",
+              mimeType,
+              fileSize,
+              processingMethod: "stt",
+            },
+            error: "Nie udało się rozpoznać mowy w nagraniu",
+          };
+        }
+
+        return {
+          success: true,
+          text: text.trim(),
+          metadata: {
+            fileName,
+            fileType: "audio",
+            mimeType,
+            fileSize,
+            processingMethod: "stt",
+            sttModel: sttConfig.modelName,
+          },
+        };
+      } catch (error) {
+        // Cleanup temp files on error
+        if (fs.existsSync(processedPath)) fs.unlinkSync(processedPath);
+        if (processedPath !== tempPath && fs.existsSync(tempPath))
+          fs.unlinkSync(tempPath);
+        throw error;
+      }
+    } catch (error) {
+      console.error("[DocumentProcessor] Audio processing error:", error);
+      return {
+        success: false,
+        text: "",
+        metadata: {
+          fileName,
+          fileType: "audio",
+          mimeType,
+          fileSize,
+          processingMethod: "stt",
+        },
+        error:
+          error instanceof Error ? error.message : "Błąd transkrypcji audio",
       };
     }
   }

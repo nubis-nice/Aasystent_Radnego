@@ -14,6 +14,7 @@ import * as cheerio from "cheerio";
 import OpenAI from "openai";
 import crypto from "crypto";
 import { DocumentProcessor } from "./document-processor.js";
+import { getLLMClient, getEmbeddingsClient, getAIConfig } from "../ai/index.js";
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -108,7 +109,9 @@ export class IntelligentScraper {
   private visitedUrls: Set<string> = new Set();
   private siteMap: Map<string, SiteMapNode> = new Map();
   private errors: string[] = [];
-  private openai: OpenAI | null = null;
+  private llmClient: OpenAI | null = null;
+  private embeddingsClient: OpenAI | null = null;
+  private llmModel: string = "gpt-4o-mini";
   private userId: string;
   private sourceId: string;
 
@@ -133,27 +136,25 @@ export class IntelligentScraper {
     }
   }
 
+  /**
+   * Initialize AI clients via AIClientFactory
+   */
   private async initializeOpenAI(): Promise<void> {
-    const { data: apiConfig } = await supabase
-      .from("api_configurations")
-      .select("*")
-      .eq("user_id", this.userId)
-      .eq("is_default", true)
-      .eq("is_active", true)
-      .single();
+    try {
+      this.llmClient = await getLLMClient(this.userId);
+      this.embeddingsClient = await getEmbeddingsClient(this.userId);
 
-    if (apiConfig) {
-      const decodedApiKey = Buffer.from(
-        apiConfig.api_key_encrypted,
-        "base64"
-      ).toString("utf-8");
-
-      this.openai = new OpenAI({
-        apiKey: decodedApiKey,
-        baseURL: apiConfig.base_url || undefined,
-      });
-    } else if (process.env.OPENAI_API_KEY) {
-      this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      const llmConfig = await getAIConfig(this.userId, "llm");
+      this.llmModel = llmConfig.modelName;
+      console.log(
+        `[IntelligentScraper] Initialized AI clients: provider=${llmConfig.provider}, model=${this.llmModel}`
+      );
+    } catch (error) {
+      console.warn(
+        "[IntelligentScraper] Failed to initialize AI clients:",
+        error
+      );
+      // Fallback do zmiennych środowiskowych jest obsługiwany przez AIClientFactory
     }
   }
 
@@ -424,15 +425,15 @@ export class IntelligentScraper {
     title: string,
     content: string
   ): Promise<LLMAnalysisResult | null> {
-    if (!this.config.enableLLMAnalysis || !this.openai) {
+    if (!this.config.enableLLMAnalysis || !this.llmClient) {
       return null;
     }
 
     try {
       const truncatedContent = content.slice(0, 8000);
 
-      const response = await this.openai.chat.completions.create({
-        model: "gpt-4o-mini",
+      const response = await this.llmClient.chat.completions.create({
+        model: this.llmModel,
         messages: [
           {
             role: "system",
@@ -768,39 +769,20 @@ Odpowiedz w formacie JSON:
       return 0;
     }
 
-    // Pobierz konfigurację OpenAI
-    const { data: apiConfig } = await supabase
-      .from("api_configurations")
-      .select("*")
-      .eq("user_id", this.userId)
-      .eq("provider", "openai")
-      .eq("is_active", true)
-      .eq("is_default", true)
-      .single();
-
-    let openaiApiKey = process.env.OPENAI_API_KEY;
-    let openaiBaseUrl: string | undefined = undefined;
-    let embeddingModel = "text-embedding-3-small";
-
-    if (apiConfig) {
-      openaiApiKey = Buffer.from(
-        apiConfig.api_key_encrypted,
-        "base64"
-      ).toString("utf-8");
-      openaiBaseUrl = apiConfig.base_url || undefined;
-      if (apiConfig.embedding_model) {
-        embeddingModel = apiConfig.embedding_model;
-      }
+    // Użyj klienta embeddings z AIClientFactory
+    if (!this.embeddingsClient) {
+      await this.initializeOpenAI();
     }
 
-    if (!openaiApiKey) {
+    if (!this.embeddingsClient) {
       console.warn(
-        "[IntelligentScraper] No OpenAI API key, skipping embeddings"
+        "[IntelligentScraper] No embeddings client available, skipping embeddings"
       );
       return 0;
     }
 
-    const openai = new OpenAI({ apiKey: openaiApiKey, baseURL: openaiBaseUrl });
+    const embConfig = await getAIConfig(this.userId, "embeddings");
+    const embeddingModel = embConfig.modelName;
 
     for (const content of unprocessedContent) {
       try {
@@ -825,13 +807,14 @@ Odpowiedz w formacie JSON:
         // Generuj embedding
         let embedding = null;
         try {
-          const embeddingResponse = await openai.embeddings.create({
-            model: embeddingModel,
-            input: `${content.title || ""}\n\n${content.raw_content.substring(
-              0,
-              5000
-            )}`,
-          });
+          const embeddingResponse =
+            await this.embeddingsClient!.embeddings.create({
+              model: embeddingModel,
+              input: `${content.title || ""}\n\n${content.raw_content.substring(
+                0,
+                5000
+              )}`,
+            });
           embedding = embeddingResponse.data[0]?.embedding ?? null;
         } catch (e) {
           console.warn("[IntelligentScraper] Embedding generation failed:", e);

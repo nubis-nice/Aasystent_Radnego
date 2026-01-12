@@ -13,9 +13,7 @@
 
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
-
-/* eslint-disable no-undef */
-declare const Buffer: typeof globalThis.Buffer;
+import { getEmbeddingsClient, getAIConfig } from "../ai/index.js";
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -70,38 +68,28 @@ export interface DocumentContext {
 // ============================================================================
 
 export class DocumentQueryService {
-  private openai: OpenAI | null = null;
+  private embeddingsClient: OpenAI | null = null;
   private userId: string;
-  private embeddingModel: string = "text-embedding-3-small";
+  private embeddingModel: string = "nomic-embed-text";
 
   constructor(userId: string) {
     this.userId = userId;
   }
 
   async initialize(): Promise<void> {
-    const { data: apiConfig } = await supabase
-      .from("api_configurations")
-      .select("*")
-      .eq("user_id", this.userId)
-      .eq("is_default", true)
-      .eq("is_active", true)
-      .single();
+    try {
+      this.embeddingsClient = await getEmbeddingsClient(this.userId);
+      const embConfig = await getAIConfig(this.userId, "embeddings");
+      this.embeddingModel = embConfig.modelName;
 
-    if (apiConfig) {
-      const decodedApiKey = Buffer.from(
-        apiConfig.api_key_encrypted,
-        "base64"
-      ).toString("utf-8");
-
-      this.openai = new OpenAI({
-        apiKey: decodedApiKey,
-        baseURL: apiConfig.base_url || undefined,
-      });
-
-      this.embeddingModel =
-        apiConfig.embedding_model || "text-embedding-3-small";
-    } else if (process.env.OPENAI_API_KEY) {
-      this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      console.log(
+        `[DocumentQueryService] Initialized: provider=${embConfig.provider}, model=${this.embeddingModel}`
+      );
+    } catch (error) {
+      console.warn(
+        "[DocumentQueryService] Failed to initialize embeddings client:",
+        error
+      );
     }
   }
 
@@ -252,7 +240,7 @@ export class DocumentQueryService {
     query: string,
     limit: number = 5
   ): Promise<DocumentMatch[]> {
-    if (!this.openai) {
+    if (!this.embeddingsClient) {
       console.log(
         "[DocumentQuery] No OpenAI client - skipping semantic search"
       );
@@ -261,7 +249,7 @@ export class DocumentQueryService {
 
     try {
       // Generuj embedding
-      const embeddingResponse = await this.openai.embeddings.create({
+      const embeddingResponse = await this.embeddingsClient.embeddings.create({
         model: this.embeddingModel,
         input: query,
       });
@@ -418,12 +406,14 @@ export class DocumentQueryService {
     // Pobierz relevantne chunki (nie całą treść!)
     let relevantChunks: Array<{ content: string; similarity: number }> = [];
 
-    if (queryForChunks && this.openai) {
+    if (queryForChunks && this.embeddingsClient) {
       try {
-        const embeddingResponse = await this.openai.embeddings.create({
-          model: this.embeddingModel,
-          input: queryForChunks,
-        });
+        const embeddingResponse = await this.embeddingsClient.embeddings.create(
+          {
+            model: this.embeddingModel,
+            input: queryForChunks,
+          }
+        );
 
         const queryEmbedding = embeddingResponse.data[0].embedding;
 
@@ -561,28 +551,59 @@ export class DocumentQueryService {
   // ============================================================================
 
   private deduplicateMatches(matches: DocumentMatch[]): DocumentMatch[] {
-    const seen = new Set<string>();
+    const seenIds = new Set<string>();
+    const seenTitles = new Set<string>();
+
     return matches.filter((m) => {
-      if (seen.has(m.id)) return false;
-      seen.add(m.id);
+      // Deduplikacja po ID
+      if (seenIds.has(m.id)) return false;
+
+      // Deduplikacja po znormalizowanym tytule (ignoruj wielkość liter i białe znaki)
+      const normalizedTitle = m.title.toLowerCase().trim().replace(/\s+/g, " ");
+      if (seenTitles.has(normalizedTitle)) {
+        console.log(
+          `[DocumentQuery] Removing duplicate by title: "${m.title}"`
+        );
+        return false;
+      }
+
+      seenIds.add(m.id);
+      seenTitles.add(normalizedTitle);
       return true;
     });
   }
 
   private buildConfirmationMessage(matches: DocumentMatch[]): string {
+    if (matches.length === 0) {
+      return "Nie znalazłem dokumentów pasujących do zapytania.";
+    }
+
     if (matches.length === 1) {
       const m = matches[0];
+      if (!m) return "Nie znalazłem dokumentów pasujących do zapytania.";
       return `Znalazłem dokument: **"${m.title}"** (${m.documentType}${
         m.publishDate ? `, ${m.publishDate}` : ""
       }). Czy to ten dokument, który chcesz przeanalizować?`;
     }
 
+    // Formatuj listę z unikalnym identyfikatorem dla każdego dokumentu
     const list = matches
-      .slice(0, 3)
-      .map((m, i) => `${i + 1}. "${m.title}" (${m.documentType})`)
+      .slice(0, 5)
+      .map((m, i) => {
+        if (!m) return null;
+        const identifier =
+          m.publishDate ||
+          m.sourceUrl?.split("/").pop() ||
+          m.id.substring(0, 8);
+        return `${i + 1}. **"${m.title}"** (${m.documentType}, ${identifier})`;
+      })
+      .filter(Boolean)
       .join("\n");
 
-    return `Znalazłem ${matches.length} dokumentów pasujących do zapytania:\n${list}\n\nKtóry dokument chcesz przeanalizować? Podaj numer lub nazwę.`;
+    const moreText =
+      matches.length > 5 ? `\n\n_...i ${matches.length - 5} więcej_` : "";
+
+    return `Znalazłem ${matches.length} dokumentów pasujących do zapytania:\n\n${list}${moreText}\n\nKtóry dokument chcesz przeanalizować? Podaj numer lub nazwę.`;
   }
 }
 

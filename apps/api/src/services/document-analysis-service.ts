@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { DeepResearchService } from "./deep-research-service.js";
 import { DocumentProcessor } from "./document-processor.js";
 import * as cheerio from "cheerio";
+import { getLLMClient, getEmbeddingsClient, getAIConfig } from "../ai/index.js";
 
 declare const Buffer: typeof globalThis.Buffer;
 declare const fetch: typeof globalThis.fetch;
@@ -45,32 +46,24 @@ export interface AnalysisResult {
 }
 
 export class DocumentAnalysisService {
-  private openai: OpenAI | null = null;
-  private embeddingModel = "text-embedding-3-small";
+  private llmClient: OpenAI | null = null;
+  private embeddingsClient: OpenAI | null = null;
+  private embeddingModel = "nomic-embed-text";
 
   async initialize(userId: string): Promise<void> {
-    // Pobierz konfigurację API użytkownika
-    const { data: apiConfig } = await supabase
-      .from("api_configurations")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("is_active", true)
-      .eq("is_default", true)
-      .single();
+    // Pobierz klientów AI z fabryki
+    this.llmClient = await getLLMClient(userId);
+    this.embeddingsClient = await getEmbeddingsClient(userId);
 
-    let apiKey = process.env.OPENAI_API_KEY;
+    const embConfig = await getAIConfig(userId, "embeddings");
+    this.embeddingModel = embConfig.modelName;
 
-    if (apiConfig) {
-      apiKey = Buffer.from(apiConfig.api_key_encrypted, "base64").toString(
-        "utf-8"
-      );
-      this.embeddingModel =
-        apiConfig.embedding_model || "text-embedding-3-small";
-    }
-
-    if (apiKey) {
-      this.openai = new OpenAI({ apiKey });
-    }
+    console.log(
+      `[DocumentAnalysisService] Initialized for user ${userId.substring(
+        0,
+        8
+      )}...`
+    );
   }
 
   // Wykryj wszystkie referencje do druków i załączników w dokumencie
@@ -159,8 +152,10 @@ export class DocumentAnalysisService {
     userId: string,
     references: DocumentReference[]
   ): Promise<DocumentReference[]> {
-    if (!this.openai) {
-      console.log("[DocumentAnalysis] No OpenAI client - skipping RAG search");
+    if (!this.embeddingsClient) {
+      console.log(
+        "[DocumentAnalysis] No embeddings client - skipping RAG search"
+      );
       return references;
     }
 
@@ -188,10 +183,11 @@ export class DocumentAnalysisService {
         );
 
         // Generuj embedding dla zapytania
-        const embeddingResponse = await this.openai.embeddings.create({
-          model: this.embeddingModel,
-          input: searchQuery,
-        });
+        const embeddingResponse =
+          await this.embeddingsClient!.embeddings.create({
+            model: this.embeddingModel,
+            input: searchQuery,
+          });
 
         const queryEmbedding = embeddingResponse.data[0].embedding;
 

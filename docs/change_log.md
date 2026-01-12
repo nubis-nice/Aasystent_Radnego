@@ -1,5 +1,387 @@
 # Change Log
 
+## 2026-01-12 - Naprawa duplikacji dokumentów w odpowiedziach AI
+
+### Problem: AI pokazuje duplikaty dokumentów w liście wyników
+
+**Problem:** Gdy użytkownik szuka dokumentów, AI pokazywał duplikaty z identycznymi tytułami (np. "Sesja Nr XVI" dwa razy), co było mylące i nieczytelne.
+
+**Rozwiązanie:**
+
+1. **Deduplikacja po tytule** - `document-query-service.ts`:
+
+   - Rozszerzono `deduplicateMatches()` o deduplikację po znormalizowanym tytule
+   - Logowanie usuwanych duplikatów
+
+2. **Zaktualizowany system prompt** - `packages/shared/src/types/chat.ts`:
+
+   - Dodano sekcję "PREZENTACJA DOKUMENTÓW"
+   - Instrukcje: nigdy nie pokazuj duplikatów, rozróżniaj przez numer/datę/typ
+
+3. **Lepsze formatowanie listy** - `buildConfirmationMessage()`:
+   - Każdy dokument ma unikalny identyfikator (data, numer, ID)
+   - Pokazuje do 5 dokumentów z informacją o pozostałych
+   - Formatowanie Markdown (bold dla tytułów)
+
+**Pliki:**
+
+- `apps/api/src/services/document-query-service.ts`
+- `packages/shared/src/types/chat.ts`
+
+**Status:** ✅ Naprawione
+
+---
+
+## 2026-01-12 - Naprawa hardkodowanych modeli Vision w defaults.ts
+
+### Problem: Hardkodowane modele vision w domyślnych konfiguracjach
+
+**Problem:** W pliku `defaults.ts` były hardkodowane modele vision:
+
+- OpenAI: `gpt-4-vision-preview` (przestarzały model)
+- Ollama: `llava` (bez możliwości konfiguracji)
+
+**Rozwiązanie:** Zamiana na zmienne środowiskowe z fallbackami.
+
+#### Naprawione pliki
+
+| Plik                              | Zmiana                                                                                    |
+| --------------------------------- | ----------------------------------------------------------------------------------------- |
+| `ai/defaults.ts`                  | OpenAI Vision: `gpt-4-vision-preview` → `process.env.OPENAI_VISION_MODEL \|\| "gpt-4o"`   |
+| `ai/defaults.ts`                  | Ollama Vision: `llava` → `process.env.OLLAMA_VISION_MODEL \|\| "llava"`                   |
+| `ai/ai-config-resolver.ts`        | Fallback vision: `gpt-4-vision-preview` → `process.env.OPENAI_VISION_MODEL \|\| "gpt-4o"` |
+| `services/scraper.ts`             | LLM model: hardcoded → `process.env.OPENAI_MODEL \|\| "gpt-4o-mini"`                      |
+| `services/intelligent-scraper.ts` | Dodano pole `llmModel` z dynamiczną konfiguracją                                          |
+
+**Status:** ✅ Naprawione
+
+---
+
+## 2026-01-12 - Zwiększone timeouty dla requestów
+
+### Problem: TimeoutError "signal timed out" w Next.js
+
+**Rozwiązanie:** Zwiększono timeouty w `lib/api/chat.ts`:
+
+- `/api/chat/message`: 30s → 180s (3 minuty dla odpowiedzi LLM)
+- DELETE conversation: 10s → 60s
+
+**Status:** ✅ Naprawione
+
+---
+
+## 2026-01-12 - Szacowany czas zakończenia transkrypcji
+
+### Nowa funkcjonalność: ETA dla zadań transkrypcji YouTube
+
+**Zmiana:** Panel zadań transkrypcji (`YouTubeTranscriptionPage`) wyświetla teraz szacowany pozostały czas (np. `~5 min`, `~1h 23min`) obliczany na podstawie postępu i czasu od rozpoczęcia.
+
+**Plik:** `apps/frontend/src/app/documents/youtube/page.tsx`
+
+**Status:** ✅ Zaimplementowane
+
+---
+
+## 2026-01-11 - Naprawa hardkodowanych modeli AI
+
+### Problem: Hardkodowane nazwy modeli w pipeline OCR/Vision/LLM
+
+**Problem:** W 7 miejscach kodu były hardkodowane nazwy modeli OpenAI (`gpt-4o`, `gpt-4o-mini`) zamiast używania konfiguracji użytkownika. Powodowało to błąd `404 model 'gpt-4o' not found` gdy użytkownik korzystał z Ollama local.
+
+**Rozwiązanie:** Dodanie pól przechowujących nazwy modeli i użycie ich zamiast hardkodowanych stringów.
+
+#### Naprawione pliki
+
+| Plik                             | Zmiany                                     |
+| -------------------------------- | ------------------------------------------ |
+| `document-processor.ts`          | Dodano `visionModel`, naprawiono 2 miejsca |
+| `youtube-downloader.ts`          | Dodano `llmModel`, naprawiono 2 miejsca    |
+| `transcription-job-service.ts`   | Dodano `llmModel`, naprawiono 1 miejsce    |
+| `audio-transcriber.ts`           | Dodano `llmModel`, naprawiono 1 miejsce    |
+| `semantic-document-discovery.ts` | Dodano `llmModel`, naprawiono 1 miejsce    |
+
+#### Dodatkowe naprawy
+
+- **Test Vision dla Ollama** - zmieniono na test tekstowy (bezpieczny) zamiast obrazowego
+- **Filtrowanie modeli wizyjnych** - dodano rozpoznawanie modeli Ollama (llava, qwen-vl, moondream, etc.)
+
+**Status:** ✅ Naprawione
+
+---
+
+## 2026-01-11 - Historia Przetworzonych Dokumentów
+
+### Nowa funkcjonalność: Zarządzanie historią dokumentów OCR i transkrypcji
+
+**Problem:** Użytkownik nie miał dostępu do historii przetworzonych dokumentów, nie mógł przeglądać, formatować ani analizować sentymentu już przetworzonych plików.
+
+**Rozwiązanie:** Nowa strona historii dokumentów z pełnym zarządzaniem.
+
+#### Nowe pliki
+
+- `apps/frontend/src/app/documents/process/history/page.tsx` - Strona historii dokumentów
+- `apps/frontend/src/lib/api/document-processing.ts` - API client
+- `apps/api/src/services/document-processing-job-service.ts` - Serwis asynchronicznego przetwarzania
+
+#### Rozszerzone pliki
+
+- `apps/api/src/routes/documents.ts` - Nowe endpointy API
+- `apps/frontend/src/app/documents/page.tsx` - Link do historii
+
+#### Funkcjonalności strony historii
+
+- **Lista dokumentów** - przeglądanie wszystkich przetworzonych dokumentów
+- **Filtrowanie** - po typie (OCR/transkrypcja), wyszukiwanie tekstowe
+- **Sortowanie** - najnowsze/najstarsze
+- **Podgląd dokumentu** - panel z pełną treścią i metadanymi
+- **Eksport MD** - pobieranie sformatowanego dokumentu
+- **Analiza sentymentu** - dla transkrypcji (LLM)
+- **Dodanie do RAG** - automatyczne lub ręczne
+- **Usuwanie** - z potwierdzeniem
+
+#### Nowe endpointy API
+
+- `GET /api/documents/processed` - lista przetworzonych dokumentów
+- `GET /api/documents/processed/:id` - szczegóły dokumentu
+- `DELETE /api/documents/processed/:id` - usunięcie dokumentu
+- `POST /api/documents/processed/:id/analyze-sentiment` - analiza sentymentu
+- `POST /api/documents/processed/:id/format` - profesjonalne formatowanie
+- `GET /api/documents/jobs` - lista zadań przetwarzania
+- `POST /api/documents/process-async` - asynchroniczne przetwarzanie
+
+#### Asynchroniczne przetwarzanie
+
+- Upload pliku z opcjami (sentyment, RAG, formatowanie)
+- Przetwarzanie w tle z progress bar
+- Automatyczny zapis do RAG (domyślnie włączony)
+- Panel zadań z statusem i postępem
+
+**Status:** ✅ Zaimplementowane
+
+---
+
+## 2026-01-11 - Adaptacyjny Normalizer Audio dla STT
+
+### Nowa funkcjonalność: Inteligentna analiza i preprocessing audio przed transkrypcją
+
+**Problem:** Nagrania z sesji rady mają różną jakość - różni mówcy, różne odległości od mikrofonu, szumy z sali, dudnienia. To wpływa negatywnie na jakość transkrypcji.
+
+**Rozwiązanie:** Adaptacyjny pipeline audio z automatyczną analizą i doborem parametrów filtrów FFmpeg.
+
+#### Nowe pliki
+
+- `apps/api/src/services/audio-analyzer.ts` - Analiza parametrów audio (ffprobe + loudnorm)
+
+#### Rozszerzone pliki
+
+- `apps/api/src/services/audio-preprocessor.ts` - Nowa metoda `preprocessAdaptive()`
+- `apps/api/src/services/youtube-downloader.ts` - Integracja preprocessingu
+- `apps/api/src/services/transcription-job-service.ts` - Status "preprocessing"
+
+#### AudioAnalyzer - Analiza audio
+
+**Zbierane metryki:**
+
+- `meanVolume` / `maxVolume` - głośność (dB)
+- `integratedLoudness` - głośność EBU R128 (LUFS)
+- `loudnessRange` - zakres dynamiki (LU)
+- `truePeak` - szczytowa głośność (dBTP)
+- `dynamicRange` - różnica max-mean
+
+**Wykrywane problemy:**
+
+- `too_quiet` - zbyt cichy sygnał
+- `too_loud` / `clipping` - przesterowanie
+- `high_dynamic_range` - duże różnice głośności (różni mówcy)
+- `noise` - szum tła
+- `low_quality` - niska jakość źródła
+
+#### Adaptacyjny Pipeline FFmpeg
+
+**Filtry (w kolejności):**
+
+1. **Gain boost** - wzmocnienie dla cichych nagrań
+2. **Highpass** (80-120 Hz) - usuwa dudnienia z sali
+3. **Lowpass** (8-12 kHz) - usuwa szumy wysokoczęstotliwościowe
+4. **AFFTDN** - adaptacyjna redukcja szumów FFT
+5. **Equalizer** - wzmocnienie pasma mowy (350Hz, 2.5kHz, 5kHz)
+6. **De-esser** - redukcja sybilantów (s, sz, ć)
+7. **Compressor** - wyrównanie dynamiki
+8. **Loudnorm** - normalizacja EBU R128 do -16 LUFS
+9. **Resample** - 16kHz mono (optymalny dla Whisper)
+
+#### Adaptacja parametrów
+
+| Wykryty problem      | Akcja                             |
+| -------------------- | --------------------------------- |
+| `too_quiet`          | Gain boost +10-20dB               |
+| `high_dynamic_range` | Kompresja ratio 5-6:1             |
+| `noise`              | Noise floor -20dB, highpass 120Hz |
+| `clipping`           | Brak gain, wcześniejsza kompresja |
+| `low_quality`        | Lowpass 8kHz, bez de-esser        |
+
+#### Integracja
+
+Preprocessing jest automatycznie włączony w `transcribeAndAnalyze()`:
+
+```typescript
+const result = await downloader.transcribeAndAnalyze(
+  audioPath,
+  videoId,
+  videoTitle,
+  videoUrl,
+  true // enablePreprocessing
+);
+```
+
+Wynik zawiera `audioAnalysis` z wykrytymi problemami i zastosowanymi filtrami.
+
+**Status:** ✅ Zaimplementowane
+
+---
+
+## 2026-01-11 - Asynchroniczna Transkrypcja YouTube z Zapisem do RAG
+
+### Nowa funkcjonalność: Przetwarzanie transkrypcji w tle z automatycznym zapisem do bazy wiedzy
+
+**Problem:** Podczas transkrypcji filmów YouTube użytkownik musiał czekać na zakończenie procesu i nie mógł wykonywać innych czynności. Transkrypcje nie były automatycznie zapisywane do bazy RAG.
+
+**Rozwiązanie:** Asynchroniczny system transkrypcji z:
+
+- Przetwarzaniem w tle (użytkownik może kontynuować pracę)
+- Automatycznym zapisem do RAG w kategorii "transkrypcje"
+- Identyfikacją mówców po imieniu i nazwisku
+- Profesjonalnym formatowaniem dokumentu z ekspresją i sentymentem
+- Powiązaniem z Sesjami Rady
+
+#### Backend - TranscriptionJobService (`transcription-job-service.ts`):
+
+**Funkcje:**
+
+- `createJob()` - tworzy zadanie transkrypcji i uruchamia asynchronicznie
+- `getJob()` - pobiera status zadania
+- `getUserJobs()` - lista zadań użytkownika
+- `processJob()` - główna logika przetwarzania (download → transcribe → analyze → save)
+
+**Identyfikacja mówców:**
+
+- Pobiera listę radnych z bazy `council_members`
+- Używa LLM do identyfikacji mówców na podstawie kontekstu wypowiedzi
+- Rozpoznaje: Przewodniczący, Burmistrz, Skarbnik, Sekretarz, Radni
+
+**Formatowanie dokumentu:**
+
+- Profesjonalny protokół z sesji w Markdown
+- Sekcje: Podsumowanie, Uczestnicy, Przebieg sesji, Pełna transkrypcja
+- Ekspresja: emoji dla emocji, wskaźniki napięcia (🔥⚡)
+- Metryki: napięcie, wiarygodność dla ważnych wypowiedzi
+
+**Zapis do RAG:**
+
+- Kategoria: `transkrypcja`
+- Embedding dla wyszukiwania semantycznego
+- Metadata: sessionId, duration, speakerCount, sentiment, speakers
+- Słowa kluczowe: uchwała, budżet, głosowanie, komisja, etc.
+
+#### Nowe endpointy API (`youtube.ts`):
+
+- `POST /api/youtube/transcribe-async` - rozpoczyna asynchroniczną transkrypcję
+- `GET /api/youtube/job/:jobId` - status zadania
+- `GET /api/youtube/jobs` - lista zadań użytkownika
+
+#### Frontend - YouTubeTranscriptionPage:
+
+**Nowe opcje transkrypcji:**
+
+- 🚀 Tryb asynchroniczny (zalecany) - przetwarzanie w tle
+- 👤 Identyfikacja mówców - rozpoznawanie radnych
+- 🎭 Analiza sentymentu - emocje i napięcie
+
+**Panel zadań:**
+
+- Wyświetla aktywne i zakończone zadania
+- Progress bar z etapami: Pobieranie → Transkrypcja → Analiza → Zapisywanie
+- Status: ✅ Zakończone, ❌ Błąd, ⏳ W trakcie
+- Polling co 3 sekundy dla aktywnych zadań
+
+#### Nowe pliki:
+
+- `apps/api/src/services/transcription-job-service.ts` - serwis asynchronicznych zadań
+- Rozszerzenie `apps/api/src/routes/youtube.ts` - nowe endpointy
+- Rozszerzenie `apps/frontend/src/lib/api/youtube-sessions.ts` - funkcje API
+- Rozszerzenie `apps/frontend/src/app/documents/youtube/page.tsx` - nowy UI
+
+**Status:** ✅ Zaimplementowane
+
+---
+
+## 2026-01-11 - Naprawa ConfigurationModal i zapisu do bazy
+
+### Naprawione błędy:
+
+1. **Zapis embedding_model i transcription_model do bazy** - dodano brakujące pola do funkcji `createApiConfiguration` i `updateApiConfiguration`
+2. **Nowy profesjonalny AIConfigurationModal** - przeprojektowany modal z zakładkami dla każdej funkcji AI (LLM, Embeddings, Vision, STT, TTS)
+3. **Naprawiono hardcoded modele embedding** w serwisach:
+   - `semantic-document-discovery.ts`
+   - `document-analysis-service.ts`
+   - `document-query-service.ts`
+   - `legal-search-api.ts`
+   - `document-processor.ts`
+   - `intelligent-scraper.ts`
+   - `chat.ts`
+4. **Naprawiono logikę RAG w chat.ts** - teraz używa `getEmbeddingsClient()` z `AIClientFactory`
+
+### Nowe pliki:
+
+- `apps/frontend/src/components/providers/AIConfigurationModal.tsx` - nowy profesjonalny modal konfiguracji
+- `apps/frontend/src/components/providers/AIConnectionTester.tsx` - komponent do testowania każdej funkcji AI osobno
+- `apps/api/migrations/004_add_missing_columns_api_configurations.sql` - migracja dodająca brakujące kolumny
+
+### Nowe endpointy API:
+
+- `POST /api/test/function` - testuje pojedynczą funkcję AI (LLM, Embeddings, Vision, STT, TTS) z podaną konfiguracją
+
+### Zaktualizowane interfejsy:
+
+- `ApiConfiguration` - dodano `embedding_model` i `transcription_model`
+- `ApiConfigurationInput` - dodano `vision_model`
+- `ApiConfigurationUpdate` - dodano `embedding_model` i `transcription_model`
+
+---
+
+## 2026-01-11 - Kontynuacja Refaktoringu Providerów AI
+
+### Zmigrowane serwisy do nowej architektury AIClientFactory:
+
+| Serwis                           | Status | Klienty AI                                    |
+| -------------------------------- | ------ | --------------------------------------------- |
+| `youtube-downloader.ts`          | ✅     | `getSTTClient`, `getLLMClient`                |
+| `audio-transcriber.ts`           | ✅     | `getSTTClient`, `getLLMClient`                |
+| `document-processor.ts`          | ✅     | `getVisionClient`, `getEmbeddingsClient`      |
+| `intelligent-scraper.ts`         | ✅     | `getLLMClient`, `getEmbeddingsClient`         |
+| `deep-research-service.ts`       | ✅     | `getLLMClient`                                |
+| `document-analysis-service.ts`   | ✅     | `getLLMClient`, `getEmbeddingsClient`         |
+| `semantic-document-discovery.ts` | ✅     | `getLLMClient`, `getEmbeddingsClient`         |
+| `youtube-session-service.ts`     | ✅     | `getLLMClient`                                |
+| `budget-analysis-engine.ts`      | ✅     | `getLLMClient`                                |
+| `legal-reasoning-engine.ts`      | ✅     | `getLLMClient`                                |
+| `legal-search-api.ts`            | ✅     | `getEmbeddingsClient`                         |
+| `document-query-service.ts`      | ✅     | `getEmbeddingsClient`                         |
+| `chat.ts`                        | ⚠️     | Przywrócono oryginalną wersję z `@ts-nocheck` |
+
+### Nowe pliki pomocnicze:
+
+- `apps/api/src/ai/chat-helpers.ts` - Bridge dla chat.ts
+
+### Statystyki refaktoringu:
+
+- **11 serwisów** w pełni zmigrowanych
+- **1 serwis** (chat.ts) z tymczasowym obejściem
+- Usunięto ~500 linii zduplikowanego kodu konfiguracji API
+- Centralizacja w `AIClientFactory` z cache'owaniem (5 min TTL)
+
+---
+
 ## 2026-01-11 - Refaktoring Architektury Providerów AI
 
 ### Nowa funkcjonalność: Centralna fabryka klientów AI z presetami

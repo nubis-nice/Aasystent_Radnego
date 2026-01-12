@@ -1,5 +1,6 @@
 import { FastifyPluginAsync } from "fastify";
 import { createClient } from "@supabase/supabase-js";
+import { getEmbeddingsClient, getAIConfig } from "../ai/index.js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -42,6 +43,107 @@ interface ReasoningEngineDiagnostics {
 }
 
 export const diagnosticsRoutes: FastifyPluginAsync = async (fastify) => {
+  /**
+   * POST /api/diagnostics/reindex-embeddings
+   * Przeindeksowuje dokumenty - generuje embeddingi dla dokumentów bez nich
+   */
+  fastify.post("/diagnostics/reindex-embeddings", async (request, reply) => {
+    try {
+      const userId = request.headers["x-user-id"] as string;
+      if (!userId) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const { batchSize = 10 } = request.body as { batchSize?: number };
+
+      // Pobierz klienta embeddingów
+      const embeddingsClient = await getEmbeddingsClient(userId);
+      const embConfig = await getAIConfig(userId, "embeddings");
+
+      if (!embeddingsClient) {
+        return reply
+          .status(500)
+          .send({ error: "Nie można zainicjalizować klienta embeddingów" });
+      }
+
+      // Pobierz dokumenty bez embeddingów
+      const { data: docsWithoutEmbeddings, error: fetchError } = await supabase
+        .from("processed_documents")
+        .select("id, title, content")
+        .eq("user_id", userId)
+        .is("embedding", null)
+        .limit(batchSize);
+
+      if (fetchError) {
+        return reply.status(500).send({ error: fetchError.message });
+      }
+
+      if (!docsWithoutEmbeddings || docsWithoutEmbeddings.length === 0) {
+        return reply.send({
+          success: true,
+          processed: 0,
+          message: "Wszystkie dokumenty mają embeddingi",
+        });
+      }
+
+      let processed = 0;
+      let errors: string[] = [];
+
+      for (const doc of docsWithoutEmbeddings) {
+        try {
+          const textToEmbed = `${doc.title || ""}\n\n${
+            doc.content || ""
+          }`.slice(0, 8000);
+
+          const embeddingResponse = await embeddingsClient.embeddings.create({
+            model: embConfig.modelName,
+            input: textToEmbed,
+          });
+
+          const embedding = embeddingResponse.data[0].embedding;
+
+          const { error: updateError } = await supabase
+            .from("processed_documents")
+            .update({ embedding })
+            .eq("id", doc.id);
+
+          if (updateError) {
+            errors.push(`${doc.title}: ${updateError.message}`);
+          } else {
+            processed++;
+          }
+        } catch (err) {
+          errors.push(
+            `${doc.title}: ${
+              err instanceof Error ? err.message : "Unknown error"
+            }`
+          );
+        }
+      }
+
+      // Policz pozostałe dokumenty bez embeddingów
+      const { count: remaining } = await supabase
+        .from("processed_documents")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .is("embedding", null);
+
+      return reply.send({
+        success: true,
+        processed,
+        remaining: remaining || 0,
+        errors: errors.length > 0 ? errors : undefined,
+        model: embConfig.modelName,
+      });
+    } catch (error) {
+      console.error("[Diagnostics] Reindex error:", error);
+      return reply.status(500).send({
+        error: "Błąd reindeksacji",
+        details: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  });
+
   /**
    * GET /api/diagnostics/reasoning-engine
    * Sprawdza status wszystkich komponentów Reasoning Engine

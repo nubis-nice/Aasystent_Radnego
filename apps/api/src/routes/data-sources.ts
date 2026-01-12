@@ -331,45 +331,44 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
           return reply.status(404).send({ error: "Source not found" });
         }
 
-        // Uruchom inteligentny scraping z analizą LLM
+        // Uruchom inteligentny scraping ASYNCHRONICZNIE
         request.log.info(
           { sourceId: id },
-          "Starting intelligent scrape with LLM analysis"
+          "Starting intelligent scrape with LLM analysis (async)"
         );
 
-        const result = await intelligentScrapeDataSource(id, userId, {
+        // Uruchom scraping w tle - nie czekamy na wynik
+        intelligentScrapeDataSource(id, userId, {
           councilLocation: source.metadata?.councilLocation || "Drawno",
           enableLLMAnalysis: true,
           incrementalMode: true,
-        });
+        })
+          .then((result) => {
+            request.log.info(
+              {
+                sourceId: id,
+                success: result.success,
+                pagesAnalyzed: result.pagesAnalyzed,
+                documentsProcessed: result.documentsProcessed,
+                newDocuments: result.newDocuments,
+                llmAnalyses: result.llmAnalyses,
+              },
+              "Intelligent scrape completed (async)"
+            );
+          })
+          .catch((error) => {
+            request.log.error(
+              { sourceId: id, error: error.message },
+              "Intelligent scrape failed (async)"
+            );
+          });
 
-        request.log.info(
-          {
-            sourceId: id,
-            success: result.success,
-            pagesAnalyzed: result.pagesAnalyzed,
-            documentsProcessed: result.documentsProcessed,
-            newDocuments: result.newDocuments,
-            llmAnalyses: result.llmAnalyses,
-          },
-          "Intelligent scrape completed"
-        );
-
+        // Natychmiast zwróć odpowiedź - scraping działa w tle
         return reply.send({
-          message: result.success
-            ? "Intelligent scrape completed"
-            : "Intelligent scrape failed",
+          message: "Scraping started in background",
           source_id: id,
-          status: result.success ? "success" : "error",
-          site_map_size: result.siteMap.length,
-          pages_analyzed: result.pagesAnalyzed,
-          documents_found: result.documentsFound,
-          documents_processed: result.documentsProcessed,
-          new_documents: result.newDocuments,
-          skipped_documents: result.skippedDocuments,
-          llm_analyses: result.llmAnalyses,
-          errors: result.errors,
-          processing_time_ms: result.processingTimeMs,
+          status: "started",
+          async: true,
         });
       } catch (error) {
         request.log.error("Trigger scraping error:", error);

@@ -23,6 +23,20 @@ const ALLOWED_MIME_TYPES = [
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "text/plain",
   "text/markdown",
+  // Audio formats for transcription
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/mp4",
+  "audio/m4a",
+  "audio/x-m4a",
+  "audio/ogg",
+  "audio/webm",
+  // Video formats for transcription
+  "video/mp4",
+  "video/webm",
+  "video/ogg",
 ];
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -538,6 +552,517 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       fastify.log.error(error);
       return reply.status(500).send({
         error: error instanceof Error ? error.message : "Błąd transkrypcji",
+      });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // HISTORIA PRZETWORZONYCH DOKUMENTÓW
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // GET /documents/processed - Lista przetworzonych dokumentów
+  fastify.get("/documents/processed", async (request, reply) => {
+    try {
+      const authHeader = request.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const token = authHeader.substring(7);
+      const { createClient } = await import("@supabase/supabase-js");
+      const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+      const {
+        data: { user },
+        error: authError,
+      } = await supabaseAuth.auth.getUser(token);
+
+      if (authError || !user) {
+        return reply.status(401).send({ error: "Invalid token" });
+      }
+
+      const { data: documents, error } = await supabase
+        .from("processed_documents")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("processed_at", { ascending: false })
+        .limit(100);
+
+      if (error) {
+        throw error;
+      }
+
+      // Mapuj do formatu frontendu
+      const mappedDocuments = (documents || []).map((doc) => ({
+        id: doc.id,
+        title: doc.title,
+        content: doc.content,
+        formattedContent: doc.metadata?.formattedContent || null,
+        documentType:
+          doc.document_type === "transkrypcja"
+            ? "transcription"
+            : doc.document_type === "ocr"
+            ? "ocr"
+            : "other",
+        sourceFileName: doc.source_url?.replace("file://", "") || doc.title,
+        sourceUrl: doc.source_url,
+        mimeType: doc.metadata?.mimeType || "application/octet-stream",
+        fileSize: doc.metadata?.fileSize || 0,
+        processingMethod: doc.metadata?.processingMethod || "unknown",
+        createdAt: doc.processed_at,
+        metadata: {
+          sttModel: doc.metadata?.sttModel,
+          ocrEngine: doc.metadata?.ocrEngine,
+          sentiment: doc.metadata?.sentiment,
+          speakers: doc.metadata?.speakers,
+          duration: doc.metadata?.duration,
+          audioIssues: doc.metadata?.audioIssues,
+        },
+        savedToRag: true, // Jeśli jest w processed_documents, to jest w RAG
+        ragDocumentId: doc.id,
+      }));
+
+      return reply.send({
+        success: true,
+        documents: mappedDocuments,
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        error:
+          error instanceof Error ? error.message : "Błąd pobierania dokumentów",
+      });
+    }
+  });
+
+  // GET /documents/processed/:id - Szczegóły przetworzonego dokumentu
+  fastify.get<{ Params: { id: string } }>(
+    "/documents/processed/:id",
+    async (request, reply) => {
+      const { id } = request.params;
+
+      try {
+        const authHeader = request.headers.authorization;
+        if (!authHeader?.startsWith("Bearer ")) {
+          return reply.status(401).send({ error: "Unauthorized" });
+        }
+
+        const token = authHeader.substring(7);
+        const { createClient } = await import("@supabase/supabase-js");
+        const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+        const {
+          data: { user },
+          error: authError,
+        } = await supabaseAuth.auth.getUser(token);
+
+        if (authError || !user) {
+          return reply.status(401).send({ error: "Invalid token" });
+        }
+
+        const { data: doc, error } = await supabase
+          .from("processed_documents")
+          .select("*")
+          .eq("id", id)
+          .eq("user_id", user.id)
+          .single();
+
+        if (error || !doc) {
+          return reply.status(404).send({ error: "Dokument nie znaleziony" });
+        }
+
+        return reply.send({
+          success: true,
+          document: {
+            id: doc.id,
+            title: doc.title,
+            content: doc.content,
+            formattedContent: doc.metadata?.formattedContent || null,
+            documentType:
+              doc.document_type === "transkrypcja"
+                ? "transcription"
+                : doc.document_type === "ocr"
+                ? "ocr"
+                : "other",
+            sourceFileName: doc.source_url?.replace("file://", "") || doc.title,
+            sourceUrl: doc.source_url,
+            mimeType: doc.metadata?.mimeType || "application/octet-stream",
+            fileSize: doc.metadata?.fileSize || 0,
+            processingMethod: doc.metadata?.processingMethod || "unknown",
+            createdAt: doc.processed_at,
+            metadata: doc.metadata,
+            savedToRag: true,
+            ragDocumentId: doc.id,
+          },
+        });
+      } catch (error) {
+        fastify.log.error(error);
+        return reply.status(500).send({
+          error:
+            error instanceof Error
+              ? error.message
+              : "Błąd pobierania dokumentu",
+        });
+      }
+    }
+  );
+
+  // DELETE /documents/processed/:id - Usuń przetworzony dokument
+  fastify.delete<{ Params: { id: string } }>(
+    "/documents/processed/:id",
+    async (request, reply) => {
+      const { id } = request.params;
+
+      try {
+        const authHeader = request.headers.authorization;
+        if (!authHeader?.startsWith("Bearer ")) {
+          return reply.status(401).send({ error: "Unauthorized" });
+        }
+
+        const token = authHeader.substring(7);
+        const { createClient } = await import("@supabase/supabase-js");
+        const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+        const {
+          data: { user },
+          error: authError,
+        } = await supabaseAuth.auth.getUser(token);
+
+        if (authError || !user) {
+          return reply.status(401).send({ error: "Invalid token" });
+        }
+
+        const { error } = await supabase
+          .from("processed_documents")
+          .delete()
+          .eq("id", id)
+          .eq("user_id", user.id);
+
+        if (error) {
+          throw error;
+        }
+
+        return reply.send({ success: true });
+      } catch (error) {
+        fastify.log.error(error);
+        return reply.status(500).send({
+          error:
+            error instanceof Error ? error.message : "Błąd usuwania dokumentu",
+        });
+      }
+    }
+  );
+
+  // POST /documents/processed/:id/analyze-sentiment - Analiza sentymentu
+  fastify.post<{ Params: { id: string } }>(
+    "/documents/processed/:id/analyze-sentiment",
+    async (request, reply) => {
+      const { id } = request.params;
+
+      try {
+        const authHeader = request.headers.authorization;
+        if (!authHeader?.startsWith("Bearer ")) {
+          return reply.status(401).send({ error: "Unauthorized" });
+        }
+
+        const token = authHeader.substring(7);
+        const { createClient } = await import("@supabase/supabase-js");
+        const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+        const {
+          data: { user },
+          error: authError,
+        } = await supabaseAuth.auth.getUser(token);
+
+        if (authError || !user) {
+          return reply.status(401).send({ error: "Invalid token" });
+        }
+
+        // Pobierz dokument
+        const { data: doc, error: docError } = await supabase
+          .from("processed_documents")
+          .select("*")
+          .eq("id", id)
+          .eq("user_id", user.id)
+          .single();
+
+        if (docError || !doc) {
+          return reply.status(404).send({ error: "Dokument nie znaleziony" });
+        }
+
+        // Analiza sentymentu przez LLM
+        const { getLLMClient, getAIConfig } = await import("../ai/index.js");
+        const llmClient = await getLLMClient(user.id);
+        const llmConfig = await getAIConfig(user.id, "llm");
+
+        const response = await llmClient.chat.completions.create({
+          model: llmConfig.modelName,
+          messages: [
+            {
+              role: "system",
+              content: `Jesteś ekspertem od analizy sentymentu. Przeanalizuj poniższy tekst i zwróć JSON z analizą.
+              
+Format odpowiedzi (tylko JSON, bez markdown):
+{
+  "overall": "positive" | "negative" | "neutral" | "mixed",
+  "score": 0.0-1.0,
+  "summary": "krótkie podsumowanie sentymentu"
+}`,
+            },
+            {
+              role: "user",
+              content: doc.content.substring(0, 4000),
+            },
+          ],
+          temperature: 0.3,
+        });
+
+        const sentimentText = response.choices[0]?.message?.content || "{}";
+        let sentiment;
+        try {
+          sentiment = JSON.parse(
+            sentimentText.replace(/```json\n?|\n?```/g, "")
+          );
+        } catch {
+          sentiment = {
+            overall: "neutral",
+            score: 0.5,
+            summary: "Nie udało się przeanalizować",
+          };
+        }
+
+        // Zapisz wynik do metadanych
+        const updatedMetadata = {
+          ...doc.metadata,
+          sentiment,
+        };
+
+        await supabase
+          .from("processed_documents")
+          .update({ metadata: updatedMetadata })
+          .eq("id", id);
+
+        return reply.send({
+          success: true,
+          sentiment,
+        });
+      } catch (error) {
+        fastify.log.error(error);
+        return reply.status(500).send({
+          error:
+            error instanceof Error ? error.message : "Błąd analizy sentymentu",
+        });
+      }
+    }
+  );
+
+  // POST /documents/processed/:id/format - Profesjonalne formatowanie dokumentu
+  fastify.post<{ Params: { id: string } }>(
+    "/documents/processed/:id/format",
+    async (request, reply) => {
+      const { id } = request.params;
+
+      try {
+        const authHeader = request.headers.authorization;
+        if (!authHeader?.startsWith("Bearer ")) {
+          return reply.status(401).send({ error: "Unauthorized" });
+        }
+
+        const token = authHeader.substring(7);
+        const { createClient } = await import("@supabase/supabase-js");
+        const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+        const {
+          data: { user },
+          error: authError,
+        } = await supabaseAuth.auth.getUser(token);
+
+        if (authError || !user) {
+          return reply.status(401).send({ error: "Invalid token" });
+        }
+
+        // Pobierz dokument
+        const { data: doc, error: docError } = await supabase
+          .from("processed_documents")
+          .select("*")
+          .eq("id", id)
+          .eq("user_id", user.id)
+          .single();
+
+        if (docError || !doc) {
+          return reply.status(404).send({ error: "Dokument nie znaleziony" });
+        }
+
+        // Formatowanie przez LLM
+        const { getLLMClient, getAIConfig } = await import("../ai/index.js");
+        const llmClient = await getLLMClient(user.id);
+        const llmConfig = await getAIConfig(user.id, "llm");
+
+        const isTranscription = doc.document_type === "transkrypcja";
+
+        const response = await llmClient.chat.completions.create({
+          model: llmConfig.modelName,
+          messages: [
+            {
+              role: "system",
+              content: isTranscription
+                ? `Jesteś ekspertem od formatowania transkrypcji. Sformatuj poniższą transkrypcję jako profesjonalny protokół w Markdown.
+                
+Zawrzyj:
+- Tytuł i datę
+- Podsumowanie głównych punktów
+- Sformatowaną treść z wyróżnieniem mówców
+- Kluczowe wnioski`
+                : `Jesteś ekspertem od formatowania dokumentów. Sformatuj poniższy tekst OCR jako profesjonalny dokument w Markdown.
+                
+Zawrzyj:
+- Tytuł dokumentu
+- Poprawioną strukturę (nagłówki, akapity, listy)
+- Poprawione błędy OCR
+- Wyróżnione kluczowe informacje`,
+            },
+            {
+              role: "user",
+              content: doc.content.substring(0, 8000),
+            },
+          ],
+          temperature: 0.3,
+        });
+
+        const formattedContent =
+          response.choices[0]?.message?.content || doc.content;
+
+        // Zapisz sformatowaną treść do metadanych
+        const updatedMetadata = {
+          ...doc.metadata,
+          formattedContent,
+        };
+
+        await supabase
+          .from("processed_documents")
+          .update({ metadata: updatedMetadata })
+          .eq("id", id);
+
+        return reply.send({
+          success: true,
+          formattedContent,
+        });
+      } catch (error) {
+        fastify.log.error(error);
+        return reply.status(500).send({
+          error:
+            error instanceof Error
+              ? error.message
+              : "Błąd formatowania dokumentu",
+        });
+      }
+    }
+  );
+
+  // GET /documents/jobs - Lista zadań przetwarzania
+  fastify.get("/documents/jobs", async (request, reply) => {
+    try {
+      const authHeader = request.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const token = authHeader.substring(7);
+      const { createClient } = await import("@supabase/supabase-js");
+      const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+      const {
+        data: { user },
+        error: authError,
+      } = await supabaseAuth.auth.getUser(token);
+
+      if (authError || !user) {
+        return reply.status(401).send({ error: "Invalid token" });
+      }
+
+      // Pobierz zadania z serwisu (in-memory queue)
+      const { DocumentProcessingJobService } = await import(
+        "../services/document-processing-job-service.js"
+      );
+      const jobService = new DocumentProcessingJobService(user.id);
+      const jobs = jobService.getUserJobs();
+
+      return reply.send({
+        success: true,
+        jobs,
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.send({
+        success: true,
+        jobs: [], // Zwróć pustą listę jeśli serwis nie istnieje
+      });
+    }
+  });
+
+  // POST /documents/process-async - Asynchroniczne przetwarzanie dokumentu
+  fastify.post("/documents/process-async", async (request, reply) => {
+    try {
+      const authHeader = request.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const token = authHeader.substring(7);
+      const { createClient } = await import("@supabase/supabase-js");
+      const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+      const {
+        data: { user },
+        error: authError,
+      } = await supabaseAuth.auth.getUser(token);
+
+      if (authError || !user) {
+        return reply.status(401).send({ error: "Invalid token" });
+      }
+
+      // Get uploaded file
+      const data = await request.file();
+
+      if (!data) {
+        return reply.status(400).send({ error: "Nie przesłano pliku" });
+      }
+
+      const { filename, mimetype } = data;
+      const fileBuffer = await data.toBuffer();
+
+      // Validate file type
+      if (!ALLOWED_MIME_TYPES.includes(mimetype)) {
+        return reply.status(400).send({
+          error: `Nieobsługiwany format pliku: ${mimetype}`,
+        });
+      }
+
+      // Parse options from form data
+      const includeSentiment =
+        data.fields?.includeSentiment?.toString() === "true";
+      const saveToRag = data.fields?.saveToRag?.toString() !== "false";
+      const formatAsProfessional =
+        data.fields?.formatAsProfessional?.toString() !== "false";
+
+      // Utwórz zadanie asynchroniczne
+      const { DocumentProcessingJobService } = await import(
+        "../services/document-processing-job-service.js"
+      );
+      const jobService = new DocumentProcessingJobService(user.id);
+
+      const job = await jobService.createJob({
+        fileName: filename,
+        fileBuffer,
+        mimeType: mimetype,
+        includeSentiment,
+        saveToRag,
+        formatAsProfessional,
+      });
+
+      return reply.send({
+        success: true,
+        jobId: job.id,
+        message: "Zadanie przetwarzania zostało utworzone",
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        error:
+          error instanceof Error ? error.message : "Błąd tworzenia zadania",
       });
     }
   });

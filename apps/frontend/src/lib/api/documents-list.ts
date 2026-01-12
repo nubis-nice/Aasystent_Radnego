@@ -209,3 +209,60 @@ async function getAccessToken(): Promise<string> {
   } = await supabase.auth.getSession();
   return session?.access_token || "";
 }
+
+/**
+ * Powiązany dokument
+ */
+export interface RelatedDocument {
+  document_id: string;
+  depth: number;
+  path: string[];
+  total_strength: number;
+  relation_types: string[];
+  document?: {
+    id: string;
+    title: string;
+    document_type: string;
+    publish_date: string | null;
+    summary: string | null;
+  };
+}
+
+/**
+ * Pobierz powiązane dokumenty (załączniki, druki, referencje)
+ */
+export async function getRelatedDocuments(
+  documentId: string,
+  maxDepth: number = 3,
+  minStrength: number = 0.3
+): Promise<RelatedDocument[]> {
+  const token = await getAccessToken();
+
+  if (!token) {
+    return [];
+  }
+
+  try {
+    const response = await fetch(
+      `${API_URL}/api/documents/${documentId}/related?maxDepth=${maxDepth}&minStrength=${minStrength}`,
+      {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      console.warn("[getRelatedDocuments] Failed to fetch:", response.status);
+      return [];
+    }
+
+    const data = await response.json();
+    return data.related || [];
+  } catch (error) {
+    console.error("[getRelatedDocuments] Error:", error);
+    return [];
+  }
+}

@@ -111,9 +111,9 @@ export default function ChatPage() {
   const [showSidebar, setShowSidebar] = useState(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("chatSidebarVisible");
-      return saved !== null ? saved === "true" : true;
+      return saved !== null ? saved === "true" : false;
     }
-    return true;
+    return false;
   });
 
   // Opcje kontekstu (domyślnie włączone)

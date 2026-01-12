@@ -31,9 +31,9 @@ import {
 } from "@/lib/supabase/api-config";
 import { ProviderType } from "@aasystent-radnego/shared";
 import {
-  ConfigurationModal,
-  type ConfigFormData,
-} from "@/components/providers/ConfigurationModal";
+  AIConfigurationModal,
+  type AIConfigFormData,
+} from "@/components/providers/AIConfigurationModal";
 import {
   SemanticSearchModal,
   type SemanticConfigFormData,
@@ -177,18 +177,15 @@ export default function ApiSettingsPage() {
   const [editingConfig, setEditingConfig] = useState<ApiConfiguration | null>(
     null
   );
-  const [formData, setFormData] = useState<ConfigFormData>({
+  const [formData, setFormData] = useState<AIConfigFormData>({
     provider: "openai",
     name: "",
     apiKey: "",
     baseUrl: "",
-    chatEndpoint: "",
-    embeddingsEndpoint: "",
-    modelsEndpoint: "",
     modelName: "",
-    visionModel: "",
     embeddingModel: "text-embedding-3-small",
     transcriptionModel: "whisper-1",
+    visionModel: "",
   });
 
   // Stan dla dynamicznych modeli z metadanami
@@ -300,15 +297,16 @@ export default function ApiSettingsPage() {
         name: config.name,
         apiKey: "",
         baseUrl: config.base_url || "",
-        chatEndpoint: "",
-        embeddingsEndpoint: "",
-        modelsEndpoint: "",
         modelName: config.model_name || "",
+        embeddingModel:
+          (config as ApiConfiguration & { embedding_model?: string })
+            .embedding_model || "text-embedding-3-small",
+        transcriptionModel:
+          (config as ApiConfiguration & { transcription_model?: string })
+            .transcription_model || "whisper-1",
         visionModel:
           (config.provider_meta as { vision_model?: string } | null)
             ?.vision_model || "",
-        embeddingModel: "text-embedding-3-small",
-        transcriptionModel: "whisper-1",
       });
       setShowModal(true);
     }
@@ -325,19 +323,16 @@ export default function ApiSettingsPage() {
         name: "",
         apiKey: "",
         baseUrl: "",
-        chatEndpoint: "",
-        embeddingsEndpoint: "",
-        modelsEndpoint: "",
         modelName: "",
-        visionModel: "",
         embeddingModel: "text-embedding-3-small",
         transcriptionModel: "whisper-1",
+        visionModel: "",
       });
       setShowModal(true);
     }
   };
 
-  const handleSaveConfig = async (configData?: ConfigFormData) => {
+  const handleSaveConfig = async (configData?: AIConfigFormData) => {
     if (!userId) return;
 
     const dataToSave = configData || formData;
@@ -356,9 +351,15 @@ export default function ApiSettingsPage() {
           model_name: dataToSave.modelName,
           embedding_model: dataToSave.embeddingModel,
           transcription_model: dataToSave.transcriptionModel,
-          provider_meta: dataToSave.visionModel
-            ? { vision_model: dataToSave.visionModel }
-            : undefined,
+          vision_model: dataToSave.visionModel || null,
+          tts_model: dataToSave.ttsModel || null,
+          provider_meta: {
+            llm_enabled: dataToSave.llmEnabled,
+            embeddings_enabled: dataToSave.embeddingsEnabled,
+            vision_enabled: dataToSave.visionEnabled,
+            stt_enabled: dataToSave.sttEnabled,
+            tts_enabled: dataToSave.ttsEnabled,
+          },
           config_type: "ai",
         };
 
@@ -392,9 +393,14 @@ export default function ApiSettingsPage() {
           model_name: dataToSave.modelName,
           embedding_model: dataToSave.embeddingModel,
           transcription_model: dataToSave.transcriptionModel,
-          provider_meta: dataToSave.visionModel
-            ? { vision_model: dataToSave.visionModel }
-            : undefined,
+          vision_model: dataToSave.visionModel,
+          provider_meta: {
+            llm_enabled: dataToSave.llmEnabled,
+            embeddings_enabled: dataToSave.embeddingsEnabled,
+            vision_enabled: dataToSave.visionEnabled,
+            stt_enabled: dataToSave.sttEnabled,
+            tts_enabled: dataToSave.ttsEnabled,
+          },
           is_default: configs.length === 0,
         });
 
@@ -848,11 +854,11 @@ export default function ApiSettingsPage() {
         )}
       </div>
 
-      {/* Modal dodawania/edycji konfiguracji - Nowy ConfigurationModal */}
-      <ConfigurationModal
+      {/* Modal dodawania/edycji konfiguracji AI */}
+      <AIConfigurationModal
         isOpen={showModal}
         onClose={() => setShowModal(false)}
-        onSave={async (config) => {
+        onSave={async (config: AIConfigFormData) => {
           await handleSaveConfig(config);
         }}
         editingConfig={
@@ -863,6 +869,24 @@ export default function ApiSettingsPage() {
                 name: editingConfig.name,
                 base_url: editingConfig.base_url ?? null,
                 model_name: editingConfig.model_name ?? null,
+                embedding_model: editingConfig.embedding_model ?? null,
+                transcription_model: editingConfig.transcription_model ?? null,
+                vision_model:
+                  (
+                    editingConfig as ApiConfiguration & {
+                      vision_model?: string;
+                    }
+                  ).vision_model ?? null,
+                tts_model:
+                  (editingConfig as ApiConfiguration & { tts_model?: string })
+                    .tts_model ?? null,
+                provider_meta: editingConfig.provider_meta as {
+                  llm_enabled?: boolean;
+                  embeddings_enabled?: boolean;
+                  vision_enabled?: boolean;
+                  stt_enabled?: boolean;
+                  tts_enabled?: boolean;
+                } | null,
               }
             : null
         }

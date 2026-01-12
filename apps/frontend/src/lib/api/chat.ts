@@ -89,7 +89,7 @@ export async function sendMessage(
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(request),
-        signal: AbortSignal.timeout(30000), // 30 second timeout
+        signal: AbortSignal.timeout(180000), // 3 minute timeout for LLM responses
       });
 
       if (!response.ok) {
@@ -222,7 +222,7 @@ export async function deleteConversation(id: string): Promise<void> {
       headers: {
         Authorization: `Bearer ${token}`,
       },
-      signal: AbortSignal.timeout(10000), // 10 second timeout
+      signal: AbortSignal.timeout(60000), // 60 second timeout
     });
 
     if (!response.ok) {

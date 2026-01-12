@@ -334,13 +334,26 @@ async function processScrapedContent(
     return 0;
   }
 
-  const openaiApiKey = process.env.OPENAI_API_KEY;
-  if (!openaiApiKey) {
-    console.warn("OPENAI_API_KEY not set, skipping AI processing");
+  // Pobierz konfigurację AI z bazy danych
+  const { data: apiConfig } = await supabase
+    .from("api_configurations")
+    .select("*")
+    .eq("is_active", true)
+    .eq("is_default", true)
+    .single();
+
+  if (!apiConfig) {
+    console.warn("[Scraper] No AI configuration found, skipping AI processing");
     return 0;
   }
 
-  const openai = new OpenAI({ apiKey: openaiApiKey });
+  const openaiApiKey = Buffer.from(
+    apiConfig.api_key_encrypted,
+    "base64"
+  ).toString("utf-8");
+  const openaiBaseUrl = apiConfig.base_url || undefined;
+
+  const openai = new OpenAI({ apiKey: openaiApiKey, baseURL: openaiBaseUrl });
 
   for (const content of unprocessedContent) {
     try {
@@ -361,7 +374,7 @@ async function processScrapedContent(
       if (content.raw_content && content.raw_content.length > 500) {
         try {
           const summaryResponse = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
+            model: process.env.OPENAI_MODEL || "gpt-4o-mini",
             messages: [
               {
                 role: "system",

@@ -178,9 +178,9 @@ export class AIConfigResolver {
 
     if (error || !legacyConfig) {
       console.log(
-        "[AIConfigResolver] No configuration found for user, using env fallback"
+        "[AIConfigResolver] No configuration found for user - returning empty config"
       );
-      return this.getEnvFallbackConfig();
+      return this.getEmptyConfig();
     }
 
     // Konwertuj starą konfigurację na nowy format
@@ -212,44 +212,60 @@ export class AIConfigResolver {
       authMethod:
         provider === "local" || provider === "ollama" ? "none" : "bearer",
       customHeaders: null,
-      timeoutSeconds: (legacy.timeout_seconds as number) || 30,
+      timeoutSeconds:
+        (legacy.timeout_seconds as number) ||
+        (provider === "local" || provider === "ollama" ? 180 : 120),
       maxRetries: (legacy.max_retries as number) || 3,
       isEnabled: true,
       lastTestAt: null,
       lastTestStatus: null,
     };
 
-    // Dla local/ollama, STT używa faster-whisper-server
+    // STT może używać osobnego serwera (np. faster-whisper-server)
+    // Pobierz z provider_meta lub użyj domyślnego dla local/ollama
     const sttBaseUrl =
-      provider === "local" || provider === "ollama"
+      ((legacy.provider_meta as Record<string, unknown>)
+        ?.stt_base_url as string) ||
+      (provider === "local" || provider === "ollama"
         ? "http://localhost:8000/v1"
-        : baseUrl;
+        : baseUrl);
 
     return {
       llm: {
         ...baseProvider,
         functionType: "llm",
-        modelName: (legacy.model_name as string) || "gpt-4-turbo-preview",
+        modelName:
+          (legacy.model_name as string) ||
+          process.env.OPENAI_MODEL ||
+          "gpt-4o-mini",
       },
       embeddings: {
         ...baseProvider,
         functionType: "embeddings",
         modelName:
           (legacy.embedding_model as string) || "text-embedding-3-small",
+        timeoutSeconds:
+          provider === "local" || provider === "ollama" ? 300 : 120, // 5 minut dla lokalnych embeddings
       },
       vision: {
         ...baseProvider,
         functionType: "vision",
-        modelName: (legacy.model_name as string) || "gpt-4-vision-preview",
+        modelName:
+          (legacy.vision_model as string) ||
+          (legacy.model_name as string) ||
+          process.env.OPENAI_VISION_MODEL ||
+          "gpt-4o",
       },
       stt: {
         ...baseProvider,
         functionType: "stt",
         baseUrl: sttBaseUrl,
         modelName:
-          provider === "local" || provider === "ollama"
-            ? "Systran/faster-whisper-medium"
-            : (legacy.transcription_model as string) || "whisper-1",
+          (legacy.transcription_model as string) ||
+          (provider === "local" || provider === "ollama"
+            ? "Systran/faster-whisper-large-v3"
+            : "whisper-1"),
+        timeoutSeconds: 1800, // 30 minut dla bardzo długich plików audio (sesje rady)
       },
       tts: null, // TTS nie było w starej konfiguracji
     };
@@ -280,6 +296,15 @@ export class AIConfigResolver {
       // Użyj domyślnych wartości z presetu jeśli brakuje
       const presetDefaults = getPresetFunction(preset, functionType);
 
+      // Dla Ollama/local zwiększ minimalny timeout do 180s (modele lokalne są wolniejsze)
+      let timeoutSeconds = provider.timeout_seconds;
+      if (
+        (provider.provider === "local" || provider.provider === "ollama") &&
+        timeoutSeconds < 120
+      ) {
+        timeoutSeconds = 180;
+      }
+
       config[functionType] = {
         id: provider.id,
         configId: provider.config_id,
@@ -292,7 +317,7 @@ export class AIConfigResolver {
         authMethod: provider.auth_method as AIProviderConfig["authMethod"],
         customHeaders: provider.custom_headers,
         modelName: provider.model_name || presetDefaults?.defaultModel || "",
-        timeoutSeconds: provider.timeout_seconds,
+        timeoutSeconds,
         maxRetries: provider.max_retries,
         isEnabled: provider.is_enabled,
         lastTestAt: provider.last_test_at,
@@ -404,7 +429,7 @@ export class AIConfigResolver {
       apiKey,
       authMethod: "bearer",
       customHeaders: null,
-      timeoutSeconds: 30,
+      timeoutSeconds: 120,
       maxRetries: 3,
       isEnabled: true,
       lastTestAt: null,
@@ -415,23 +440,26 @@ export class AIConfigResolver {
       llm: {
         ...baseProvider,
         functionType: "llm",
-        modelName: process.env.OPENAI_MODEL || "gpt-4-turbo-preview",
+        modelName: process.env.OPENAI_MODEL || "gpt-4o-mini",
+        timeoutSeconds: 180, // 3 minuty dla LLM (Ollama może być wolna)
       },
       embeddings: {
         ...baseProvider,
         functionType: "embeddings",
         modelName:
           process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small",
+        timeoutSeconds: 300, // 5 minut dla embeddings (batch processing)
       },
       vision: {
         ...baseProvider,
         functionType: "vision",
-        modelName: "gpt-4-vision-preview",
+        modelName: process.env.OPENAI_VISION_MODEL || "gpt-4o",
       },
       stt: {
         ...baseProvider,
         functionType: "stt",
         modelName: "whisper-1",
+        timeoutSeconds: 1800, // 30 minut dla bardzo długich plików audio (sesje rady)
       },
       tts: {
         ...baseProvider,

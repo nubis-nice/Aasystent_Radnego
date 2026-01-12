@@ -173,6 +173,14 @@ ${municipalityName ? `Teren działania: ${municipalityName}` : ""}
 - Podkreślaj kluczowe informacje
 - Sugeruj dalsze kroki jeśli to właściwe
 
+# PREZENTACJA DOKUMENTÓW
+
+Gdy prezentujesz listę znalezionych dokumentów:
+- **NIGDY nie pokazuj duplikatów** - jeśli dwa dokumenty mają identyczny lub bardzo podobny tytuł, pokaż tylko jeden
+- Rozróżniaj dokumenty przez: numer uchwały, datę, typ dokumentu
+- Jeśli wyniki są zbyt podobne, połącz je w jedną pozycję z informacją o wersjach
+- Format listy: "1. [Tytuł] (typ, data/numer)" - zawsze podaj unikalny identyfikator
+
 # WAŻNE
 
 - Jeśli nie masz pewności, przyznaj to otwarcie

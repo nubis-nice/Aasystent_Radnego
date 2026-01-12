@@ -32,16 +32,33 @@ export default function DocumentProcessPage() {
       const formData = new FormData();
       formData.append("file", file);
 
-      const response = await fetch("/api/documents/process", {
-        method: "POST",
-        body: formData,
-      });
+      // Pobierz token autoryzacji
+      const { supabase } = await import("@/lib/supabase/client");
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (!response.ok) {
-        throw new Error("Błąd przetwarzania pliku");
+      if (!session?.access_token) {
+        throw new Error("Brak autoryzacji - zaloguj się ponownie");
       }
 
+      const response = await fetch(
+        "http://localhost:3001/api/documents/process",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: formData,
+        }
+      );
+
       const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Błąd przetwarzania pliku");
+      }
+
       setResult(data.text || data.transcription);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Błąd przetwarzania");

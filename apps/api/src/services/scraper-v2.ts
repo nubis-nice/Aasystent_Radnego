@@ -697,9 +697,8 @@ async function processScrapedContentV2(
   }
   console.log("[Scraper] API config found:", apiConfig ? "yes" : "no");
 
-  let openaiApiKey = process.env.OPENAI_API_KEY;
+  let openaiApiKey: string | undefined = undefined;
   let openaiBaseUrl: string | undefined = undefined;
-
   let embeddingModel = "text-embedding-3-small"; // domyślny model
 
   if (apiConfig) {
@@ -712,19 +711,16 @@ async function processScrapedContentV2(
       embeddingModel = apiConfig.embedding_model;
     }
     console.log(
-      "[Scraper] Using OpenAI API key from database, embedding model:",
+      "[Scraper] Using API key from database, embedding model:",
       embeddingModel
     );
   } else {
-    console.log("[Scraper] No API config in DB, checking env variable");
-    console.log(
-      "[Scraper] Env OPENAI_API_KEY:",
-      openaiApiKey ? "set" : "not set"
-    );
+    console.log("[Scraper] No API config in DB, skipping AI processing");
+    return 0;
   }
 
-  if (!openaiApiKey || openaiApiKey === "your_openai_api_key") {
-    console.warn("[Scraper] OPENAI_API_KEY not set, skipping AI processing");
+  if (!openaiApiKey) {
+    console.warn("[Scraper] No API key configured, skipping AI processing");
     return 0;
   }
 

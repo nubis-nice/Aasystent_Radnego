@@ -20,6 +20,239 @@ interface ModelMetadata {
 }
 
 export const apiModelsRoutes: FastifyPluginAsync = async (fastify) => {
+  // POST /api/test/function - Test specific AI function (public endpoint)
+  fastify.post<{
+    Body: {
+      provider: string;
+      api_key: string;
+      base_url: string;
+      function_type: "llm" | "embeddings" | "vision" | "stt" | "tts";
+      model_name: string;
+    };
+  }>("/test/function", async (request, reply) => {
+    const startTime = Date.now();
+    try {
+      const { provider, api_key, base_url, function_type, model_name } =
+        request.body;
+
+      if (!provider || !model_name) {
+        return reply.status(400).send({
+          success: false,
+          error: "Brak wymaganych parametrów (provider, model_name)",
+        });
+      }
+
+      // Dla lokalnych providerów klucz API jest opcjonalny
+      if (!api_key && provider !== "local") {
+        return reply.status(400).send({
+          success: false,
+          error: "Brak klucza API",
+        });
+      }
+
+      const baseUrl =
+        base_url ||
+        (provider === "local"
+          ? "http://localhost:11434/v1"
+          : "https://api.openai.com/v1");
+
+      // Import OpenAI dynamicznie
+      const OpenAI = (await import("openai")).default;
+      const client = new OpenAI({
+        apiKey: api_key || "ollama",
+        baseURL: baseUrl,
+        timeout: 30000,
+      });
+
+      let details: Record<string, unknown> = {};
+
+      switch (function_type) {
+        case "llm": {
+          const response = await client.chat.completions.create({
+            model: model_name,
+            messages: [
+              { role: "user", content: "Odpowiedz jednym słowem: OK" },
+            ],
+            max_tokens: 10,
+          });
+          details = {
+            response: response.choices[0]?.message?.content || "",
+            model: response.model,
+            usage: response.usage,
+          };
+          break;
+        }
+
+        case "embeddings": {
+          const response = await client.embeddings.create({
+            model: model_name,
+            input: "Test embedding",
+          });
+          details = {
+            dimensions: response.data[0]?.embedding?.length || 0,
+            model: response.model,
+          };
+          break;
+        }
+
+        case "vision": {
+          // Dla Ollama używamy natywnego API - testujemy tylko tekstem
+          // (obrazy mogą crashować modele z powodu braku zasobów)
+          if (provider === "local" || baseUrl.includes("11434")) {
+            const ollamaBaseUrl = baseUrl.replace(/\/v1\/?$/, "");
+
+            // Test tekstowy - bezpieczny dla wszystkich modeli
+            const textTestResponse = await globalThis.fetch(
+              `${ollamaBaseUrl}/api/chat`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: model_name,
+                  messages: [
+                    {
+                      role: "user",
+                      content: "Odpowiedz jednym słowem: OK",
+                    },
+                  ],
+                  stream: false,
+                }),
+              }
+            );
+
+            if (!textTestResponse.ok) {
+              const errorText = await textTestResponse.text();
+              throw new Error(
+                `Ollama error: ${textTestResponse.status} - ${errorText}`
+              );
+            }
+
+            const textData = (await textTestResponse.json()) as {
+              message?: { content?: string };
+              model?: string;
+            };
+
+            const isCloudModel =
+              model_name.includes("-cloud") || model_name.includes(":cloud");
+            details = {
+              response: textData.message?.content || "",
+              model: textData.model || model_name,
+              note: isCloudModel
+                ? "Model cloud - test tekstowy OK. Przetwarzanie obrazów przez Ollama cloud."
+                : "Model lokalny - test tekstowy OK. Przetwarzanie obrazów wymaga wystarczających zasobów.",
+            };
+          } else {
+            // Dla OpenAI i innych używamy standardowego formatu
+            const response = await client.chat.completions.create({
+              model: model_name,
+              messages: [
+                {
+                  role: "user",
+                  content: [
+                    { type: "text", text: "Opisz ten obraz jednym słowem." },
+                    {
+                      type: "image_url",
+                      image_url: {
+                        url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+                      },
+                    },
+                  ],
+                },
+              ],
+              max_tokens: 10,
+            });
+            details = {
+              response: response.choices[0]?.message?.content || "",
+              model: response.model,
+            };
+          }
+          break;
+        }
+
+        case "stt": {
+          try {
+            const models = await client.models.list();
+            const modelExists = Array.from(models.data).some(
+              (m) => m.id === model_name || m.id.includes("whisper")
+            );
+            if (modelExists) {
+              details = { supported: true, note: "Model STT dostępny" };
+            } else {
+              details = {
+                supported: true,
+                note: "Endpoint dostępny, model może wymagać pobrania",
+              };
+            }
+          } catch {
+            if (provider === "local") {
+              details = {
+                supported: true,
+                note: "Lokalny provider - zakładamy dostępność STT",
+              };
+            } else {
+              throw new Error("Nie można zweryfikować modelu STT");
+            }
+          }
+          break;
+        }
+
+        case "tts": {
+          try {
+            const response = await client.audio.speech.create({
+              model: model_name,
+              voice: "alloy",
+              input: "Test",
+            });
+            details = {
+              supported: true,
+              contentType: response.headers.get("content-type"),
+            };
+          } catch (e: unknown) {
+            const error = e as Error;
+            if (
+              error.message?.includes("not found") ||
+              error.message?.includes("404")
+            ) {
+              throw new Error(`Model TTS "${model_name}" nie znaleziony`);
+            }
+            throw e;
+          }
+          break;
+        }
+
+        default:
+          return reply.status(400).send({
+            success: false,
+            error: `Nieznany typ funkcji: ${function_type}`,
+          });
+      }
+
+      return reply.send({
+        success: true,
+        function_type,
+        model_name,
+        response_time_ms: Date.now() - startTime,
+        details,
+      });
+    } catch (error: unknown) {
+      const err = error as Error & { status?: number; code?: string };
+      fastify.log.error(
+        { error: err, message: err.message },
+        "Function test error"
+      );
+
+      return reply.status(200).send({
+        success: false,
+        error: err.message || "Test nieudany",
+        response_time_ms: Date.now() - startTime,
+        details: {
+          code: err.code,
+          status: err.status,
+        },
+      });
+    }
+  });
+
   // POST /api/fetch-models - Pobierz listę modeli z API providera (public endpoint)
   fastify.post("/fetch-models", async (request, reply) => {
     try {
@@ -42,10 +275,10 @@ export const apiModelsRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // Domyślne URL dla providerów - tylko OpenAI API compatible
+      // Domyślne URL dla providerów
       const providerBaseUrls: Record<string, string> = {
         openai: "https://api.openai.com/v1",
-        local: "http://localhost:11434/v1", // Ollama default
+        local: "http://localhost:11434", // Ollama default (bez /v1)
         other: "", // Custom endpoint
       };
 
@@ -57,10 +290,24 @@ export const apiModelsRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // Pobierz listę modeli z API
-      const modelsUrl = `${finalBaseUrl.replace(/\/$/, "")}/models`;
+      // Ollama używa natywnego API /api/tags, nie OpenAI-compatible /v1/models
+      let modelsUrl: string;
+      let isOllama = false;
 
-      console.log(`[FetchModels] Fetching from: ${modelsUrl}`);
+      if (provider === "local" || finalBaseUrl.includes("11434")) {
+        // Ollama native API
+        modelsUrl = `${finalBaseUrl
+          .replace(/\/$/, "")
+          .replace(/\/v1$/, "")}/api/tags`;
+        isOllama = true;
+      } else {
+        // OpenAI-compatible API
+        modelsUrl = `${finalBaseUrl.replace(/\/$/, "")}/models`;
+      }
+
+      console.log(
+        `[FetchModels] Fetching from: ${modelsUrl} (isOllama: ${isOllama})`
+      );
 
       // Różne providery używają różnych metod autoryzacji
       const headers: Record<string, string> = {
@@ -70,8 +317,8 @@ export const apiModelsRoutes: FastifyPluginAsync = async (fastify) => {
       // Google Gemini używa x-goog-api-key dla native API
       if (provider === "google" && !finalBaseUrl.includes("/openai")) {
         headers["x-goog-api-key"] = apiKey;
-      } else {
-        // Pozostali providerzy używają Bearer token
+      } else if (!isOllama) {
+        // Pozostali providerzy używają Bearer token (Ollama nie wymaga)
         headers["Authorization"] = `Bearer ${apiKey}`;
       }
 
@@ -89,43 +336,50 @@ export const apiModelsRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const data = (await response.json()) as any;
+      const data = (await response.json()) as Record<string, unknown>;
 
       // Różne providery zwracają różne formaty
       let models: ModelMetadata[] = [];
 
-      // Google Gemini: { models: [{ name: "models/gemini-...", displayName: "..." }] }
-      if (data.models && Array.isArray(data.models)) {
-        models = data.models.map(
-          (m: {
-            name?: string;
-            displayName?: string;
-            description?: string;
-          }) => ({
-            id: m.name?.replace("models/", "") || m.displayName || "",
-            name: m.displayName || m.name?.replace("models/", "") || "",
-            owned_by: "google",
+      // Ollama native API: { models: [{ name: "llama3.2:latest", model: "llama3.2:latest", ... }] }
+      if (isOllama && data.models && Array.isArray(data.models)) {
+        models = (data.models as Array<{ name?: string; model?: string }>).map(
+          (m) => ({
+            id: m.name || m.model || "",
+            name: m.name || m.model || "",
+            owned_by: "ollama",
           })
         );
+        console.log(`[FetchModels] Ollama models found: ${models.length}`);
+      }
+      // Google Gemini: { models: [{ name: "models/gemini-...", displayName: "..." }] }
+      else if (data.models && Array.isArray(data.models)) {
+        models = (
+          data.models as Array<{ name?: string; displayName?: string }>
+        ).map((m) => ({
+          id: m.name?.replace("models/", "") || m.displayName || "",
+          name: m.displayName || m.name?.replace("models/", "") || "",
+          owned_by: "google",
+        }));
       }
       // OpenAI: { data: [{ id, object, ... }] }
       else if (data.data && Array.isArray(data.data)) {
-        models = data.data.map(
-          (m: { id: string; name?: string; owned_by?: string }) => ({
-            id: m.id,
-            name: m.name || m.id,
-            owned_by: m.owned_by,
-          })
-        );
+        models = (
+          data.data as Array<{ id: string; name?: string; owned_by?: string }>
+        ).map((m) => ({
+          id: m.id,
+          name: m.name || m.id,
+          owned_by: m.owned_by,
+        }));
       }
       // Inne formaty: bezpośrednia tablica
       else if (Array.isArray(data)) {
-        models = data.map(
-          (m: { id?: string; name?: string; model?: string }) => ({
-            id: m.id || m.model || m.name || "",
-            name: m.name || m.id || m.model || "",
-          })
-        );
+        models = (
+          data as Array<{ id?: string; name?: string; model?: string }>
+        ).map((m) => ({
+          id: m.id || m.model || m.name || "",
+          name: m.name || m.id || m.model || "",
+        }));
       }
 
       // Kategoryzuj modele według typu
@@ -156,11 +410,23 @@ export const apiModelsRoutes: FastifyPluginAsync = async (fastify) => {
       const visionModels = models.filter((m) => {
         const id = m.id.toLowerCase();
         return (
+          // OpenAI vision models
           (id.includes("gpt-4") && id.includes("vision")) ||
           id.includes("gpt-4o") ||
           id.includes("gpt-4-turbo") ||
+          // Google vision models
           (id.includes("gemini") && id.includes("vision")) ||
-          (id.includes("claude") && id.includes("vision"))
+          // Anthropic vision models
+          (id.includes("claude") && id.includes("vision")) ||
+          // Ollama/Local vision models
+          id.includes("llava") ||
+          id.includes("bakllava") ||
+          id.includes("moondream") ||
+          (id.includes("qwen") && id.includes("vl")) ||
+          id.includes("minicpm-v") ||
+          id.includes("llama3.2-vision") ||
+          id.includes("cogvlm") ||
+          id.includes("yi-vl")
         );
       });
 

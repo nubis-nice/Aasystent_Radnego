@@ -25,10 +25,9 @@ export async function getChatAIConfig(userId: string): Promise<{
   const embConfig = config.embeddings;
 
   return {
-    apiKey: llmConfig?.apiKey || process.env.OPENAI_API_KEY || "",
+    apiKey: llmConfig?.apiKey || "",
     baseUrl: llmConfig?.baseUrl,
-    model:
-      llmConfig?.modelName || process.env.OPENAI_MODEL || "gpt-4-turbo-preview",
+    model: llmConfig?.modelName || process.env.OPENAI_MODEL || "gpt-4o-mini",
     embeddingModel: embConfig?.modelName || "text-embedding-3-small",
     provider: llmConfig?.provider || "openai",
   };
@@ -71,11 +70,7 @@ export async function createChatClient(userId: string): Promise<{
   const embConfig = fullConfig.embeddings;
 
   const embeddingsClientConfig: ConstructorParameters<typeof OpenAI>[0] = {
-    apiKey:
-      embConfig?.apiKey ||
-      process.env.OPENAI_API_KEY ||
-      config.apiKey ||
-      "dummy-key",
+    apiKey: embConfig?.apiKey || config.apiKey || "dummy-key",
     baseURL: embConfig?.baseUrl,
   };
 

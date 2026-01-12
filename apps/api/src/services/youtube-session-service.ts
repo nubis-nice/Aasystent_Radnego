@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
+import { getLLMClient, getAIConfig } from "../ai/index.js";
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -45,32 +46,17 @@ const DEFAULT_COUNCIL_CHANNEL: YouTubeChannelConfig = {
 const DEFAULT_SEARCH_QUERY = "sesja rady drawno";
 
 export class YouTubeSessionService {
-  private openai: OpenAI | null = null;
+  private llmClient: OpenAI | null = null;
 
   constructor() {}
 
   async initializeWithUserConfig(userId: string): Promise<void> {
-    const { data: config } = await supabase
-      .from("api_configurations")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("is_default", true)
-      .eq("is_active", true)
-      .single();
+    this.llmClient = await getLLMClient(userId);
 
-    if (!config) {
-      throw new Error("Brak skonfigurowanego klucza API. Przejdź do ustawień.");
-    }
-
-    const decodedApiKey = Buffer.from(
-      config.api_key_encrypted,
-      "base64"
-    ).toString("utf-8");
-
-    this.openai = new OpenAI({
-      apiKey: decodedApiKey,
-      baseURL: config.base_url || undefined,
-    });
+    const llmConfig = await getAIConfig(userId, "llm");
+    console.log(
+      `[YouTubeSessionService] Initialized: provider=${llmConfig.provider}, model=${llmConfig.modelName}`
+    );
   }
 
   async getCouncilSessions(

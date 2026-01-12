@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
 import { getSTTClient, getLLMClient, getAIConfig } from "../ai/index.js";
+import { getAudioPreprocessor } from "./audio-preprocessor.js";
+import type { AudioAnalysis } from "./audio-analyzer.js";
 
 export interface DownloadResult {
   success: boolean;
@@ -45,6 +47,7 @@ export interface TranscriptionWithAnalysis {
     videoTitle: string;
     videoUrl: string;
   };
+  audioAnalysis?: AudioAnalysis;
   error?: string;
 }
 
@@ -54,6 +57,7 @@ export class YouTubeDownloader {
   private tempDir: string;
   private userId: string | null = null;
   private sttModel: string = "whisper-1";
+  private llmModel: string = "gpt-4o";
 
   constructor() {
     this.tempDir = join(tmpdir(), "aasystent-youtube");
@@ -78,12 +82,17 @@ export class YouTubeDownloader {
     // Pobierz klienta LLM do analizy transkryptu
     this.llmClient = await getLLMClient(userId);
 
+    // Pobierz konfigurację LLM aby znać model
+    const llmConfig = await getAIConfig(userId, "llm");
+    this.llmModel = llmConfig.modelName;
+
     console.log(
       `[YouTubeDownloader] Initialized for user ${userId.substring(0, 8)}...`
     );
     console.log(
       `[YouTubeDownloader] STT: provider=${sttConfig.provider}, model=${this.sttModel}, baseUrl=${sttConfig.baseUrl}`
     );
+    console.log(`[YouTubeDownloader] LLM: model=${this.llmModel}`);
   }
 
   async downloadAudio(videoUrl: string): Promise<DownloadResult> {
@@ -244,7 +253,8 @@ export class YouTubeDownloader {
     audioPath: string,
     videoId: string,
     videoTitle: string,
-    videoUrl: string
+    videoUrl: string,
+    enablePreprocessing: boolean = true
   ): Promise<TranscriptionWithAnalysis> {
     if (!this.sttClient) {
       throw new Error(
@@ -252,17 +262,47 @@ export class YouTubeDownloader {
       );
     }
 
+    let processedPath = audioPath;
+    let audioAnalysis: AudioAnalysis | undefined;
+
     try {
       console.log(`[YouTubeDownloader] Transcribing: ${audioPath}`);
 
+      // Adaptacyjny preprocessing audio (jeśli włączony)
+      if (enablePreprocessing) {
+        try {
+          console.log(
+            `[YouTubeDownloader] Starting adaptive audio preprocessing...`
+          );
+          const preprocessor = getAudioPreprocessor();
+          const result = await preprocessor.preprocessAdaptive(
+            audioPath,
+            "wav"
+          );
+          processedPath = result.outputPath;
+          audioAnalysis = result.analysis;
+          console.log(
+            `[YouTubeDownloader] Preprocessing complete. Issues: ${
+              audioAnalysis.issues.map((i) => i.type).join(", ") || "none"
+            }`
+          );
+        } catch (preprocessError) {
+          console.warn(
+            `[YouTubeDownloader] Preprocessing failed, using original audio:`,
+            preprocessError
+          );
+          processedPath = audioPath;
+        }
+      }
+
       // Read audio file
-      const audioBuffer = readFileSync(audioPath);
+      const audioBuffer = readFileSync(processedPath);
       const fileSizeMB = (audioBuffer.length / 1024 / 1024).toFixed(2);
       console.log(`[YouTubeDownloader] Audio file size: ${fileSizeMB}MB`);
 
       // Transcribe with Whisper using fs.createReadStream
       const { createReadStream } = await import("node:fs");
-      const audioStream = createReadStream(audioPath);
+      const audioStream = createReadStream(processedPath);
 
       console.log(`[YouTubeDownloader] Using STT model: ${this.sttModel}`);
 
@@ -311,9 +351,12 @@ export class YouTubeDownloader {
         videoUrl
       );
 
-      // Cleanup temp file
+      // Cleanup temp files
       try {
         unlinkSync(audioPath);
+        if (processedPath !== audioPath && existsSync(processedPath)) {
+          unlinkSync(processedPath);
+        }
       } catch {
         /* ignore cleanup errors */
       }
@@ -325,13 +368,17 @@ export class YouTubeDownloader {
         segments: analysis.segments,
         summary: analysis.summary,
         metadata: { videoId, videoTitle, videoUrl },
+        audioAnalysis,
       };
     } catch (error) {
       console.error("[YouTubeDownloader] Transcription error:", error);
 
-      // Cleanup temp file
+      // Cleanup temp files
       try {
         unlinkSync(audioPath);
+        if (processedPath !== audioPath && existsSync(processedPath)) {
+          unlinkSync(processedPath);
+        }
       } catch {
         /* ignore cleanup errors */
       }
@@ -376,7 +423,7 @@ ZASADY:
 Zwróć TYLKO poprawiony tekst, bez komentarzy.`;
 
     const response = await this.llmClient.chat.completions.create({
-      model: "gpt-4o",
+      model: this.llmModel,
       messages: [
         { role: "system", content: correctionPrompt },
         { role: "user", content: rawTranscript.slice(0, 30000) },
@@ -437,7 +484,7 @@ Odpowiedz TYLKO w formacie JSON:
 }`;
 
     const response = await this.llmClient.chat.completions.create({
-      model: "gpt-4o",
+      model: this.llmModel,
       messages: [
         { role: "system", content: systemPrompt },
         {

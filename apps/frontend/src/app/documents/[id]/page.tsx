@@ -19,7 +19,9 @@ import {
 import {
   getDocument,
   analyzeDocument,
+  getRelatedDocuments,
   type Document,
+  type RelatedDocument,
 } from "@/lib/api/documents-list";
 import { supabase } from "@/lib/supabase/client";
 
@@ -379,6 +381,7 @@ export default function DocumentDetailPage() {
   const documentId = params.id as string;
 
   const [document, setDocument] = useState<Document | null>(null);
+  const [relatedDocs, setRelatedDocs] = useState<RelatedDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -400,6 +403,10 @@ export default function DocumentDetailPage() {
 
         const doc = await getDocument(documentId);
         setDocument(doc);
+
+        // Pobierz powiązane dokumenty
+        const related = await getRelatedDocuments(documentId);
+        setRelatedDocs(related);
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Błąd pobierania dokumentu"
@@ -634,6 +641,59 @@ export default function DocumentDetailPage() {
               >
                 {keyword}
               </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Related Documents */}
+      {relatedDocs.length > 0 && (
+        <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl border border-amber-200 p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <FileText className="h-5 w-5 text-amber-600" />
+            <h2 className="text-lg font-bold text-amber-800">
+              📎 Powiązane dokumenty ({relatedDocs.length})
+            </h2>
+          </div>
+          <div className="space-y-3">
+            {relatedDocs.map((rel) => (
+              <Link
+                key={rel.document_id}
+                href={`/documents/${rel.document_id}`}
+                className="flex items-center justify-between p-3 rounded-xl bg-white border border-amber-200 hover:border-amber-400 hover:shadow-md transition-all group"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-slate-800 truncate group-hover:text-amber-700">
+                    {rel.document?.title || "Dokument"}
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-slate-500 mt-1">
+                    <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-700">
+                      {rel.relation_types[0] === "references" && "Referencja"}
+                      {rel.relation_types[0] === "attachment" && "Załącznik"}
+                      {rel.relation_types[0] === "amends" && "Zmienia"}
+                      {rel.relation_types[0] === "supersedes" && "Zastępuje"}
+                      {rel.relation_types[0] === "related" && "Powiązany"}
+                      {![
+                        "references",
+                        "attachment",
+                        "amends",
+                        "supersedes",
+                        "related",
+                      ].includes(rel.relation_types[0]) &&
+                        rel.relation_types[0]}
+                    </span>
+                    {rel.document?.document_type && (
+                      <span className="text-slate-400">
+                        {rel.document.document_type}
+                      </span>
+                    )}
+                    <span className="text-slate-400">
+                      Siła: {Math.round(rel.total_strength * 100)}%
+                    </span>
+                  </div>
+                </div>
+                <ExternalLink className="h-4 w-4 text-slate-400 group-hover:text-amber-600 flex-shrink-0 ml-2" />
+              </Link>
             ))}
           </div>
         </div>

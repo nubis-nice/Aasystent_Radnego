@@ -13,6 +13,7 @@ import type {
   LegalReasoningRequest,
   LegalReasoningResponse,
 } from "@shared/types/data-sources-api";
+import { getLLMClient, getAIConfig } from "../ai/index.js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -21,7 +22,7 @@ const supabase = createClient(
 
 export class LegalReasoningEngine {
   private userId: string;
-  private openai: OpenAI | null = null;
+  private llmClient: OpenAI | null = null;
   private model: string = "gpt-4";
   private searchAPI: LegalSearchAPI;
 
@@ -31,31 +32,15 @@ export class LegalReasoningEngine {
   }
 
   private async initializeOpenAI(): Promise<void> {
-    if (this.openai) return;
+    if (this.llmClient) return;
 
-    const { data: apiConfig } = await supabase
-      .from("api_configurations")
-      .select("*")
-      .eq("user_id", this.userId)
-      .eq("provider", "openai")
-      .eq("is_active", true)
-      .eq("is_default", true)
-      .single();
+    this.llmClient = await getLLMClient(this.userId);
+    const llmConfig = await getAIConfig(this.userId, "llm");
+    this.model = llmConfig.modelName;
 
-    if (!apiConfig) {
-      throw new Error("OpenAI API configuration not found");
-    }
-
-    const openaiApiKey = Buffer.from(
-      apiConfig.api_key_encrypted,
-      "base64"
-    ).toString("utf-8");
-    this.openai = new OpenAI({
-      apiKey: openaiApiKey,
-      baseURL: apiConfig.base_url || undefined,
-    });
-
-    this.model = apiConfig.model || "gpt-4";
+    console.log(
+      `[LegalReasoningEngine] Initialized: provider=${llmConfig.provider}, model=${this.model}`
+    );
   }
 
   async analyze(
@@ -119,14 +104,14 @@ export class LegalReasoningEngine {
     request: LegalReasoningRequest,
     context: any
   ): Promise<LegalReasoningResponse> {
-    if (!this.openai) {
+    if (!this.llmClient) {
       throw new Error("OpenAI not initialized");
     }
 
     const systemPrompt = this.buildSystemPrompt(request.analysisType);
     const userPrompt = this.buildUserPrompt(request, context);
 
-    const completion = await this.openai.chat.completions.create({
+    const completion = await this.llmClient.chat.completions.create({
       model: this.model,
       temperature: 0,
       messages: [

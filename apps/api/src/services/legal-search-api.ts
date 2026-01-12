@@ -12,6 +12,7 @@ import type {
   LegalSearchQuery,
   LegalSearchResult,
 } from "@shared/types/data-sources-api";
+import { getEmbeddingsClient, getAIConfig } from "../ai/index.js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -20,39 +21,21 @@ const supabase = createClient(
 
 export class LegalSearchAPI {
   private userId: string;
-  private openai: OpenAI | null = null;
-  private embeddingModel: string = "text-embedding-3-small";
+  private embeddingsClient: OpenAI | null = null;
+  private embeddingModel: string = "nomic-embed-text";
 
   constructor(userId: string) {
     this.userId = userId;
   }
 
   private async initializeOpenAI(): Promise<void> {
-    if (this.openai) return;
+    if (this.embeddingsClient) return;
 
-    const { data: apiConfig } = await supabase
-      .from("api_configurations")
-      .select("*")
-      .eq("user_id", this.userId)
-      .eq("provider", "openai")
-      .eq("is_active", true)
-      .eq("is_default", true)
-      .single();
+    this.embeddingsClient = await getEmbeddingsClient(this.userId);
+    const embConfig = await getAIConfig(this.userId, "embeddings");
+    this.embeddingModel = embConfig.modelName;
 
-    if (!apiConfig) {
-      throw new Error("OpenAI API configuration not found");
-    }
-
-    const openaiApiKey = Buffer.from(
-      apiConfig.api_key_encrypted,
-      "base64"
-    ).toString("utf-8");
-    this.openai = new OpenAI({
-      apiKey: openaiApiKey,
-      baseURL: apiConfig.base_url || undefined,
-    });
-
-    this.embeddingModel = apiConfig.embedding_model || "text-embedding-3-small";
+    console.log(`[LegalSearchAPI] Initialized: model=${this.embeddingModel}`);
   }
 
   async search(query: LegalSearchQuery): Promise<LegalSearchResult[]> {
@@ -103,11 +86,11 @@ export class LegalSearchAPI {
 
     await this.initializeOpenAI();
 
-    if (!this.openai) {
+    if (!this.embeddingsClient) {
       throw new Error("OpenAI not initialized");
     }
 
-    const embeddingResponse = await this.openai.embeddings.create({
+    const embeddingResponse = await this.embeddingsClient.embeddings.create({
       model: this.embeddingModel,
       input: query.query,
     });

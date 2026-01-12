@@ -23,8 +23,11 @@ import Link from "next/link";
 import {
   getYouTubeSessions,
   transcribeYouTubeVideo,
+  startAsyncTranscription,
+  getTranscriptionJobs,
   type YouTubeVideo,
   type YouTubeTranscriptionResult,
+  type TranscriptionJob,
 } from "@/lib/api/youtube-sessions";
 
 export default function YouTubeTranscriptionPage() {
@@ -40,7 +43,13 @@ export default function YouTubeTranscriptionPage() {
     useState<YouTubeTranscriptionResult | null>(null);
 
   // Opcje transkrypcji
-  const [includeSentiment, setIncludeSentiment] = useState(false);
+  const [includeSentiment, setIncludeSentiment] = useState(true);
+  const [identifySpeakers, setIdentifySpeakers] = useState(true);
+  const [useAsyncMode, setUseAsyncMode] = useState(true);
+
+  // Zadania asynchroniczne
+  const [jobs, setJobs] = useState<TranscriptionJob[]>([]);
+  const [showJobsPanel, setShowJobsPanel] = useState(false);
 
   // Paginacja i filtrowanie
   const [currentPage, setCurrentPage] = useState(1);
@@ -50,7 +59,41 @@ export default function YouTubeTranscriptionPage() {
 
   useEffect(() => {
     loadSessions();
+    loadJobs();
   }, []);
+
+  // Polling dla aktywnych zadań
+  useEffect(() => {
+    const activeJobs = jobs.filter(
+      (j) => !["completed", "failed"].includes(j.status)
+    );
+    if (activeJobs.length === 0) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const result = await getTranscriptionJobs();
+        setJobs(result.jobs);
+      } catch (e) {
+        console.error("Error polling jobs:", e);
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [jobs]);
+
+  const loadJobs = async () => {
+    try {
+      const result = await getTranscriptionJobs();
+      setJobs(result.jobs);
+      if (
+        result.jobs.some((j) => !["completed", "failed"].includes(j.status))
+      ) {
+        setShowJobsPanel(true);
+      }
+    } catch (e) {
+      console.error("Error loading jobs:", e);
+    }
+  };
 
   const loadSessions = async () => {
     setIsLoading(true);
@@ -78,20 +121,50 @@ export default function YouTubeTranscriptionPage() {
     setTranscriptionResult(null);
 
     try {
-      setTranscriptionProgress("Pobieranie audio z YouTube...");
+      if (useAsyncMode) {
+        // Tryb asynchroniczny - zadanie w tle z zapisem do RAG
+        setTranscriptionProgress("Tworzenie zadania transkrypcji...");
 
-      const result = await transcribeYouTubeVideo(
-        selectedSession.url,
-        selectedSession.title,
-        includeSentiment
-      );
+        const jobResult = await startAsyncTranscription(
+          selectedSession.url,
+          selectedSession.title,
+          {
+            includeSentiment,
+            identifySpeakers,
+          }
+        );
 
-      setTranscriptionProgress("Transkrypcja zakończona!");
-
-      if (result.success && result.formattedTranscript) {
-        setTranscriptionResult(result);
+        if (jobResult.success) {
+          setTranscriptionProgress("");
+          setShowJobsPanel(true);
+          await loadJobs();
+          setSelectedSession(null);
+          // Pokaż komunikat sukcesu
+          alert(
+            "✅ Zadanie transkrypcji zostało utworzone!\n\n" +
+              "Transkrypcja będzie przetwarzana w tle i automatycznie zapisana do bazy wiedzy.\n" +
+              "Możesz kontynuować pracę - status zadania znajdziesz w panelu po prawej stronie."
+          );
+        } else {
+          setError("Błąd tworzenia zadania");
+        }
       } else {
-        setError(result.error || "Błąd transkrypcji");
+        // Tryb synchroniczny - czekaj na wynik
+        setTranscriptionProgress("Pobieranie audio z YouTube...");
+
+        const result = await transcribeYouTubeVideo(
+          selectedSession.url,
+          selectedSession.title,
+          includeSentiment
+        );
+
+        setTranscriptionProgress("Transkrypcja zakończona!");
+
+        if (result.success && result.formattedTranscript) {
+          setTranscriptionResult(result);
+        } else {
+          setError(result.error || "Błąd transkrypcji");
+        }
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Błąd transkrypcji";
@@ -424,10 +497,48 @@ export default function YouTubeTranscriptionPage() {
                 </div>
 
                 {/* Opcje transkrypcji */}
-                <div className="p-4 rounded-xl bg-blue-50 border border-blue-200">
+                <div className="p-4 rounded-xl bg-blue-50 border border-blue-200 space-y-3">
                   <h4 className="font-semibold text-sm text-blue-800 mb-3">
                     Opcje transkrypcji
                   </h4>
+
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={useAsyncMode}
+                      onChange={(e) => setUseAsyncMode(e.target.checked)}
+                      className="mt-1 h-4 w-4 rounded border-blue-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-blue-900">
+                        🚀 Tryb asynchroniczny (zalecany)
+                      </span>
+                      <p className="text-xs text-blue-700 mt-1">
+                        Przetwarzanie w tle - możesz kontynuować pracę.
+                        Transkrypcja zostanie automatycznie zapisana do bazy
+                        RAG.
+                      </p>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={identifySpeakers}
+                      onChange={(e) => setIdentifySpeakers(e.target.checked)}
+                      className="mt-1 h-4 w-4 rounded border-blue-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-blue-900">
+                        👤 Identyfikacja mówców
+                      </span>
+                      <p className="text-xs text-blue-700 mt-1">
+                        Rozpoznaj radnych po imieniu i nazwisku na podstawie
+                        kontekstu wypowiedzi
+                      </p>
+                    </div>
+                  </label>
+
                   <label className="flex items-start gap-3 cursor-pointer">
                     <input
                       type="checkbox"
@@ -437,7 +548,7 @@ export default function YouTubeTranscriptionPage() {
                     />
                     <div>
                       <span className="text-sm font-medium text-blue-900">
-                        Analiza sentymentu
+                        🎭 Analiza sentymentu
                       </span>
                       <p className="text-xs text-blue-700 mt-1">
                         Dodaj analizę emocji, napięcia i wiarygodności dla
@@ -572,6 +683,118 @@ export default function YouTubeTranscriptionPage() {
             )}
           </div>
         </div>
+
+        {/* Panel zadań asynchronicznych */}
+        {showJobsPanel && jobs.length > 0 && (
+          <div className="mt-6 bg-white rounded-2xl shadow-xl border border-slate-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <Loader2 className="h-5 w-5" />
+                Zadania transkrypcji
+              </h2>
+              <button
+                onClick={() => setShowJobsPanel(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {jobs.map((job) => (
+                <div
+                  key={job.id}
+                  className={`p-4 rounded-xl border ${
+                    job.status === "completed"
+                      ? "bg-green-50 border-green-200"
+                      : job.status === "failed"
+                      ? "bg-red-50 border-red-200"
+                      : "bg-blue-50 border-blue-200"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="font-medium text-sm truncate flex-1">
+                      {job.videoTitle}
+                    </h3>
+                    <span
+                      className={`text-xs px-2 py-1 rounded-full ${
+                        job.status === "completed"
+                          ? "bg-green-200 text-green-800"
+                          : job.status === "failed"
+                          ? "bg-red-200 text-red-800"
+                          : "bg-blue-200 text-blue-800"
+                      }`}
+                    >
+                      {job.status === "completed"
+                        ? "✅ Zakończone"
+                        : job.status === "failed"
+                        ? "❌ Błąd"
+                        : job.status === "downloading"
+                        ? "📥 Pobieranie"
+                        : job.status === "transcribing"
+                        ? "🎤 Transkrypcja"
+                        : job.status === "analyzing"
+                        ? "🔍 Analiza"
+                        : job.status === "saving"
+                        ? "💾 Zapisywanie"
+                        : "⏳ Oczekuje"}
+                    </span>
+                  </div>
+
+                  {!["completed", "failed"].includes(job.status) && (
+                    <div className="mb-2">
+                      <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-blue-500 transition-all duration-500"
+                          style={{ width: `${job.progress}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between mt-1">
+                        <p className="text-xs text-slate-600">
+                          {job.progressMessage}
+                        </p>
+                        {job.progress > 0 && job.progress < 100 && (
+                          <p className="text-xs text-slate-500 font-medium">
+                            ~
+                            {(() => {
+                              const elapsed =
+                                (Date.now() -
+                                  new Date(job.createdAt).getTime()) /
+                                1000;
+                              const estimatedTotal =
+                                elapsed / (job.progress / 100);
+                              const remaining = Math.max(
+                                0,
+                                estimatedTotal - elapsed
+                              );
+                              if (remaining < 60)
+                                return `${Math.ceil(remaining)}s`;
+                              if (remaining < 3600)
+                                return `${Math.ceil(remaining / 60)} min`;
+                              return `${Math.floor(
+                                remaining / 3600
+                              )}h ${Math.ceil((remaining % 3600) / 60)}min`;
+                            })()}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {job.status === "completed" && job.resultDocumentId && (
+                    <p className="text-xs text-green-700">
+                      ✅ Zapisano do bazy RAG (kategoria: transkrypcje)
+                    </p>
+                  )}
+
+                  {job.status === "failed" && job.error && (
+                    <p className="text-xs text-red-700">{job.error}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

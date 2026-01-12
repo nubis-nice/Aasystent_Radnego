@@ -21,6 +21,7 @@ import {
   SEARCH_DEPTH_CONFIG,
   getDomainsForResearchType,
 } from "../config/research-providers.js";
+import { getLLMClient, getAIConfig } from "../ai/index.js";
 
 export class DeepResearchService {
   private providers: Map<string, BaseResearchProvider>;
@@ -28,6 +29,7 @@ export class DeepResearchService {
   private supabase: ReturnType<typeof createClient>;
   private userId: string;
   private initialized: boolean = false;
+  private model: string = "gpt-4";
 
   constructor(userId: string) {
     this.userId = userId;
@@ -39,10 +41,8 @@ export class DeepResearchService {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Initialize OpenAI (will be replaced with user's config)
-    this.openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY || "placeholder",
-    });
+    // OpenAI will be initialized in initializeProviders()
+    this.openai = null as unknown as OpenAI;
   }
 
   private async initializeProviders(): Promise<void> {
@@ -51,43 +51,17 @@ export class DeepResearchService {
     try {
       console.log(`[DeepResearch] Initializing for user: ${this.userId}`);
 
-      // Get user's default LLM configuration (for AI synthesis)
-      const { data: defaultConfig, error: configError } = await this.supabase
-        .from("api_configurations")
-        .select("provider, api_key_encrypted, base_url, model_name")
-        .eq("user_id", this.userId)
-        .eq("is_active", true)
-        .eq("is_default", true)
-        .single();
+      // Initialize LLM client via AIClientFactory - REQUIRED
+      this.openai = await getLLMClient(this.userId);
+      const llmConfig = await getAIConfig(this.userId, "llm");
+      this.model = llmConfig.modelName;
+      console.log(
+        `[DeepResearch] Using LLM: provider=${llmConfig.provider}, model=${this.model}`
+      );
 
-      console.log(`[DeepResearch] Default config query result:`, {
-        found: !!defaultConfig,
-        provider: defaultConfig?.provider,
-        hasKey: !!defaultConfig?.api_key_encrypted,
-        keyLength: defaultConfig?.api_key_encrypted?.length,
-        error: configError?.message,
-      });
-
-      // Initialize OpenAI with user's default LLM config
-      if (defaultConfig?.api_key_encrypted) {
-        // Dekoduj klucz z base64 (tak jak w chat.ts)
-        const decodedApiKey = Buffer.from(
-          defaultConfig.api_key_encrypted,
-          "base64"
-        ).toString("utf-8");
-        const baseUrl =
-          defaultConfig.base_url ||
-          this.getProviderBaseUrl(defaultConfig.provider);
-        this.openai = new OpenAI({
-          apiKey: decodedApiKey,
-          baseURL: baseUrl,
-        });
-        console.log(
-          `[DeepResearch] Using LLM provider: ${defaultConfig.provider}, baseUrl: ${baseUrl}`
-        );
-      } else {
-        console.log(
-          `[DeepResearch] No default LLM config found, using env var`
+      if (!this.openai) {
+        throw new Error(
+          "Brak skonfigurowanego klienta LLM. Skonfiguruj providera AI w ustawieniach."
         );
       }
 
@@ -286,7 +260,7 @@ export class DeepResearchService {
   private async decomposeQuery(query: string): Promise<string[]> {
     try {
       const completion = await this.openai.chat.completions.create({
-        model: "gpt-4",
+        model: this.model,
         messages: [
           {
             role: "system",
@@ -450,7 +424,7 @@ export class DeepResearchService {
         .join("\n\n");
 
       const completion = await this.openai.chat.completions.create({
-        model: "gpt-4",
+        model: this.model,
         messages: [
           {
             role: "system",
@@ -487,7 +461,7 @@ export class DeepResearchService {
         .join("\n\n");
 
       const completion = await this.openai.chat.completions.create({
-        model: "gpt-4",
+        model: this.model,
         messages: [
           {
             role: "system",
@@ -522,7 +496,7 @@ export class DeepResearchService {
   private async generateRelatedQueries(query: string): Promise<string[]> {
     try {
       const completion = await this.openai.chat.completions.create({
-        model: "gpt-4",
+        model: this.model,
         messages: [
           {
             role: "system",
