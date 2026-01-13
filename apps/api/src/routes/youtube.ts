@@ -27,8 +27,43 @@ export const youtubeRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(401).send({ error: "Invalid token" });
       }
 
+      // Pobierz źródła YouTube użytkownika - szukaj tych z pełnym URL kanału
+      const { data: youtubeSources } = await supabase
+        .from("data_sources")
+        .select("url, name")
+        .eq("user_id", user.id)
+        .or(
+          "type.eq.youtube,url.ilike.%youtube.com/@%,url.ilike.%youtube.com/channel/%"
+        )
+        .limit(1);
+
+      // Użyj źródła użytkownika lub domyślnego kanału Drawno
+      const firstSource = youtubeSources?.[0];
+
+      // Sprawdź czy URL jest prawidłowy (zawiera @handle lub /channel/)
+      const isValidChannelUrl =
+        firstSource?.url &&
+        (firstSource.url.includes("/@") ||
+          firstSource.url.includes("/channel/"));
+
+      const channelConfig = isValidChannelUrl
+        ? {
+            channelUrl: firstSource!.url
+              .replace("/streams", "")
+              .replace("/videos", ""),
+            name: firstSource!.name || "Kanał YouTube",
+          }
+        : {
+            channelUrl: "https://www.youtube.com/@gminadrawno9146",
+            name: "Gmina Drawno",
+          };
+
+      console.log(
+        `[YouTube API] Using channel: ${channelConfig.channelUrl} (${channelConfig.name})`
+      );
+
       const service = new YouTubeSessionService();
-      const result = await service.getCouncilSessions();
+      const result = await service.getCouncilSessions(channelConfig);
 
       if (!result.success) {
         return reply.status(500).send({
@@ -353,6 +388,109 @@ export const youtubeRoutes: FastifyPluginAsync = async (fastify) => {
       fastify.log.error(error);
       return reply.status(500).send({
         error: error instanceof Error ? error.message : "Błąd pobierania zadań",
+      });
+    }
+  });
+
+  // POST /api/youtube/rag/add-youtube-session - Dodaj sesję YouTube do RAG z powiązaniami
+  fastify.post<{
+    Body: {
+      session: {
+        id: string;
+        title: string;
+        url: string;
+        publishedAt?: string;
+        thumbnailUrl?: string;
+      };
+      relatedDocumentId?: string | null;
+      detectedRelation?: string | null;
+    };
+  }>("/youtube/rag/add-youtube-session", async (request, reply) => {
+    try {
+      const authHeader = request.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const token = authHeader.substring(7);
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser(token);
+
+      if (authError || !user) {
+        return reply.status(401).send({ error: "Invalid token" });
+      }
+
+      const { session, relatedDocumentId, detectedRelation } = request.body;
+
+      if (!session || !session.id || !session.title) {
+        return reply.status(400).send({ error: "Brak danych sesji" });
+      }
+
+      // Zapisz do scraped_content
+      const { data: scraped, error: scrapedError } = await supabase
+        .from("scraped_content")
+        .insert({
+          url: session.url,
+          title: session.title,
+          content_type: "youtube_session",
+          raw_content: JSON.stringify({
+            videoId: session.id,
+            title: session.title,
+            url: session.url,
+            publishedAt: session.publishedAt,
+            thumbnailUrl: session.thumbnailUrl,
+            detectedRelation,
+          }),
+          metadata: {
+            videoId: session.id,
+            thumbnailUrl: session.thumbnailUrl,
+            publishedAt: session.publishedAt,
+            relatedDocumentId,
+            detectedRelation,
+          },
+        })
+        .select()
+        .single();
+
+      if (scrapedError) {
+        console.error("Error saving to scraped_content:", scrapedError);
+        return reply.status(500).send({ error: "Błąd zapisu do bazy" });
+      }
+
+      // Jeśli wykryto powiązanie, wyszukaj dokumenty do powiązania
+      if (detectedRelation) {
+        const sessionNumber = detectedRelation.replace(/[^0-9IVXLCDM]/gi, "");
+        if (sessionNumber) {
+          // Szukaj dokumentów z tym numerem sesji
+          const { data: relatedDocs } = await supabase
+            .from("processed_documents")
+            .select("id, title")
+            .eq("user_id", user.id)
+            .or(
+              `title.ilike.%sesja ${sessionNumber}%,title.ilike.%${sessionNumber} sesj%`
+            )
+            .limit(5);
+
+          if (relatedDocs && relatedDocs.length > 0) {
+            // Zapisz powiązania w document_relations (jeśli tabela istnieje)
+            console.log(
+              `[RAG] Found ${relatedDocs.length} related documents for session ${sessionNumber}`
+            );
+          }
+        }
+      }
+
+      return reply.send({
+        success: true,
+        message: "Sesja YouTube dodana do RAG",
+        scrapedContentId: scraped.id,
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        error: error instanceof Error ? error.message : "Błąd dodawania do RAG",
       });
     }
   });

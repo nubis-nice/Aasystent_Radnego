@@ -582,13 +582,32 @@ export default function ApiSettingsPage() {
     setMessage({ type: "success", text: "Testowanie połączenia..." });
 
     try {
+      // Najpierw odśwież sesję aby mieć aktualny token
+      const { data: refreshData, error: refreshError } =
+        await supabase.auth.refreshSession();
+
+      if (refreshError) {
+        console.error(
+          "[handleTestConnection] Session refresh error:",
+          refreshError
+        );
+      }
+
       const {
         data: { session },
       } = await supabase.auth.getSession();
       const token = session?.access_token;
 
+      console.log(
+        "[handleTestConnection] Token status:",
+        token ? "present" : "missing"
+      );
+
       if (!token) {
-        setMessage({ type: "error", text: "Brak tokena autoryzacji" });
+        setMessage({
+          type: "error",
+          text: "Brak tokena autoryzacji - zaloguj się ponownie",
+        });
         setSaving(false);
         return;
       }
@@ -937,7 +956,7 @@ export default function ApiSettingsPage() {
               >
                 <div className="font-semibold text-lg">Semantic Search</div>
                 <div className="text-sm text-text-secondary mt-1">
-                  Exa, Perplexity, Tavily - wyszukiwanie semantyczne
+                  Exa, Brave, Perplexity, Tavily - wyszukiwanie semantyczne
                 </div>
               </button>
             </div>

@@ -15,6 +15,8 @@ import OpenAI from "openai";
 import crypto from "crypto";
 import { DocumentProcessor } from "./document-processor.js";
 import { getLLMClient, getEmbeddingsClient, getAIConfig } from "../ai/index.js";
+import { YouTubeSessionService } from "./youtube-session-service.js";
+import { DocumentNormalizer } from "./document-normalizer.js";
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -60,6 +62,7 @@ export interface IntelligentScrapingConfig {
   councilLocation: string; // np. "Drawno"
   focusAreas: string[]; // np. ["sesje rady", "kalendarz", "materiały dla radnych"]
   incrementalMode: boolean; // tylko nowe materiały
+  maxPagesParallel?: number; // Max równoległych stron (domyślnie 1 - sekwencyjnie)
 }
 
 export interface IntelligentScrapeResult {
@@ -82,7 +85,7 @@ export interface IntelligentScrapeResult {
 const DEFAULT_CONFIG: IntelligentScrapingConfig = {
   maxPages: 100,
   maxDepth: 5,
-  delayMs: 800,
+  delayMs: 2000, // Zwiększone z 800ms aby uniknąć rate limit
   enableLLMAnalysis: true,
   councilLocation: "Drawno",
   focusAreas: [
@@ -499,6 +502,124 @@ Odpowiedz w formacie JSON:
   }
 
   // ============================================================================
+  // YOUTUBE CHANNEL SCRAPING
+  // ============================================================================
+
+  private async scrapeYouTubeChannel(
+    result: IntelligentScrapeResult,
+    startTime: number
+  ): Promise<IntelligentScrapeResult> {
+    try {
+      console.log(
+        `[IntelligentScraper] Scraping YouTube channel: ${this.baseUrl}`
+      );
+
+      const youtubeService = new YouTubeSessionService();
+      await youtubeService.initializeWithUserConfig(this.userId);
+
+      const channelUrl = this.baseUrl
+        .replace("/streams", "")
+        .replace("/videos", "");
+
+      // Użyj searchWithContext z nazwą gminy
+      const searchResult = await youtubeService.searchWithContext(
+        `${this.config.councilLocation} sesja rady`,
+        { title: channelUrl }
+      );
+
+      if (!searchResult.success || searchResult.sessions.length === 0) {
+        console.log("[IntelligentScraper] No YouTube sessions found");
+        result.success = true;
+        result.processingTimeMs = Date.now() - startTime;
+        return result;
+      }
+
+      console.log(
+        `[IntelligentScraper] Found ${searchResult.sessions.length} YouTube sessions`
+      );
+
+      // Zapisz każde wideo jako dokument z analizą tytułu
+      for (const video of searchResult.sessions) {
+        try {
+          result.documentsFound++;
+
+          // Sprawdź czy już istnieje
+          const { data: existing } = await supabase
+            .from("scraped_content")
+            .select("id")
+            .eq("source_id", this.sourceId)
+            .eq("url", video.url)
+            .maybeSingle();
+
+          if (existing) {
+            result.skippedDocuments++;
+            continue;
+          }
+
+          // Analizuj tytuł wideo i wyodrębnij numer sesji
+          const titleAnalysis = await youtubeService.analyzeVideoTitle(
+            video.title
+          );
+
+          console.log(
+            `[IntelligentScraper] Video "${video.title}" → Session ${titleAnalysis.sessionNumber} (confidence: ${titleAnalysis.confidence}%)`
+          );
+
+          // Zapisz do scraped_content z metadanymi
+          const { error: insertError } = await supabase
+            .from("scraped_content")
+            .insert({
+              source_id: this.sourceId,
+              url: video.url,
+              title: video.title,
+              content: `Nagranie sesji rady: ${video.title}\n\nOpublikowano: ${
+                video.publishedAt || "brak daty"
+              }\nCzas trwania: ${video.duration || "nieznany"}\n\nLink: ${
+                video.url
+              }`,
+              content_type: "youtube_video",
+              scraped_at: new Date().toISOString(),
+              metadata: {
+                videoId: video.id,
+                thumbnailUrl: video.thumbnailUrl,
+                duration: video.duration,
+                publishedAt: video.publishedAt,
+                // Nowe metadane dla transkrypcji
+                sessionNumber: titleAnalysis.sessionNumber,
+                sessionNumberConfidence: titleAnalysis.confidence,
+                sessionAnalysisReasoning: titleAnalysis.reasoning,
+                youtubeTranscriptionAvailable: true,
+                transcriptionStatus: "pending",
+              },
+            });
+
+          if (!insertError) {
+            result.documentsProcessed++;
+            result.newDocuments++;
+          }
+        } catch (err) {
+          console.error(
+            `[IntelligentScraper] Error saving YouTube video:`,
+            err
+          );
+        }
+      }
+
+      result.success = true;
+      result.pagesAnalyzed = 1;
+    } catch (error) {
+      result.errors.push(
+        `YouTube scraping error: ${
+          error instanceof Error ? error.message : "Unknown"
+        }`
+      );
+    }
+
+    result.processingTimeMs = Date.now() - startTime;
+    return result;
+  }
+
+  // ============================================================================
   // PHASE 4: FULL INTELLIGENT SCRAPE
   // ============================================================================
 
@@ -518,6 +639,17 @@ Odpowiedz w formacie JSON:
     };
 
     try {
+      // Sprawdź czy to źródło YouTube - użyj dedykowanego scrapera
+      if (
+        this.baseUrl.includes("youtube.com") ||
+        this.baseUrl.includes("youtu.be")
+      ) {
+        console.log(
+          "[IntelligentScraper] Detected YouTube source, using YouTubeSessionService..."
+        );
+        return await this.scrapeYouTubeChannel(result, startTime);
+      }
+
       // Inicjalizacja OpenAI
       await this.initializeOpenAI();
 
@@ -534,74 +666,90 @@ Odpowiedz w formacie JSON:
         `[IntelligentScraper] Phase 2: Analyzing ${prioritizedPages.length} priority pages...`
       );
 
-      // PHASE 3: Analiza i scraping
-      for (const node of prioritizedPages) {
-        try {
-          result.pagesAnalyzed++;
+      // PHASE 3: Analiza i scraping - RÓWNOLEGLE
+      const maxParallel = this.config.maxPagesParallel || 1; // Domyślnie sekwencyjnie
+      console.log(
+        `[IntelligentScraper] Phase 3: Processing with parallelism=${maxParallel}`
+      );
 
-          // Sprawdź czy treść się zmieniła (incremental mode)
-          if (this.config.incrementalMode && node.contentHash) {
-            const hasChanged = await this.checkIfContentChanged(
-              node.url,
-              node.contentHash
-            );
-            if (!hasChanged) {
-              result.skippedDocuments++;
-              continue;
-            }
-          }
+      // Przetwarzaj strony w partiach (batch processing)
+      for (let i = 0; i < prioritizedPages.length; i += maxParallel) {
+        const batch = prioritizedPages.slice(i, i + maxParallel);
 
-          // Pobierz pełną treść
-          const html = await this.fetchPage(node.url);
-          if (!html) continue;
+        // Przetwórz partię równolegle
+        await Promise.all(
+          batch.map(async (node) => {
+            try {
+              result.pagesAnalyzed++;
 
-          const $ = cheerio.load(html);
-          const content = this.extractMainContent($);
-          const pdfLinks = this.extractPdfLinks($, node.url);
-
-          // Analiza LLM
-          let llmAnalysis: LLMAnalysisResult | null = null;
-          if (this.config.enableLLMAnalysis && content.length > 200) {
-            llmAnalysis = await this.analyzeContentWithLLM(
-              node.url,
-              node.title,
-              content
-            );
-            if (llmAnalysis) {
-              result.llmAnalyses++;
-
-              // Pomiń treści nieistotne dla radnego
-              if (
-                llmAnalysis.recommendedAction === "skip" &&
-                llmAnalysis.relevanceScore < 30
-              ) {
-                result.skippedDocuments++;
-                continue;
+              // Sprawdź czy treść się zmieniła (incremental mode)
+              if (this.config.incrementalMode && node.contentHash) {
+                const hasChanged = await this.checkIfContentChanged(
+                  node.url,
+                  node.contentHash
+                );
+                if (!hasChanged) {
+                  result.skippedDocuments++;
+                  return;
+                }
               }
+
+              // Pobierz pełną treść
+              const html = await this.fetchPage(node.url);
+              if (!html) return;
+
+              const $ = cheerio.load(html);
+              const content = this.extractMainContent($);
+              const pdfLinks = this.extractPdfLinks($, node.url);
+
+              // Analiza LLM
+              let llmAnalysis: LLMAnalysisResult | null = null;
+              if (this.config.enableLLMAnalysis && content.length > 200) {
+                llmAnalysis = await this.analyzeContentWithLLM(
+                  node.url,
+                  node.title,
+                  content
+                );
+                if (llmAnalysis) {
+                  result.llmAnalyses++;
+
+                  // Pomiń treści nieistotne dla radnego
+                  if (
+                    llmAnalysis.recommendedAction === "skip" &&
+                    llmAnalysis.relevanceScore < 30
+                  ) {
+                    result.skippedDocuments++;
+                    return;
+                  }
+                }
+              }
+
+              // Zapisz do bazy
+              result.documentsFound++;
+
+              const savedDoc = await this.saveScrapedContent(
+                node,
+                content,
+                pdfLinks,
+                llmAnalysis
+              );
+              if (savedDoc) {
+                result.documentsProcessed++;
+                result.newDocuments++;
+              }
+            } catch (error) {
+              result.errors.push(
+                `Error processing ${node.url}: ${
+                  error instanceof Error ? error.message : "Unknown"
+                }`
+              );
             }
-          }
+          })
+        );
 
-          // Zapisz do bazy
-          result.documentsFound++;
-
-          const savedDoc = await this.saveScrapedContent(
-            node,
-            content,
-            pdfLinks,
-            llmAnalysis
-          );
-          if (savedDoc) {
-            result.documentsProcessed++;
-            result.newDocuments++;
-          }
-
+        // Delay między partiami (nie między pojedynczymi stronami)
+        if (i + maxParallel < prioritizedPages.length) {
           await this.delay(this.config.delayMs);
-        } catch (error) {
-          result.errors.push(
-            `Error processing ${node.url}: ${
-              error instanceof Error ? error.message : "Unknown"
-            }`
-          );
         }
       }
 
@@ -757,7 +905,7 @@ Odpowiedz w formacie JSON:
       .select("*")
       .eq("source_id", this.sourceId)
       .order("scraped_at", { ascending: false })
-      .limit(100);
+      .limit(1000);
 
     console.log(
       `[IntelligentScraper] ${
@@ -1222,4 +1370,137 @@ export async function intelligentScrapeDataSource(
     .eq("id", sourceId);
 
   return result;
+}
+
+/**
+ * Przetwarza linki z wyników DeepResearch do RAG
+ * Pobiera treść z zatwierdzonych przez AI linków i zapisuje do bazy dokumentów
+ */
+export async function processDeepResearchLinks(
+  userId: string,
+  links: Array<{ url: string; title: string; relevanceScore: number }>,
+  options?: {
+    minRelevanceScore?: number;
+    maxLinks?: number;
+  }
+): Promise<{
+  success: boolean;
+  processed: number;
+  saved: number;
+  errors: string[];
+}> {
+  const minScore = options?.minRelevanceScore || 0.5;
+  const maxLinks = options?.maxLinks || 20;
+  const errors: string[] = [];
+  let processed = 0;
+  let saved = 0;
+
+  const filteredLinks = links
+    .filter((l) => l.relevanceScore >= minScore)
+    .slice(0, maxLinks);
+
+  console.log(
+    `[DeepResearchLinks] Processing ${filteredLinks.length} links (min score: ${minScore})`
+  );
+
+  const processor = new DocumentProcessor();
+  await processor.initializeWithUserConfig(userId);
+
+  for (const link of filteredLinks) {
+    try {
+      console.log(
+        `[DeepResearchLinks] Fetching: ${link.title} (score: ${link.relevanceScore})`
+      );
+
+      const response = await fetch(link.url, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          Accept: "text/html,application/pdf,*/*",
+        },
+        signal: AbortSignal.timeout(30000),
+      });
+
+      if (!response.ok) {
+        errors.push(`HTTP ${response.status}: ${link.url}`);
+        continue;
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      const buffer = Buffer.from(await response.arrayBuffer());
+      processed++;
+
+      let text = "";
+      let fileName = link.title || "document";
+
+      if (contentType.includes("pdf")) {
+        fileName += ".pdf";
+        const result = await processor.processFile(
+          buffer,
+          fileName,
+          contentType,
+          buffer.length
+        );
+        if (result.success) {
+          text = result.text;
+        } else {
+          errors.push(`PDF processing failed: ${link.url}`);
+          continue;
+        }
+      } else if (contentType.includes("html")) {
+        const html = buffer.toString("utf-8");
+        text = html
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+      } else {
+        text = buffer.toString("utf-8");
+      }
+
+      if (text.length < 100) {
+        errors.push(`Content too short (${text.length} chars): ${link.url}`);
+        continue;
+      }
+
+      const saveResult = await processor.saveToRAG(
+        text,
+        {
+          title: link.title,
+          documentType: "research",
+          sourceUrl: link.url,
+        },
+        userId
+      );
+
+      if (saveResult.success) {
+        saved++;
+        console.log(
+          `[DeepResearchLinks] Saved: ${link.title} (${text.length} chars)`
+        );
+      } else {
+        errors.push(`Save failed: ${link.url}`);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    } catch (error) {
+      errors.push(
+        `Error: ${link.url} - ${
+          error instanceof Error ? error.message : "Unknown"
+        }`
+      );
+    }
+  }
+
+  console.log(
+    `[DeepResearchLinks] Completed: processed=${processed}, saved=${saved}, errors=${errors.length}`
+  );
+
+  return {
+    success: errors.length < processed / 2,
+    processed,
+    saved,
+    errors: errors.slice(0, 10),
+  };
 }

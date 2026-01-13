@@ -9,6 +9,7 @@ export type ResearchProvider =
   | "exa"
   | "tavily"
   | "serper"
+  | "brave"
   | "firecrawl"
   | "local";
 
@@ -222,6 +223,68 @@ export interface FirecrawlCrawlRequest {
   pageOptions?: {
     onlyMainContent?: boolean;
     includeHtml?: boolean;
+  };
+}
+
+// Brave Search specific types
+export interface BraveSearchRequest {
+  q: string;
+  country?: string;
+  search_lang?: string;
+  ui_lang?: string;
+  count?: number;
+  offset?: number;
+  safesearch?: "off" | "moderate" | "strict";
+  freshness?: "pd" | "pw" | "pm" | "py"; // past day/week/month/year
+  text_decorations?: boolean;
+  result_filter?: string;
+  goggles_id?: string;
+  units?: "metric" | "imperial";
+  extra_snippets?: boolean;
+}
+
+export interface BraveSearchResult {
+  title: string;
+  url: string;
+  description: string;
+  age?: string;
+  page_age?: string;
+  page_fetched?: string;
+  language?: string;
+  family_friendly?: boolean;
+  extra_snippets?: string[];
+  meta_url?: {
+    scheme: string;
+    netloc: string;
+    hostname: string;
+    favicon: string;
+    path: string;
+  };
+}
+
+export interface BraveSearchResponse {
+  type: string;
+  query: {
+    original: string;
+    show_strict_warning: boolean;
+    is_navigational: boolean;
+    local_decision: string;
+    local_locations_idx: number;
+    is_news_breaking: boolean;
+    spellcheck_off: boolean;
+    country: string;
+    bad_results: boolean;
+    should_fallback: boolean;
+    language: string;
+  };
+  web?: {
+    type: string;
+    results: BraveSearchResult[];
+    family_friendly: boolean;
+  };
+  mixed?: {
+    type: string;
+    main: Array<{ type: string; index: number; all: boolean }>;
   };
 }
 

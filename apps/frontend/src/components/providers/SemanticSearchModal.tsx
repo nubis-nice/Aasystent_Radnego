@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { X, Save, RefreshCw } from "lucide-react";
 export interface SemanticConfigFormData {
-  provider: "exa" | "perplexity" | "tavily";
+  provider: "exa" | "perplexity" | "tavily" | "brave";
   name: string;
   apiKey: string;
   baseUrl: string;
@@ -32,6 +32,7 @@ const providerOptions: {
   note?: string;
 }[] = [
   { value: "exa", label: "Exa (semantic search)", note: "szybkie, płatne" },
+  { value: "brave", label: "Brave Search", note: "2000 req/mies. za darmo" },
   { value: "perplexity", label: "Perplexity", note: "ma darmowy tier" },
   { value: "tavily", label: "Tavily", note: "darmowy plan / tani" },
 ];

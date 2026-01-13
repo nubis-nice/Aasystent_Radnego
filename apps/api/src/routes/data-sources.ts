@@ -2,6 +2,10 @@ import { FastifyInstance } from "fastify";
 import { createClient } from "@supabase/supabase-js";
 import { intelligentScrapeDataSource } from "../services/intelligent-scraper.js";
 import { semanticDocumentSearch } from "../services/semantic-document-discovery.js";
+import {
+  ScrapingQueueManager,
+  calculateSourcePriority,
+} from "../services/scraping-queue.js";
 import OpenAI from "openai";
 
 /* eslint-disable no-undef */
@@ -42,14 +46,23 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
             .select("*", { count: "exact", head: true })
             .eq("source_id", source.id);
 
-          // Licz dokumenty przez source_url (zawiera URL źródła)
-          // Użyj LIKE pattern dla URL bazowego
-          const baseUrlPattern = `${source.url}%`;
-          const { count: docsCount } = await supabase
-            .from("processed_documents")
-            .select("*", { count: "exact", head: true })
-            .eq("user_id", userId)
-            .like("source_url", baseUrlPattern);
+          // Dla YouTube pokaż liczbę scraped_content, dla innych processed_documents
+          let docsCount = 0;
+          if (
+            source.type === "youtube" ||
+            source.url?.includes("youtube.com")
+          ) {
+            docsCount = scrapedCount || 0;
+          } else {
+            // Licz dokumenty przez source_url (zawiera URL źródła)
+            const baseUrlPattern = `${source.url}%`;
+            const { count } = await supabase
+              .from("processed_documents")
+              .select("*", { count: "exact", head: true })
+              .eq("user_id", userId)
+              .like("source_url", baseUrlPattern);
+            docsCount = count || 0;
+          }
 
           const { data: lastLog } = await supabase
             .from("scraping_logs")
@@ -308,74 +321,131 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
   );
 
   // POST /api/data-sources/:id/scrape - Uruchom scraping teraz
-  fastify.post<{ Params: { id: string } }>(
-    "/data-sources/:id/scrape",
-    async (request, reply) => {
-      try {
-        const userId = request.headers["x-user-id"] as string;
-        if (!userId) {
-          return reply.status(401).send({ error: "Unauthorized" });
-        }
+  fastify.post<{
+    Params: { id: string };
+    Body: { maxDocumentAgeDays?: number };
+  }>("/data-sources/:id/scrape", async (request, reply) => {
+    try {
+      const userId = request.headers["x-user-id"] as string;
+      if (!userId) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
 
-        const { id } = request.params;
+      const { id } = request.params;
+      const { maxDocumentAgeDays } =
+        (request.body as { maxDocumentAgeDays?: number }) || {};
 
-        // Sprawdź czy źródło należy do użytkownika
-        const { data: source } = await supabase
-          .from("data_sources")
-          .select("*")
-          .eq("id", id)
-          .eq("user_id", userId)
-          .single();
+      // Sprawdź czy źródło należy do użytkownika
+      const { data: source } = await supabase
+        .from("data_sources")
+        .select("*")
+        .eq("id", id)
+        .eq("user_id", userId)
+        .single();
 
-        if (!source) {
-          return reply.status(404).send({ error: "Source not found" });
-        }
+      if (!source) {
+        return reply.status(404).send({ error: "Source not found" });
+      }
 
-        // Uruchom inteligentny scraping ASYNCHRONICZNIE
+      // Oblicz datę graniczną dla dokumentów
+      let minDocumentDate: Date | undefined;
+      if (maxDocumentAgeDays && maxDocumentAgeDays > 0) {
+        minDocumentDate = new Date();
+        minDocumentDate.setDate(minDocumentDate.getDate() - maxDocumentAgeDays);
         request.log.info(
-          { sourceId: id },
-          "Starting intelligent scrape with LLM analysis (async)"
+          { maxDocumentAgeDays, minDocumentDate },
+          "Filtering documents by age"
         );
+      }
 
-        // Uruchom scraping w tle - nie czekamy na wynik
-        intelligentScrapeDataSource(id, userId, {
+      // Oblicz priorytet źródła
+      const priority = calculateSourcePriority({
+        type: source.type,
+        metadata: source.metadata,
+        last_scraped_at: source.last_scraped_at,
+      });
+
+      // Dodaj do kolejki scrapingu
+      const queueManager = ScrapingQueueManager.getInstance();
+      const jobId = await queueManager.enqueue(id, userId, {
+        priority,
+        config: {
           councilLocation: source.metadata?.councilLocation || "Drawno",
           enableLLMAnalysis: true,
           incrementalMode: true,
-        })
-          .then((result) => {
-            request.log.info(
-              {
-                sourceId: id,
-                success: result.success,
-                pagesAnalyzed: result.pagesAnalyzed,
-                documentsProcessed: result.documentsProcessed,
-                newDocuments: result.newDocuments,
-                llmAnalyses: result.llmAnalyses,
-              },
-              "Intelligent scrape completed (async)"
-            );
-          })
-          .catch((error) => {
-            request.log.error(
-              { sourceId: id, error: error.message },
-              "Intelligent scrape failed (async)"
-            );
-          });
+        },
+      });
 
-        // Natychmiast zwróć odpowiedź - scraping działa w tle
-        return reply.send({
-          message: "Scraping started in background",
-          source_id: id,
-          status: "started",
-          async: true,
-        });
-      } catch (error) {
-        request.log.error("Trigger scraping error:", error);
-        return reply.status(500).send({ error: "Internal server error" });
-      }
+      request.log.info(
+        { sourceId: id, jobId, priority, maxDocumentAgeDays },
+        "Scraping job enqueued"
+      );
+
+      // Natychmiast zwróć odpowiedź - scraping w kolejce
+      return reply.send({
+        message: "Scraping job enqueued",
+        source_id: id,
+        job_id: jobId,
+        priority,
+        status: "queued",
+        async: true,
+      });
+    } catch (error) {
+      request.log.error("Trigger scraping error:", error);
+      return reply.status(500).send({ error: "Internal server error" });
     }
-  );
+  });
+
+  // GET /api/data-sources/queue/stats - Statystyki kolejki scrapingu
+  fastify.get("/data-sources/queue/stats", async (request, reply) => {
+    try {
+      const userId = request.headers["x-user-id"] as string;
+      if (!userId) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const queueManager = ScrapingQueueManager.getInstance();
+      const stats = queueManager.getStats();
+
+      return reply.send({
+        queue: stats,
+        config: queueManager.getParallelConfig(),
+      });
+    } catch (error) {
+      request.log.error("Queue stats error:", error);
+      return reply.status(500).send({ error: "Internal server error" });
+    }
+  });
+
+  // GET /api/data-sources/queue/job/:jobId - Status zadania scrapingu
+  fastify.get<{
+    Params: { jobId: string };
+  }>("/data-sources/queue/job/:jobId", async (request, reply) => {
+    try {
+      const userId = request.headers["x-user-id"] as string;
+      if (!userId) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const { jobId } = request.params;
+      const queueManager = ScrapingQueueManager.getInstance();
+      const job = queueManager.getJobStatus(jobId);
+
+      if (!job) {
+        return reply.status(404).send({ error: "Job not found" });
+      }
+
+      // Sprawdź czy zadanie należy do użytkownika
+      if (job.userId !== userId) {
+        return reply.status(403).send({ error: "Forbidden" });
+      }
+
+      return reply.send({ job });
+    } catch (error) {
+      request.log.error("Job status error:", error);
+      return reply.status(500).send({ error: "Internal server error" });
+    }
+  });
 
   // POST /api/data-sources/:id/semantic-search - Semantic search w źródle danych
   fastify.post<{

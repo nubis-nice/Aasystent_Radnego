@@ -223,7 +223,7 @@ apps/api/src/ai/
 - `OPENAI_EMBEDDING_MODEL`
 - opcjonalnie: `OPENAI_BASE_URL`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`
 
-Szczegóły: `docs/ai_provider_refactoring_plan.md`
+Szczegóły: `.windsurf/base_rules.md` (zasady budowania aplikacji)
 
 ## 8. Granice odpowiedzialności
 
@@ -235,7 +235,7 @@ Szczegóły: `docs/ai_provider_refactoring_plan.md`
 
 ### Co działa (deployment local dev)
 
-- **Infrastruktura**: Docker Compose (Postgres pgvector, Redis, Adminer) działa na localhost.
+- **Infrastruktura**: Docker Compose (Redis, Whisper) + Supabase PostgreSQL (cloud).
 - **Frontend**: Next.js (app router) na `localhost:3000` — kompletny panel z nawigacją.
 - **API**: Fastify na `localhost:3001` — pełne API (dokumenty, analizy, czat, research).
 - **Worker**: BullMQ + Redis — joby ekstrakcji, analizy, wykrywania relacji.
@@ -282,6 +282,7 @@ Szczegóły: `docs/ai_provider_refactoring_plan.md`
   - `exa-provider.ts` - Exa AI
   - `tavily-provider.ts` - Tavily AI
   - `serper-provider.ts` - Serper (Google)
+  - `brave-provider.ts` - Brave Search
 
 - **Worker Jobs**:
 

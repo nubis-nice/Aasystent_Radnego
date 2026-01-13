@@ -15,6 +15,7 @@ import type {
 import { ExaProvider } from "./research-providers/exa-provider.js";
 import { TavilyProvider } from "./research-providers/tavily-provider.js";
 import { SerperProvider } from "./research-providers/serper-provider.js";
+import { BraveProvider } from "./research-providers/brave-provider.js";
 import { BaseResearchProvider } from "./research-providers/base-provider.js";
 import {
   RESEARCH_PROVIDERS,
@@ -65,13 +66,13 @@ export class DeepResearchService {
         );
       }
 
-      // Get research provider configs (Exa, Tavily, Serper)
+      // Get research provider configs (Exa, Tavily, Serper, Brave)
       const { data: configs, error } = await this.supabase
         .from("api_configurations")
         .select("provider, api_key_encrypted, is_active")
         .eq("user_id", this.userId)
         .eq("is_active", true)
-        .in("provider", ["exa", "tavily", "serper", "firecrawl"]);
+        .in("provider", ["exa", "tavily", "serper", "brave", "firecrawl"]);
 
       if (error) throw error;
 
@@ -118,6 +119,16 @@ export class DeepResearchService {
           enabled: true,
         };
         this.providers.set("serper", new SerperProvider(config));
+      }
+
+      // Initialize Brave Search
+      if (apiKeys.brave) {
+        const config = {
+          ...RESEARCH_PROVIDERS.brave,
+          apiKey: apiKeys.brave,
+          enabled: true,
+        };
+        this.providers.set("brave", new BraveProvider(config));
       }
 
       // Fallback to env vars if no DB configs

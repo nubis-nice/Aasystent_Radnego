@@ -27,6 +27,107 @@ export interface DocumentReference {
   type: "id" | "title" | "druk" | "uchwala" | "protokol" | "sesja";
   value: string;
   originalText: string;
+  sessionNumber?: number; // Znormalizowany numer sesji (arabski)
+}
+
+export interface SessionQueryIntent {
+  sessionNumber: number;
+  requestType:
+    | "streszczenie"
+    | "protokol"
+    | "glosowania"
+    | "transkrypcja"
+    | "wideo"
+    | "ogolne";
+  originalQuery: string;
+}
+
+// ============================================================================
+// UTILS: Konwersja numerów rzymskich
+// ============================================================================
+
+const ROMAN_VALUES: Record<string, number> = {
+  I: 1,
+  V: 5,
+  X: 10,
+  L: 50,
+  C: 100,
+  D: 500,
+  M: 1000,
+};
+
+function romanToArabic(roman: string): number {
+  const upper = roman.toUpperCase();
+  let result = 0;
+  let prevValue = 0;
+
+  for (let i = upper.length - 1; i >= 0; i--) {
+    const char = upper[i];
+    const currentValue = char ? ROMAN_VALUES[char] || 0 : 0;
+    if (currentValue < prevValue) {
+      result -= currentValue;
+    } else {
+      result += currentValue;
+    }
+    prevValue = currentValue;
+  }
+
+  return result;
+}
+
+function arabicToRoman(num: number): string {
+  const romanNumerals: [number, string][] = [
+    [1000, "M"],
+    [900, "CM"],
+    [500, "D"],
+    [400, "CD"],
+    [100, "C"],
+    [90, "XC"],
+    [50, "L"],
+    [40, "XL"],
+    [10, "X"],
+    [9, "IX"],
+    [5, "V"],
+    [4, "IV"],
+    [1, "I"],
+  ];
+
+  let result = "";
+  let remaining = num;
+
+  for (const [value, numeral] of romanNumerals) {
+    while (remaining >= value) {
+      result += numeral;
+      remaining -= value;
+    }
+  }
+
+  return result;
+}
+
+function parseSessionNumber(value: string): number {
+  // Sprawdź czy to numer arabski
+  const arabicNum = parseInt(value, 10);
+  if (!isNaN(arabicNum)) {
+    // Walidacja: numery sesji rzadko przekraczają 200
+    if (arabicNum > 0 && arabicNum <= 200) {
+      return arabicNum;
+    }
+    return 0;
+  }
+
+  // Spróbuj jako numer rzymski
+  // Tylko typowe numery sesji: I-CC (1-200)
+  // Odrzuć pojedyncze litery D, C, L, M które dają nierealistyczne wartości
+  if (/^[IVXLC]+$/i.test(value) && value.length >= 1) {
+    const romanNum = romanToArabic(value);
+    // Walidacja: numery sesji rzadko przekraczają 200
+    if (romanNum > 0 && romanNum <= 200) {
+      return romanNum;
+    }
+  }
+
+  return 0;
 }
 
 export interface DocumentMatch {
@@ -36,8 +137,8 @@ export interface DocumentMatch {
   publishDate?: string;
   summary?: string;
   sourceUrl?: string;
+  content?: string; // Pełna treść dokumentu (opcjonalna)
   similarity: number;
-  // NIE zawiera pełnej treści - tylko metadane!
 }
 
 export interface DocumentQueryResult {
@@ -177,6 +278,173 @@ export class DocumentQueryService {
     return references;
   }
 
+  /**
+   * Wykrywa intencję zapytania o sesję rady
+   * Rozpoznaje numer sesji i typ żądania (streszczenie, protokół, głosowania, itp.)
+   */
+  detectSessionIntent(message: string): SessionQueryIntent | null {
+    const lowerMessage = message.toLowerCase();
+
+    // Wzorce wykrywania numeru sesji
+    const sessionPatterns = [
+      /sesj[aięy]\s*(?:nr|numer|rady)?\s*\.?\s*([IVXLCDM]+|\d+)/i,
+      /([IVXLCDM]+|\d+)\s*sesj[aięy]/i,
+      /streszcz(?:enie)?\s*(?:.*?)sesj[aięy]\s*(?:nr)?\s*\.?\s*([IVXLCDM]+|\d+)/i,
+      /sesj[aięy]\s*(?:rady\s*(?:miejskiej|gminnej|gminy|miasta)?)?\s*(?:nr)?\s*\.?\s*([IVXLCDM]+|\d+)/i,
+    ];
+
+    let sessionNumber = 0;
+
+    for (const pattern of sessionPatterns) {
+      const match = message.match(pattern);
+      if (match) {
+        const value = match[1];
+        if (value) {
+          sessionNumber = parseSessionNumber(value);
+          if (sessionNumber > 0) break;
+        }
+      }
+    }
+
+    if (sessionNumber === 0) {
+      return null;
+    }
+
+    // Wykryj typ żądania
+    let requestType: SessionQueryIntent["requestType"] = "ogolne";
+
+    if (
+      /streszcz|podsumow|co\s*się\s*działo|omów|opowiedz/i.test(lowerMessage)
+    ) {
+      requestType = "streszczenie";
+    } else if (/protokoł|protokół/i.test(lowerMessage)) {
+      requestType = "protokol";
+    } else if (/głosow|wynik|jak\s*głosow/i.test(lowerMessage)) {
+      requestType = "glosowania";
+    } else if (/transkryp|zapis|stenogram/i.test(lowerMessage)) {
+      requestType = "transkrypcja";
+    } else if (/wideo|video|nagran|obejrz|film/i.test(lowerMessage)) {
+      requestType = "wideo";
+    }
+
+    console.log(
+      `[DocumentQuery] Detected session intent: session=${sessionNumber}, type=${requestType}`
+    );
+
+    return {
+      sessionNumber,
+      requestType,
+      originalQuery: message,
+    };
+  }
+
+  /**
+   * Szuka dokumentów związanych z konkretną sesją rady
+   * Przeszukuje różne warianty numeracji (arabskie i rzymskie)
+   */
+  async findSessionDocuments(sessionNumber: number): Promise<DocumentMatch[]> {
+    const romanNumber = arabicToRoman(sessionNumber);
+    const arabicNumber = sessionNumber.toString();
+
+    // Wzorce do wyszukiwania
+    const searchPatterns = [
+      `Sesja Nr ${romanNumber}`,
+      `Sesja nr ${romanNumber}`,
+      `sesja ${romanNumber}`,
+      `Sesja Nr ${arabicNumber}`,
+      `Sesja nr ${arabicNumber}`,
+      `sesja ${arabicNumber}`,
+      `${romanNumber} sesja`,
+      `${arabicNumber} sesja`,
+    ];
+
+    console.log(
+      `[DocumentQuery] Searching for session ${sessionNumber} (${romanNumber}) documents`
+    );
+
+    // Szukaj w bazie - PRIORYTET: tytuł przed treścią
+    const allMatches: DocumentMatch[] = [];
+
+    for (const pattern of searchPatterns) {
+      // KROK 1: Szukaj w tytule (wyższy priorytet)
+      const { data: titleMatches } = await supabase
+        .from("processed_documents")
+        .select(
+          "id, title, document_type, publish_date, summary, source_url, content"
+        )
+        .eq("user_id", this.userId)
+        .ilike("title", `%${pattern}%`)
+        .limit(10);
+
+      if (titleMatches) {
+        for (const doc of titleMatches) {
+          if (!allMatches.some((m) => m.id === doc.id)) {
+            allMatches.push({
+              id: doc.id,
+              title: doc.title,
+              documentType: doc.document_type,
+              publishDate: doc.publish_date,
+              summary: doc.summary,
+              sourceUrl: doc.source_url,
+              content: doc.content,
+              similarity: 0.95, // Wyższy score dla dopasowania w tytule
+            });
+          }
+        }
+      }
+
+      // KROK 2: Szukaj w treści (jeśli mało wyników z tytułu)
+      if (allMatches.length < 5) {
+        const { data: contentMatches } = await supabase
+          .from("processed_documents")
+          .select(
+            "id, title, document_type, publish_date, summary, source_url, content"
+          )
+          .eq("user_id", this.userId)
+          .ilike("content", `%${pattern}%`)
+          .limit(5);
+
+        if (contentMatches) {
+          for (const doc of contentMatches) {
+            if (!allMatches.some((m) => m.id === doc.id)) {
+              allMatches.push({
+                id: doc.id,
+                title: doc.title,
+                documentType: doc.document_type,
+                publishDate: doc.publish_date,
+                summary: doc.summary,
+                sourceUrl: doc.source_url,
+                content: doc.content,
+                similarity: 0.85, // Niższy score dla dopasowania w treści
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // Dodatkowo szukaj semantycznie
+    if (this.embeddingsClient && allMatches.length < 3) {
+      const semanticQuery = `Sesja rady miejskiej numer ${sessionNumber} ${romanNumber}`;
+      const semanticMatches = await this.findDocumentsSemantic(
+        semanticQuery,
+        5
+      );
+
+      for (const match of semanticMatches) {
+        if (!allMatches.some((m) => m.id === match.id)) {
+          allMatches.push(match);
+        }
+      }
+    }
+
+    console.log(
+      `[DocumentQuery] Found ${allMatches.length} documents for session ${sessionNumber}`
+    );
+
+    return allMatches;
+  }
+
   // ============================================================================
   // PHASE 2: WYSZUKIWANIE W RAG
   // ============================================================================
@@ -259,8 +527,8 @@ export class DocumentQueryService {
       // Szukaj w RAG
       const { data, error } = await supabase.rpc("search_processed_documents", {
         query_embedding: queryEmbedding,
-        match_threshold: 0.5,
-        match_count: limit,
+        match_threshold: 0.3,
+        match_count: Math.max(limit, 20),
         filter_user_id: this.userId,
         filter_types: null,
       });

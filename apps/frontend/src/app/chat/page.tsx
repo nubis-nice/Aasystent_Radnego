@@ -75,6 +75,15 @@ interface ResearchExpansion {
   confidence: number;
 }
 
+// Sugestie następnych kroków
+interface NextStepSuggestion {
+  id: string;
+  label: string;
+  icon: string;
+  prompt: string;
+  category: "legal" | "financial" | "report" | "search" | "action";
+}
+
 interface Message {
   id: string;
   role: "user" | "assistant";
@@ -83,6 +92,7 @@ interface Message {
   categories?: AnalysisCategory[];
   expansion?: ResearchExpansion;
   isExpanding?: boolean;
+  nextSteps?: NextStepSuggestion[];
 }
 
 interface ApiError {
@@ -119,6 +129,160 @@ export default function ChatPage() {
   // Opcje kontekstu (domyślnie włączone)
   const [includeDocuments] = useState(true);
   const [includeMunicipalData] = useState(true);
+
+  // Elementy kontekstu z localStorage (np. sesje YouTube)
+  interface ContextItem {
+    type: string;
+    id: string;
+    title: string;
+    url?: string;
+    publishedAt?: string;
+    addedAt: string;
+  }
+  const [contextItems, setContextItems] = useState<ContextItem[]>([]);
+
+  // Ładuj kontekst z localStorage
+  useEffect(() => {
+    const loadContext = () => {
+      const saved = localStorage.getItem("chat_context_items");
+      if (saved) {
+        setContextItems(JSON.parse(saved));
+      }
+    };
+    loadContext();
+    // Nasłuchuj zmian w localStorage
+    window.addEventListener("storage", loadContext);
+    return () => window.removeEventListener("storage", loadContext);
+  }, []);
+
+  // Usuń element z kontekstu
+  const removeContextItem = (id: string) => {
+    const updated = contextItems.filter((item) => item.id !== id);
+    setContextItems(updated);
+    localStorage.setItem("chat_context_items", JSON.stringify(updated));
+  };
+
+  // Wyczyść cały kontekst
+  const clearContext = () => {
+    setContextItems([]);
+    localStorage.removeItem("chat_context_items");
+  };
+
+  // Modal dokumentu źródłowego
+  const [documentModal, setDocumentModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    content: string;
+    url?: string;
+    type: "rag" | "web";
+  }>({ isOpen: false, title: "", content: "", type: "rag" });
+
+  // Otwórz modal z dokumentem
+  const openDocumentModal = async (citation: Citation) => {
+    setDocumentModal({
+      isOpen: true,
+      title: citation.documentTitle,
+      content: citation.text || "Ładowanie treści...",
+      url: undefined,
+      type: "rag",
+    });
+
+    // Jeśli mamy documentId, pobierz pełną treść
+    if (citation.documentId) {
+      try {
+        const token = localStorage.getItem("supabase_access_token");
+        const response = await fetch(`/api/documents/${citation.documentId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setDocumentModal((prev) => ({
+            ...prev,
+            content: data.content || citation.text,
+            url: data.sourceUrl,
+          }));
+        }
+      } catch (e) {
+        console.error("Error loading document:", e);
+      }
+    }
+  };
+
+  // Generuj sugestie następnych kroków na podstawie kontekstu
+  const generateNextSteps = (
+    content: string,
+    _categories?: AnalysisCategory[]
+  ): NextStepSuggestion[] => {
+    const suggestions: NextStepSuggestion[] = [];
+    const contentLower = content.toLowerCase();
+
+    // Wykryj kontekst i zaproponuj odpowiednie kroki
+    if (
+      contentLower.includes("uchwał") ||
+      contentLower.includes("sesj") ||
+      contentLower.includes("rada")
+    ) {
+      suggestions.push({
+        id: "legal-analysis",
+        label: "Analiza prawna uchwały",
+        icon: "⚖️",
+        prompt:
+          "Przeprowadź szczegółową analizę prawną tej uchwały, sprawdź zgodność z obowiązującymi przepisami i wskaż potencjalne ryzyka prawne.",
+        category: "legal",
+      });
+    }
+
+    if (
+      contentLower.includes("budżet") ||
+      contentLower.includes("wydatk") ||
+      contentLower.includes("finans")
+    ) {
+      suggestions.push({
+        id: "budget-control",
+        label: "Kontrola rozliczeń budżetowych",
+        icon: "💰",
+        prompt:
+          "Wykonaj szczegółową kontrolę rozliczeń budżetowych. Sprawdź zgodność wydatków z planem, przeanalizuj odchylenia i wskaż nieprawidłowości.",
+        category: "financial",
+      });
+    }
+
+    if (
+      contentLower.includes("dokument") ||
+      contentLower.includes("protokół") ||
+      contentLower.includes("raport")
+    ) {
+      suggestions.push({
+        id: "full-report",
+        label: "Pełny raport analizy",
+        icon: "📊",
+        prompt:
+          "Przygotuj pełny, profesjonalny raport analizy zawierający: streszczenie wykonawcze, szczegółowe ustalenia, rekomendacje i wnioski końcowe.",
+        category: "report",
+      });
+    }
+
+    // Zawsze dodaj opcje uniwersalne
+    suggestions.push({
+      id: "deep-search",
+      label: "Pogłębione wyszukiwanie",
+      icon: "🔍",
+      prompt:
+        "Przeprowadź pogłębione wyszukiwanie w dostępnych dokumentach i bazach danych. Znajdź wszystkie powiązane informacje i źródła.",
+      category: "search",
+    });
+
+    suggestions.push({
+      id: "action-plan",
+      label: "Plan działania",
+      icon: "📋",
+      prompt:
+        "Na podstawie powyższych informacji przygotuj konkretny plan działania z listą kroków do wykonania, terminami i odpowiedzialnymi osobami.",
+      category: "action",
+    });
+
+    return suggestions.slice(0, 4); // Max 4 sugestie
+  };
 
   // Eksport
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -392,21 +556,23 @@ export default function ChatPage() {
 
         // Poczekaj chwilę i wyślij prompt analizy bezpośrednio (bez ustawiania w input)
         setTimeout(async () => {
-          if (analysis.prompt) {
+          const promptText =
+            typeof analysis.prompt === "string" ? analysis.prompt.trim() : "";
+          if (promptText.length > 0) {
             // Wyślij wiadomość bezpośrednio do API bez ustawiania w polu input
             setLoading(true);
 
             const tempUserMessage: Message = {
               id: `temp-analysis-${Date.now()}`,
               role: "user",
-              content: analysis.prompt,
+              content: promptText,
               citations: [],
             };
             setMessages((prev) => [...prev, tempUserMessage]);
 
             try {
               const response = await sendMessage({
-                message: analysis.prompt,
+                message: promptText,
                 conversationId: undefined,
                 includeDocuments: true,
                 includeMunicipalData: true,
@@ -1089,22 +1255,24 @@ export default function ChatPage() {
                             {msg.citations.map((citation, idx) => (
                               <div
                                 key={idx}
-                                className="flex items-start gap-2 text-xs bg-white rounded-lg p-3 border border-border"
+                                className="flex items-start gap-2 text-xs bg-white rounded-lg p-3 border border-border group hover:border-primary-300 transition-colors cursor-pointer"
+                                onClick={() => openDocumentModal(citation)}
                               >
                                 <FileText className="h-4 w-4 text-primary-500 flex-shrink-0 mt-0.5" />
-                                <div>
-                                  <p className="font-semibold text-text">
+                                <div className="flex-1">
+                                  <p className="font-semibold text-text flex items-center gap-2">
                                     {citation.documentTitle}
                                     {citation.page &&
                                       ` (str. ${citation.page})`}
                                     {citation.relevanceScore && (
-                                      <span className="ml-2 text-xs text-green-600 bg-green-50 px-1.5 py-0.5 rounded">
+                                      <span className="text-xs text-green-600 bg-green-50 px-1.5 py-0.5 rounded">
                                         {Math.round(
                                           citation.relevanceScore * 100
                                         )}
                                         % trafności
                                       </span>
                                     )}
+                                    <ExternalLink className="h-3 w-3 text-primary-400 opacity-0 group-hover:opacity-100 transition-opacity" />
                                   </p>
                                   <p className="text-text-secondary mt-1 italic line-clamp-2">
                                     &quot;{citation.text}&quot;
@@ -1116,6 +1284,42 @@ export default function ChatPage() {
                         )}
                       </div>
                     )}
+
+                    {/* Sekcja następnych kroków - tylko dla odpowiedzi asystenta */}
+                    {msg.role === "assistant" && msg.id !== "welcome" && (
+                      <div className="mt-5 pt-5 border-t border-secondary-200">
+                        <p className="text-xs font-semibold text-secondary-600 uppercase mb-3 flex items-center gap-2">
+                          <Sparkles className="h-3.5 w-3.5 text-primary-500" />
+                          Co chciałbyś zrobić w następnym kroku?
+                        </p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {generateNextSteps(msg.content, msg.categories).map(
+                            (step) => (
+                              <button
+                                key={step.id}
+                                onClick={() => {
+                                  setMessage(step.prompt);
+                                }}
+                                className={`flex items-center gap-2 px-3 py-2.5 text-xs font-medium rounded-xl border transition-all hover:shadow-md text-left ${
+                                  step.category === "legal"
+                                    ? "bg-purple-50 border-purple-200 text-purple-700 hover:bg-purple-100"
+                                    : step.category === "financial"
+                                    ? "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
+                                    : step.category === "report"
+                                    ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
+                                    : step.category === "search"
+                                    ? "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100"
+                                    : "bg-secondary-50 border-secondary-200 text-secondary-700 hover:bg-secondary-100"
+                                }`}
+                              >
+                                <span className="text-base">{step.icon}</span>
+                                <span className="truncate">{step.label}</span>
+                              </button>
+                            )
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1125,6 +1329,48 @@ export default function ChatPage() {
 
           {/* Input area */}
           <div className="border-t border-border p-6 bg-secondary-50">
+            {/* Kontekst sesji YouTube */}
+            {contextItems.length > 0 && (
+              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-blue-800 flex items-center gap-1">
+                    <Zap className="h-3 w-3" />
+                    Kontekst rozmowy ({contextItems.length})
+                  </span>
+                  <button
+                    onClick={clearContext}
+                    className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                  >
+                    Wyczyść
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {contextItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-center gap-1.5 px-2 py-1 bg-white border border-blue-200 rounded-lg text-xs"
+                    >
+                      <span className="text-blue-600">
+                        {item.type === "youtube_session" ? "🎬" : "📄"}
+                      </span>
+                      <span
+                        className="max-w-[150px] truncate"
+                        title={item.title}
+                      >
+                        {item.title}
+                      </span>
+                      <button
+                        onClick={() => removeContextItem(item.id)}
+                        className="text-secondary-400 hover:text-red-500 ml-1"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {error && (
               <div
                 className={`mb-4 p-4 rounded-xl border ${
@@ -1300,6 +1546,80 @@ export default function ChatPage() {
           }}
           onClose={() => setShowYouTubeTool(false)}
         />
+      )}
+
+      {/* Modal dokumentu źródłowego */}
+      {documentModal.isOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[85vh] flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-secondary-200 bg-gradient-to-r from-primary-50 to-secondary-50">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-primary-100 rounded-xl">
+                  <FileText className="h-5 w-5 text-primary-600" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-text text-lg">
+                    {documentModal.title}
+                  </h3>
+                  <p className="text-xs text-secondary-500">
+                    {documentModal.type === "rag"
+                      ? "📚 Dokument z bazy RAG"
+                      : "🌐 Źródło internetowe"}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {documentModal.url && (
+                  <a
+                    href={documentModal.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-4 py-2 bg-primary-500 text-white rounded-xl text-sm font-medium hover:bg-primary-600 transition-colors"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    Otwórz źródło
+                  </a>
+                )}
+                <button
+                  onClick={() =>
+                    setDocumentModal((prev) => ({ ...prev, isOpen: false }))
+                  }
+                  className="p-2 hover:bg-secondary-100 rounded-xl transition-colors"
+                >
+                  <span className="text-xl text-secondary-500">✕</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="prose prose-sm max-w-none prose-headings:text-text prose-p:text-text prose-p:leading-relaxed">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {documentModal.content}
+                </ReactMarkdown>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-secondary-200 bg-secondary-50 flex items-center justify-between">
+              <p className="text-xs text-secondary-500">
+                💡 Kliknij &quot;Otwórz źródło&quot; aby zobaczyć oryginalny
+                dokument
+              </p>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(documentModal.content);
+                  alert("Treść skopiowana do schowka!");
+                }}
+                className="flex items-center gap-2 px-4 py-2 border border-secondary-300 text-secondary-700 rounded-xl text-sm font-medium hover:bg-secondary-100 transition-colors"
+              >
+                <Copy className="h-4 w-4" />
+                Kopiuj treść
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

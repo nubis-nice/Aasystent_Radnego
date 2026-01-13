@@ -245,6 +245,13 @@ export class TranscriptionJobService {
         enhancedSegments
       );
 
+      // 4.5. Aktualizuj status transkrypcji w scraped_content
+      await this.updateScrapedContentTranscriptionStatus(
+        job.videoUrl,
+        "completed",
+        documentId
+      );
+
       // 5. Zakończenie
       this.updateJob(jobId, {
         status: "completed",
@@ -659,6 +666,60 @@ Odpowiedz w formacie JSON:
       }
     } catch {
       console.warn("[TranscriptionJob] Session linking not available");
+    }
+  }
+
+  /**
+   * Aktualizuje status transkrypcji w scraped_content
+   */
+  private async updateScrapedContentTranscriptionStatus(
+    videoUrl: string,
+    status: "pending" | "completed" | "failed",
+    transcriptionDocumentId?: string
+  ): Promise<void> {
+    try {
+      const updateData: Record<string, unknown> = {
+        metadata: {}, // Będzie zaktualizowane przez merge
+      };
+
+      // Pobierz istniejące metadata
+      const { data: existing } = await supabase
+        .from("scraped_content")
+        .select("metadata")
+        .eq("url", videoUrl)
+        .eq("content_type", "youtube_video")
+        .maybeSingle();
+
+      if (existing) {
+        const metadata = (existing.metadata as Record<string, unknown>) || {};
+        metadata.transcriptionStatus = status;
+        if (transcriptionDocumentId) {
+          metadata.transcriptionDocumentId = transcriptionDocumentId;
+        }
+        updateData.metadata = metadata;
+
+        const { error } = await supabase
+          .from("scraped_content")
+          .update(updateData)
+          .eq("url", videoUrl)
+          .eq("content_type", "youtube_video");
+
+        if (error) {
+          console.error(
+            "[TranscriptionJob] Failed to update scraped_content:",
+            error
+          );
+        } else {
+          console.log(
+            `[TranscriptionJob] Updated transcription status to '${status}' for ${videoUrl}`
+          );
+        }
+      }
+    } catch (error) {
+      console.error(
+        "[TranscriptionJob] Error updating scraped_content:",
+        error
+      );
     }
   }
 

@@ -115,7 +115,7 @@ System umożliwia Asystentowi AI pobieranie i analizę danych z różnych źród
 │  ┌────────────────────────────────────────────────────┐ │
 │  │  Processing Jobs                                   │ │
 │  │  - Ekstrakcja tekstu                               │ │
-│  │  - Generowanie embeddings (OpenAI)                 │ │
+│  │  - Generowanie embeddings                  │ │
 │  │  - Klasyfikacja dokumentów                         │ │
 │  │  - Wykrywanie zmian                                │ │
 │  └────────────────────────────────────────────────────┘ │

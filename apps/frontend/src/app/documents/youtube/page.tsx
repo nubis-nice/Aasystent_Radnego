@@ -18,6 +18,9 @@ import {
   ChevronRight,
   Database,
   CheckCircle,
+  Zap,
+  X,
+  Link2,
 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -56,6 +59,18 @@ export default function YouTubeTranscriptionPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
   const ITEMS_PER_PAGE = 5;
+
+  // Rozwijanie sesji (minimalizacja)
+  const [expandedSessionId, setExpandedSessionId] = useState<string | null>(
+    null
+  );
+
+  // Modal powiązań dla RAG
+  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [pendingRAGSession, setPendingRAGSession] =
+    useState<YouTubeVideo | null>(null);
+  const [relatedDocumentId, setRelatedDocumentId] = useState<string>("");
+  const [detectedRelation, setDetectedRelation] = useState<string | null>(null);
 
   useEffect(() => {
     loadSessions();
@@ -206,6 +221,102 @@ export default function YouTubeTranscriptionPage() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  // Wykryj numer sesji z tytułu
+  const detectSessionNumber = (title: string): string | null => {
+    // Wzorce: "XXIII Sesja", "Sesja nr 23", "23 sesja", "sesji XXIII"
+    const romanPattern = /\b(X{0,3})(IX|IV|V?I{0,3})\s*(sesj|Sesj)/i;
+    const arabicPattern = /\b(\d+)\s*(sesj|Sesj)/i;
+    const sessionRomanPattern =
+      /(sesj|Sesj)\w*\s*(nr\s*)?(X{0,3})(IX|IV|V?I{0,3})\b/i;
+    const sessionArabicPattern = /(sesj|Sesj)\w*\s*(nr\s*)?(\d+)\b/i;
+
+    let match = title.match(romanPattern);
+    if (match) return match[1] + match[2];
+
+    match = title.match(sessionRomanPattern);
+    if (match) return match[3] + match[4];
+
+    match = title.match(arabicPattern);
+    if (match) return match[1];
+
+    match = title.match(sessionArabicPattern);
+    if (match) return match[3];
+
+    return null;
+  };
+
+  // Dodaj do kontekstu chata (localStorage)
+  const handleAddToContext = (session: YouTubeVideo) => {
+    const contextData = {
+      type: "youtube_session",
+      id: session.id,
+      title: session.title,
+      url: session.url,
+      publishedAt: session.publishedAt,
+      addedAt: new Date().toISOString(),
+    };
+
+    // Pobierz istniejący kontekst
+    const existing = localStorage.getItem("chat_context_items");
+    const items = existing ? JSON.parse(existing) : [];
+
+    // Sprawdź czy już istnieje
+    if (!items.find((i: { id: string }) => i.id === session.id)) {
+      items.push(contextData);
+      localStorage.setItem("chat_context_items", JSON.stringify(items));
+    }
+
+    alert(
+      `✅ Sesja "${session.title}" dodana do kontekstu chata!\n\nPrzejdź do chata aby użyć jej w rozmowie.`
+    );
+  };
+
+  // Przygotuj dodanie do RAG z wykryciem powiązań
+  const handlePrepareAddToRAG = (session: YouTubeVideo) => {
+    const sessionNumber = detectSessionNumber(session.title);
+    if (sessionNumber) {
+      setDetectedRelation(`Sesja ${sessionNumber}`);
+    } else {
+      setDetectedRelation(null);
+    }
+    setPendingRAGSession(session);
+    setShowLinkModal(true);
+  };
+
+  // Potwierdź dodanie do RAG
+  const handleConfirmAddToRAG = async () => {
+    if (!pendingRAGSession) return;
+
+    try {
+      setError(null);
+      const token = localStorage.getItem("supabase_access_token");
+
+      const response = await fetch("/api/youtube/rag/add-youtube-session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          session: pendingRAGSession,
+          relatedDocumentId: relatedDocumentId || null,
+          detectedRelation: detectedRelation,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Błąd dodawania do RAG");
+      }
+
+      alert(`✅ Sesja "${pendingRAGSession.title}" dodana do bazy RAG!`);
+      setShowLinkModal(false);
+      setPendingRAGSession(null);
+      setRelatedDocumentId("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Błąd dodawania do RAG");
+    }
   };
 
   const handleAddToRAG = async () => {
@@ -378,49 +489,108 @@ export default function YouTubeTranscriptionPage() {
                           </div>
                         ) : (
                           paginatedSessions.map((session) => (
-                            <button
+                            <div
                               key={session.id}
-                              onClick={() => handleSelectSession(session)}
-                              className={`w-full flex items-start gap-3 p-3 rounded-xl border-2 transition-all text-left ${
+                              className={`rounded-xl border-2 transition-all overflow-hidden ${
                                 selectedSession?.id === session.id
                                   ? "border-red-500 bg-red-50"
-                                  : "border-secondary-200 hover:border-red-300 hover:bg-red-50/50"
+                                  : expandedSessionId === session.id
+                                  ? "border-blue-400 bg-blue-50/50"
+                                  : "border-secondary-200 hover:border-red-300"
                               }`}
                             >
-                              <img
-                                src={session.thumbnailUrl}
-                                alt={session.title}
-                                className="w-24 h-16 object-cover rounded-lg flex-shrink-0"
-                              />
-                              <div className="flex-1 min-w-0">
-                                <h3 className="font-medium text-sm line-clamp-2 mb-1">
-                                  {session.title}
-                                </h3>
-                                <div className="flex items-center gap-2 text-xs text-text-secondary">
-                                  {session.publishedAt && (
-                                    <span className="flex items-center gap-1">
-                                      <Clock className="h-3 w-3" />
-                                      {session.publishedAt}
-                                    </span>
-                                  )}
-                                  {session.duration && (
-                                    <span className="flex items-center gap-1">
-                                      <Play className="h-3 w-3" />
-                                      {session.duration}
-                                    </span>
-                                  )}
+                              {/* Nagłówek - zawsze widoczny, klikalny do rozwinięcia */}
+                              <button
+                                onClick={() =>
+                                  setExpandedSessionId(
+                                    expandedSessionId === session.id
+                                      ? null
+                                      : session.id
+                                  )
+                                }
+                                className="w-full flex items-center gap-3 p-3 text-left hover:bg-red-50/30 transition-colors"
+                              >
+                                <ChevronRight
+                                  className={`h-4 w-4 flex-shrink-0 transition-transform ${
+                                    expandedSessionId === session.id
+                                      ? "rotate-90"
+                                      : ""
+                                  }`}
+                                />
+                                <img
+                                  src={session.thumbnailUrl}
+                                  alt={session.title}
+                                  className="w-16 h-10 object-cover rounded flex-shrink-0"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <h3 className="font-medium text-sm line-clamp-1">
+                                    {session.title}
+                                  </h3>
+                                  <div className="flex items-center gap-2 text-xs text-text-secondary">
+                                    {session.publishedAt && (
+                                      <span className="flex items-center gap-1">
+                                        <Clock className="h-3 w-3" />
+                                        {session.publishedAt}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
-                                <a
-                                  href={session.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="inline-flex items-center gap-1 text-xs text-red-600 hover:underline mt-1"
-                                >
-                                  YouTube <ExternalLink className="h-3 w-3" />
-                                </a>
-                              </div>
-                            </button>
+                              </button>
+
+                              {/* Rozwinięta zawartość */}
+                              {expandedSessionId === session.id && (
+                                <div className="px-4 pb-4 pt-2 border-t border-secondary-200 space-y-3">
+                                  <div className="flex items-center gap-2 text-xs text-text-secondary">
+                                    {session.duration && (
+                                      <span className="flex items-center gap-1">
+                                        <Play className="h-3 w-3" />
+                                        {session.duration}
+                                      </span>
+                                    )}
+                                    <a
+                                      href={session.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-red-600 hover:underline"
+                                    >
+                                      Otwórz na YouTube{" "}
+                                      <ExternalLink className="h-3 w-3" />
+                                    </a>
+                                  </div>
+
+                                  {/* Przyciski akcji */}
+                                  <div className="flex flex-wrap gap-2">
+                                    <button
+                                      onClick={() =>
+                                        handleSelectSession(session)
+                                      }
+                                      className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 text-white text-xs rounded-lg hover:bg-red-600 transition-colors"
+                                    >
+                                      <FileText className="h-3 w-3" />
+                                      Transkrybuj
+                                    </button>
+                                    <button
+                                      onClick={() =>
+                                        handleAddToContext(session)
+                                      }
+                                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-500 text-white text-xs rounded-lg hover:bg-blue-600 transition-colors"
+                                    >
+                                      <Zap className="h-3 w-3" />
+                                      Do kontekstu
+                                    </button>
+                                    <button
+                                      onClick={() =>
+                                        handlePrepareAddToRAG(session)
+                                      }
+                                      className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500 text-white text-xs rounded-lg hover:bg-green-600 transition-colors"
+                                    >
+                                      <Database className="h-3 w-3" />
+                                      Do RAG
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
                           ))
                         )}
 
@@ -792,6 +962,93 @@ export default function YouTubeTranscriptionPage() {
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Modal powiązań RAG */}
+        {showLinkModal && pendingRAGSession && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold flex items-center gap-2">
+                  <Link2 className="h-5 w-5 text-green-600" />
+                  Dodaj do RAG
+                </h3>
+                <button
+                  onClick={() => {
+                    setShowLinkModal(false);
+                    setPendingRAGSession(null);
+                  }}
+                  className="p-1 hover:bg-secondary-100 rounded"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="p-3 bg-secondary-50 rounded-lg">
+                  <p className="text-sm font-medium">
+                    {pendingRAGSession.title}
+                  </p>
+                  <p className="text-xs text-text-secondary mt-1">
+                    {pendingRAGSession.publishedAt}
+                  </p>
+                </div>
+
+                {detectedRelation ? (
+                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <p className="text-sm text-green-800">
+                      <strong>Wykryto powiązanie:</strong> {detectedRelation}
+                    </p>
+                    <p className="text-xs text-green-600 mt-1">
+                      Transkrypcja zostanie automatycznie powiązana z
+                      dokumentami tej sesji.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <p className="text-sm text-yellow-800">
+                      <strong>Nie wykryto powiązania</strong>
+                    </p>
+                    <p className="text-xs text-yellow-600 mt-1">
+                      Podaj ID dokumentu do powiązania lub pozostaw puste.
+                    </p>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    ID powiązanego dokumentu (opcjonalne)
+                  </label>
+                  <input
+                    type="text"
+                    value={relatedDocumentId}
+                    onChange={(e) => setRelatedDocumentId(e.target.value)}
+                    placeholder="np. uuid dokumentu lub numer sesji"
+                    className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:ring-2 focus:ring-green-200 focus:border-green-400"
+                  />
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      setShowLinkModal(false);
+                      setPendingRAGSession(null);
+                    }}
+                    className="flex-1 px-4 py-2 border border-secondary-200 rounded-lg text-sm hover:bg-secondary-50"
+                  >
+                    Anuluj
+                  </button>
+                  <button
+                    onClick={handleConfirmAddToRAG}
+                    className="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg text-sm hover:bg-green-600 flex items-center justify-center gap-2"
+                  >
+                    <Database className="h-4 w-4" />
+                    Dodaj do RAG
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}

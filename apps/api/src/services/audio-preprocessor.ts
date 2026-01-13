@@ -74,8 +74,24 @@ export class AudioPreprocessor {
       fs.mkdirSync(this.tempDir, { recursive: true });
     }
 
-    // Użyj ffmpeg z PATH (najprostsze i najbardziej niezawodne)
-    this.ffmpegPath = process.env.FFMPEG_PATH || "ffmpeg";
+    // Użyj ffmpeg z PATH lub zmiennej środowiskowej
+    let ffmpegEnv = process.env.FFMPEG_PATH || "ffmpeg";
+
+    // Jeśli ścieżka to katalog (kończy się na bin lub nie ma .exe), dodaj ffmpeg.exe
+    if (ffmpegEnv !== "ffmpeg" && fs.existsSync(ffmpegEnv)) {
+      const stats = fs.statSync(ffmpegEnv);
+      if (stats.isDirectory()) {
+        ffmpegEnv = path.join(ffmpegEnv, "ffmpeg.exe");
+      }
+    } else if (ffmpegEnv !== "ffmpeg" && !ffmpegEnv.endsWith(".exe")) {
+      // Ścieżka nie istnieje lub nie kończy się na .exe - spróbuj dodać ffmpeg.exe
+      const withExe = path.join(ffmpegEnv, "ffmpeg.exe");
+      if (fs.existsSync(withExe)) {
+        ffmpegEnv = withExe;
+      }
+    }
+
+    this.ffmpegPath = ffmpegEnv;
     this.analyzer = getAudioAnalyzer();
     console.log(`[AudioPreprocessor] Using ffmpeg path: ${this.ffmpegPath}`);
   }

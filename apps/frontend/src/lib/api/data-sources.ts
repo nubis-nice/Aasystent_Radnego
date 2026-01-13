@@ -357,6 +357,213 @@ export async function seedTestData(): Promise<{
 }
 
 /**
+ * Usuń dokument z RAG
+ */
+export async function deleteDocument(
+  id: string
+): Promise<{ success: boolean; message: string }> {
+  const token = await getAccessToken();
+
+  if (!token) {
+    throw new Error("Musisz być zalogowany");
+  }
+
+  const response = await fetch(`${API_URL}/api/documents/${id}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ error: "Unknown error" }));
+    throw new Error(error.error || "Failed to delete document");
+  }
+
+  return response.json();
+}
+
+/**
+ * Usuń wiele dokumentów z RAG
+ */
+export async function deleteDocumentsBulk(
+  documentIds: string[]
+): Promise<{ success: boolean; deletedCount: number; message: string }> {
+  const token = await getAccessToken();
+
+  if (!token) {
+    throw new Error("Musisz być zalogowany");
+  }
+
+  const response = await fetch(`${API_URL}/api/documents/bulk`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ documentIds }),
+  });
+
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ error: "Unknown error" }));
+    throw new Error(error.error || "Failed to delete documents");
+  }
+
+  return response.json();
+}
+
+/**
+ * Usuń WSZYSTKIE dokumenty z RAG
+ */
+export async function deleteAllDocuments(): Promise<{
+  success: boolean;
+  deletedCount: number;
+  message: string;
+}> {
+  const token = await getAccessToken();
+
+  if (!token) {
+    throw new Error("Musisz być zalogowany");
+  }
+
+  const response = await fetch(`${API_URL}/api/documents/all`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ error: "Unknown error" }));
+    throw new Error(error.error || "Failed to delete all documents");
+  }
+
+  return response.json();
+}
+
+/**
+ * Napraw dokument (usuń i pobierz ponownie)
+ */
+export async function repairDocument(id: string): Promise<{
+  success: boolean;
+  message: string;
+  documentId?: string;
+  contentLength?: number;
+  error?: string;
+}> {
+  const token = await getAccessToken();
+
+  if (!token) {
+    throw new Error("Musisz być zalogowany");
+  }
+
+  const response = await fetch(`${API_URL}/api/documents/${id}/repair`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Failed to repair document");
+  }
+
+  return data;
+}
+
+/**
+ * Pobierz dokumenty bez treści (błędy OCR)
+ */
+export async function getEmptyDocuments(): Promise<{
+  documents: Array<ProcessedDocument & { reason: string }>;
+  total: number;
+}> {
+  const token = await getAccessToken();
+
+  if (!token) {
+    throw new Error("Musisz być zalogowany");
+  }
+
+  const response = await fetch(`${API_URL}/api/documents/empty`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ error: "Unknown error" }));
+    throw new Error(error.error || "Failed to fetch empty documents");
+  }
+
+  return response.json();
+}
+
+/**
+ * Uruchom scraping dla wszystkich aktywnych źródeł (w kolejce)
+ */
+export async function triggerScrapingAll(
+  sourceIds: string[],
+  options?: { maxDocumentAgeDays?: number }
+): Promise<{
+  success: boolean;
+  results: Array<{ id: string; status: string; message: string }>;
+}> {
+  const token = await getAccessToken();
+
+  if (!token) {
+    throw new Error("Musisz być zalogowany");
+  }
+
+  const results: Array<{ id: string; status: string; message: string }> = [];
+
+  // Scrapuj źródła sekwencyjnie (kolejka)
+  for (const id of sourceIds) {
+    try {
+      const response = await fetch(`${API_URL}/api/data-sources/${id}/scrape`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          maxDocumentAgeDays: options?.maxDocumentAgeDays,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        results.push({ id, status: "success", message: data.message || "OK" });
+      } else {
+        const error = await response.json().catch(() => ({ error: "Unknown" }));
+        results.push({ id, status: "error", message: error.error || "Failed" });
+      }
+    } catch (err) {
+      results.push({
+        id,
+        status: "error",
+        message: err instanceof Error ? err.message : "Network error",
+      });
+    }
+  }
+
+  return {
+    success: results.every((r) => r.status === "success"),
+    results,
+  };
+}
+
+/**
  * Pomocnicza funkcja do pobierania access token z Supabase
  */
 async function getAccessToken(): Promise<string> {

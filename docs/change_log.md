@@ -1,5 +1,275 @@
 # Change Log
 
+## 2026-01-13 - Naprawa błędów transkrypcji Whisper
+
+### Naprawiona normalizacja nazw modeli STT
+
+**Problem:** Faster-whisper-server zwracał błędy 500:
+
+- `ValueError: Invalid model size 'whisper'`
+- `HFValidationError: 'dimavz/whisper-tiny:latest'`
+
+**Przyczyna:** Aplikacja wysyłała nieprawidłowe nazwy modeli do faster-whisper-server, który oczekuje nazw jak `large-v3`, `medium`, `tiny`.
+
+**Rozwiązanie w `apps/api/src/services/youtube-downloader.ts`:**
+
+1. **Nowa funkcja `normalizeSTTModel()`** - mapuje różne formaty nazw modeli:
+
+   - `whisper` → `large-v3`
+   - `whisper-1` → `large-v3` (dla faster-whisper) lub bez zmian (dla OpenAI)
+   - `dimavz/whisper-tiny:latest` → `tiny`
+   - `Systran/faster-whisper-*` → bez zmian
+
+2. **Automatyczne wykrywanie providera** - dla OpenAI używa `whisper-1`, dla innych normalizuje nazwy
+
+**Status:** ✅ Ukończone
+
+---
+
+## 2026-01-12 - Poprawa wyszukiwania dokumentów
+
+### Naprawiona logika wyszukiwania i sortowania
+
+**Problem:** Wyszukiwanie "sesja 23" nie zwracało poprawnych wyników, sortowanie chronologiczne działało nieprawidłowo.
+
+**Zmiany w `apps/api/src/services/document-scorer.ts`:**
+
+1. **Inteligentne wykrywanie numeru sesji** - rozpoznaje "sesja 23", "sesji XXIII", "23 sesja"
+2. **Konwersja numerów rzymskich ↔ arabskich** - szuka obu wariantów
+3. **Naprawione sortowanie chronologiczne** - prawidłowe asc/desc
+4. **Logi diagnostyczne** - ułatwiają debugowanie
+
+**Nowe pliki:**
+
+- `apps/api/src/services/intelligent-rag-search.ts` - zaawansowane wyszukiwanie semantyczne
+- `apps/api/migrations/012_fix_search_function.sql` - naprawa funkcji RPC
+
+**Nowe endpointy:**
+
+- `POST /documents/intelligent-search` - inteligentne wyszukiwanie
+- `POST /documents/test-rag-search` - diagnostyka RAG
+
+**Status:** ✅ Ukończone
+
+---
+
+## 2026-01-12 - AI Tool Orchestrator
+
+### Nowa funkcjonalność: Inteligentna orchestracja narzędzi AI
+
+**Cel:** Chat AI automatycznie wykrywa intencje użytkownika i uruchamia odpowiednie narzędzia (DeepResearch, RAG, Legal Analysis, itp.)
+
+**Utworzone pliki:**
+
+- `apps/api/src/services/ai-tool-orchestrator.ts` - główny orchestrator
+
+**Zmodyfikowane pliki:**
+
+- `apps/api/src/routes/chat.ts` - integracja orchestratora
+- `apps/frontend/src/app/chat/page.tsx` - UI feedback o długim przetwarzaniu
+
+**Dostępne narzędzia:**
+
+| Narzędzie         | Opis                               | Czas |
+| ----------------- | ---------------------------------- | ---- |
+| `person_search`   | Wyszukiwanie o osobach (radnych)   | ~25s |
+| `deep_research`   | Głębokie wyszukiwanie w internecie | ~30s |
+| `rag_search`      | Wyszukiwanie w lokalnej bazie RAG  | ~5s  |
+| `legal_analysis`  | Analiza prawna z wykrywaniem ryzyk | ~20s |
+| `session_search`  | Materiały z sesji rady             | ~10s |
+| `document_fetch`  | Pobranie dokumentu po nazwie       | ~5s  |
+| `budget_analysis` | Analiza budżetowa                  | ~15s |
+
+**Triggery aktywujące orchestrator:**
+
+- "pobierz dane o...", "wyszukaj informacje...", "znajdź o [osoba]..."
+- pytania o radnych, sesje, uchwały, budżet
+
+**UI Feedback:**
+
+- Komunikat: "🔍 Uruchamiam głębokie wyszukiwanie... To może potrwać do 60 sekund."
+
+**Status:** ✅ Ukończone
+
+---
+
+## 2026-01-12 - Personalizacja Agenta AI
+
+### Nowa funkcjonalność: Agent zwraca się po imieniu + kontekst lokalny
+
+**Zmiany:**
+
+1. **chat.ts** - pobieranie danych z `user_locale_settings`:
+
+   - Gmina/Miasto (`municipality`)
+   - Województwo (`voivodeship`)
+   - Nazwa rady (`council_name`)
+   - Adres BIP (`bip_url`)
+
+2. **buildSystemPrompt()** - personalizacja:
+
+   - Agent zwraca się do użytkownika po imieniu
+   - Kontekst lokalny: gmina, województwo, rada
+   - Sekcja PERSONALIZACJA w system prompt
+
+3. **base_rules.md** - nowa sekcja 0. PERSONALIZACJA AGENTA:
+   - Zasady pobierania danych lokalnych
+   - Zasady zwracania się po imieniu
+   - Implementacja w kodzie
+
+**Zmodyfikowane pliki:**
+
+- `apps/api/src/routes/chat.ts` - pobieranie `user_locale_settings`
+- `packages/shared/src/types/chat.ts` - rozszerzony `SystemPromptContext`, nowa logika `buildSystemPrompt`
+- `.windsurf/base_rules.md` - sekcja 0. PERSONALIZACJA AGENTA
+
+**Status:** ✅ Ukończone
+
+---
+
+## 2026-01-12 - Analiza aplikacji + Reorganizacja dokumentacji
+
+### Analiza Docker
+
+**Obrazy Docker (bez PostgreSQL - używamy Supabase):**
+
+- `redis:7-alpine` - cache i kolejki BullMQ
+- `fedirz/faster-whisper-server:latest-cpu` - lokalna transkrypcja STT
+- `adminer:4` - opcjonalny (development only)
+
+**Utworzono:** `docs/docker.md` - dokumentacja infrastruktury Docker
+
+### Przeniesione do `/old_no_active`
+
+**Pliki dokumentacji (nieaktualne plany):**
+
+- `old_ai_provider_refactoring_plan.md`
+- `old_api_refactoring_summary.md`
+- `old_refactoring_plan_api_config.md`
+- `old_PLAN_BUDOWY_AGENTA_AI.md`
+
+**Pliki kodu (stare wersje):**
+
+- `apps/api/src/routes/old_no_active/old_chat.ts.broken`
+- `apps/api/src/routes/old_no_active/old_chat.ts.reference`
+
+### Analiza hardcodowanych providerów AI
+
+**Status:** ✅ OK - serwisy używają dynamicznych modeli przez `AIClientFactory`
+
+Hardcoded wartości są tylko fallbackami przed inicjalizacją:
+
+- `youtube-downloader.ts` - pobiera model z `getAIConfig(userId, "stt")`
+- `legal-reasoning-engine.ts` - pobiera model z `getAIConfig(userId, "llm")`
+- `deep-research-service.ts` - pobiera model z `getAIConfig(userId, "llm")`
+- `budget-analysis-engine.ts` - pobiera model z `getAIConfig(userId, "llm")`
+- `transcription-job-service.ts` - pobiera model z `getAIConfig(userId, "llm")`
+
+### Zaktualizowana dokumentacja
+
+- `docs/architecture.md` - odniesienia do base_rules.md, Docker bez PostgreSQL, Brave provider
+- `docs/docker.md` - nowy plik z dokumentacją infrastruktury
+
+**Status:** ✅ Ukończone
+
+---
+
+## 2026-01-12 - Base Rules + Intelligence Scraping + Auto-Transkrypcja
+
+### Nowa funkcjonalność: Kompleksowe reguły budowania aplikacji
+
+**Utworzono:** `.windsurf/base_rules.md` - kompleksowy dokument zasad budowania aplikacji.
+
+#### Główne sekcje:
+
+1. **Konfiguracja dynamiczna** - zakaz hardcodowania providerów/modeli AI
+2. **Deep Research** - obowiązkowe użycie do wyszukiwania zewnętrznych informacji
+3. **Chat AI przepływ** - ZIDENTYFIKUJ → WYSZUKAJ → SPRAWDŹ → PRZEANALIZUJ → WYKONAJ
+4. **Auto-transkrypcja YouTube** - automatyczna transkrypcja nagrań sesji rady
+5. **Intelligence Scraping** - filtrowanie AI nieistotnych dokumentów
+6. **Analiza sentymentu** - dodawanie do RAG razem z oceną emocjonalną
+
+#### Intelligence Scraping - nowa funkcja `checkDocumentRelevance()`
+
+**Plik:** `apps/api/src/services/scraper-v2.ts`
+
+**Przepływ filtrowania:**
+
+```
+1. Szybkie odrzucenie - wzorce URL/tytuł (howyoutubeworks, privacy policy)
+2. Szybka akceptacja - słowa kluczowe samorządowe (sesja, rada, uchwała)
+3. AI ocena (gpt-4o-mini) - dla niejasnych przypadków
+```
+
+**Usunięte zbędne dokumenty z RAG:**
+
+- YouTube's Impact on the Creator Economy
+- Zarobki twórców YouTube
+- google privacy policy pl eu.pdf (3x)
+- youtubes business model.pdf (2x)
+
+#### Auto-transkrypcja YouTube
+
+**Kryteria relevancji:**
+
+- sesja.*rady, posiedzenie.*komisji, rada gminy/miejska/powiatu
+- transmisja/nagranie sesji, burmistrz/wójt/starosta
+- informacja publiczna
+
+**Przepływ:**
+
+1. DeepResearch znajduje YouTube → ocena relevancji
+2. YouTubeDownloader pobiera audio
+3. AudioTranscriber wykonuje transkrypcję (Whisper)
+4. analyzeSentiment() - analiza sentymentu
+5. addToRAG() - zapis z metadanymi sentymentu
+
+**Status:** ✅ Zaimplementowane
+
+---
+
+## 2026-01-12 - Inteligentne wyszukiwanie sesji rady
+
+### Nowa funkcjonalność: Kaskadowe wyszukiwanie materiałów z sesji
+
+**Problem:** AI nie mogło znaleźć materiałów z sesji rady (np. "streść sesję XIX") gdy brakowało transkrypcji w RAG.
+
+**Rozwiązanie:** System kaskadowego wyszukiwania z automatycznym proponowaniem transkrypcji.
+
+#### Nowe pliki
+
+- `apps/api/src/services/session-discovery-service.ts` - Kaskadowe wyszukiwanie sesji
+
+#### Zmodyfikowane pliki
+
+| Plik                                 | Zmiana                                                                                |
+| ------------------------------------ | ------------------------------------------------------------------------------------- |
+| `services/document-query-service.ts` | Dodano `detectSessionIntent()`, `findSessionDocuments()`, konwersja numerów rzymskich |
+| `routes/chat.ts`                     | PHASE 0: Wykrywanie intencji sesji przed standardowym przetwarzaniem                  |
+| `packages/shared/src/types/chat.ts`  | Sekcja "SESJE RADY" w system prompt                                                   |
+
+#### Przepływ wyszukiwania
+
+```
+1. Wykryj intencję sesji ("streść sesję XIX")
+   └─ Rozpoznaj numer (XIX → 19) i typ żądania (streszczenie/protokół/głosowania)
+
+2. RAG Search → processed_documents
+   └─ Szukaj transkrypcji, protokołów, materiałów sesji
+
+3. YouTube Search → źródła danych użytkownika
+   └─ Szukaj nagrań wideo z sesji
+
+4. Odpowiedź AI
+   └─ Znaleziono: "Oto streszczenie sesji XIX..."
+   └─ Brak + YouTube: "Znalazłem nagranie. Rozpocząć transkrypcję?"
+   └─ Brak całkowity: "Nie znalazłem. Sprawdź portal rady."
+```
+
+**Status:** ✅ Zaimplementowane
+
+---
+
 ## 2026-01-12 - Naprawa duplikacji dokumentów w odpowiedziach AI
 
 ### Problem: AI pokazuje duplikaty dokumentów w liście wyników

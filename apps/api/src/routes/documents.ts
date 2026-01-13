@@ -54,7 +54,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         .enum(["score", "date", "title", "session", "chronological"])
         .default("score"),
       sortOrder: z.enum(["asc", "desc"]).default("desc"),
-      limit: z.coerce.number().int().positive().max(100).default(20),
+      limit: z.coerce.number().int().positive().max(1000).default(20),
       offset: z.coerce.number().int().min(0).default(0),
     });
 
@@ -180,21 +180,356 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // DELETE /documents/:id - Usunięcie dokumentu
+  // DELETE /documents/:id - Usunięcie dokumentu z RAG
   fastify.delete<{ Params: { id: string } }>(
     "/documents/:id",
     async (request, reply) => {
       const { id } = request.params;
+      const userId = request.headers["x-user-id"] as string;
+
+      if (!userId) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
 
       try {
-        // TODO: Usuń dokument z bazy
+        // Sprawdź czy dokument istnieje i należy do użytkownika
+        const { data: doc, error: checkError } = await supabase
+          .from("processed_documents")
+          .select("id, title")
+          .eq("id", id)
+          .eq("user_id", userId)
+          .single();
 
-        return reply
-          .status(204)
-          .send({ message: "Document deleted successfully" });
+        if (checkError || !doc) {
+          return reply.status(404).send({ error: "Document not found" });
+        }
+
+        // Usuń dokument z processed_documents (cascade usunie też embeddingi)
+        const { error: deleteError } = await supabase
+          .from("processed_documents")
+          .delete()
+          .eq("id", id)
+          .eq("user_id", userId);
+
+        if (deleteError) {
+          fastify.log.error("Delete error:", deleteError);
+          return reply.status(500).send({ error: "Failed to delete document" });
+        }
+
+        console.log(`[Documents] Deleted document: ${doc.title} (${id})`);
+        return reply.status(200).send({
+          success: true,
+          message: `Dokument "${doc.title}" został usunięty`,
+        });
       } catch (error) {
         fastify.log.error(error);
         return reply.status(500).send({ error: "Internal server error" });
+      }
+    }
+  );
+
+  // DELETE /documents/bulk - Usunięcie wielu dokumentów z RAG
+  fastify.delete("/documents/bulk", async (request, reply) => {
+    const userId = request.headers["x-user-id"] as string;
+
+    if (!userId) {
+      return reply.status(401).send({ error: "Unauthorized" });
+    }
+
+    const bodySchema = z.object({
+      documentIds: z.array(z.string().uuid()).min(1).max(100),
+    });
+
+    try {
+      const { documentIds } = bodySchema.parse(request.body);
+
+      // Usuń dokumenty
+      const { error: deleteError, count } = await supabase
+        .from("processed_documents")
+        .delete()
+        .in("id", documentIds)
+        .eq("user_id", userId);
+
+      if (deleteError) {
+        fastify.log.error("Bulk delete error:", deleteError);
+        return reply.status(500).send({ error: "Failed to delete documents" });
+      }
+
+      console.log(`[Documents] Bulk deleted ${count} documents`);
+      return reply.status(200).send({
+        success: true,
+        deletedCount: count || documentIds.length,
+        message: `Usunięto ${count || documentIds.length} dokumentów`,
+      });
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return reply
+          .status(400)
+          .send({ error: "Validation error", details: error.issues });
+      }
+      fastify.log.error(error);
+      return reply.status(500).send({ error: "Internal server error" });
+    }
+  });
+
+  // DELETE /documents/all - Usuń WSZYSTKIE dokumenty z RAG
+  fastify.delete("/documents/all", async (request, reply) => {
+    const userId = request.headers["x-user-id"] as string;
+
+    if (!userId) {
+      return reply.status(401).send({ error: "Unauthorized" });
+    }
+
+    try {
+      // Policz ile dokumentów do usunięcia
+      const { count: totalCount } = await supabase
+        .from("processed_documents")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId);
+
+      if (!totalCount || totalCount === 0) {
+        return reply.send({
+          success: true,
+          deletedCount: 0,
+          message: "Brak dokumentów do usunięcia",
+        });
+      }
+
+      // Usuń wszystkie dokumenty użytkownika
+      const { error: deleteError } = await supabase
+        .from("processed_documents")
+        .delete()
+        .eq("user_id", userId);
+
+      if (deleteError) {
+        fastify.log.error("Delete all error:", deleteError);
+        return reply
+          .status(500)
+          .send({ error: "Failed to delete all documents" });
+      }
+
+      console.log(
+        `[Documents] Deleted ALL ${totalCount} documents for user ${userId}`
+      );
+      return reply.status(200).send({
+        success: true,
+        deletedCount: totalCount,
+        message: `Usunięto wszystkie ${totalCount} dokumentów z bazy RAG`,
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({ error: "Internal server error" });
+    }
+  });
+
+  // GET /documents/empty - Dokumenty bez treści (błędy OCR)
+  fastify.get("/documents/empty", async (request, reply) => {
+    const userId = request.headers["x-user-id"] as string;
+
+    if (!userId) {
+      return reply.status(401).send({ error: "Unauthorized" });
+    }
+
+    try {
+      // Znajdź dokumenty z pustą lub bardzo krótką treścią
+      const { data: emptyDocs, error } = await supabase
+        .from("processed_documents")
+        .select("id, title, document_type, source_url, processed_at, content")
+        .eq("user_id", userId)
+        .or("content.is.null,content.eq.")
+        .order("processed_at", { ascending: false })
+        .limit(1000);
+
+      if (error) {
+        fastify.log.error("Empty docs query error:", error);
+        return reply
+          .status(500)
+          .send({ error: "Failed to fetch empty documents" });
+      }
+
+      // Dodatkowo znajdź dokumenty z bardzo krótką treścią (< 50 znaków)
+      const { data: shortDocs, error: shortError } = await supabase
+        .from("processed_documents")
+        .select("id, title, document_type, source_url, processed_at, content")
+        .eq("user_id", userId)
+        .not("content", "is", null)
+        .order("processed_at", { ascending: false })
+        .limit(500);
+
+      if (shortError) {
+        fastify.log.error("Short docs query error:", shortError);
+      }
+
+      // Filtruj dokumenty z treścią < 50 znaków
+      const shortContentDocs = (shortDocs || []).filter(
+        (doc) => doc.content && doc.content.length < 50
+      );
+
+      const allEmptyDocs = [
+        ...(emptyDocs || []).map((d) => ({ ...d, reason: "Brak treści" })),
+        ...shortContentDocs.map((d) => ({
+          ...d,
+          reason: `Treść za krótka (${d.content?.length || 0} znaków)`,
+        })),
+      ];
+
+      return reply.send({
+        documents: allEmptyDocs,
+        total: allEmptyDocs.length,
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({ error: "Internal server error" });
+    }
+  });
+
+  // POST /documents/:id/repair - Napraw dokument (usuń i pobierz ponownie)
+  fastify.post<{ Params: { id: string } }>(
+    "/documents/:id/repair",
+    async (request, reply) => {
+      const { id } = request.params;
+      const userId = request.headers["x-user-id"] as string;
+
+      if (!userId) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      try {
+        // Pobierz dokument z source_url
+        const { data: doc, error: fetchError } = await supabase
+          .from("processed_documents")
+          .select("id, title, source_url, document_type")
+          .eq("id", id)
+          .eq("user_id", userId)
+          .single();
+
+        if (fetchError || !doc) {
+          return reply.status(404).send({ error: "Document not found" });
+        }
+
+        if (!doc.source_url) {
+          return reply.status(400).send({
+            error: "Brak source_url - nie można pobrać dokumentu ponownie",
+          });
+        }
+
+        console.log(
+          `[Documents] Repairing document: ${doc.title} from ${doc.source_url}`
+        );
+
+        // Usuń stary dokument
+        const { error: deleteError } = await supabase
+          .from("processed_documents")
+          .delete()
+          .eq("id", id)
+          .eq("user_id", userId);
+
+        if (deleteError) {
+          fastify.log.error("Delete error during repair:", deleteError);
+          return reply
+            .status(500)
+            .send({ error: "Failed to delete old document" });
+        }
+
+        // Pobierz dokument ponownie
+        const processor = new DocumentProcessor();
+        await processor.initializeWithUserConfig(userId);
+
+        // Pobierz treść z URL
+        const response = await fetch(doc.source_url);
+        if (!response.ok) {
+          return reply.status(502).send({
+            error: `Nie można pobrać dokumentu: HTTP ${response.status}`,
+          });
+        }
+
+        const contentType = response.headers.get("content-type") || "";
+        const buffer = Buffer.from(await response.arrayBuffer());
+
+        // Określ typ pliku
+        let fileName = doc.title || "document";
+        if (contentType.includes("pdf")) {
+          fileName += ".pdf";
+        } else if (contentType.includes("html")) {
+          // Dla HTML wyciągnij tekst
+          const html = buffer.toString("utf-8");
+          const textContent = html
+            .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+          if (textContent.length < 50) {
+            return reply.status(422).send({
+              success: false,
+              error: "Pobrana treść jest za krótka",
+              contentLength: textContent.length,
+            });
+          }
+
+          // Zapisz do RAG
+          const saveResult = await processor.saveToRAG(
+            textContent,
+            {
+              title: doc.title,
+              documentType: doc.document_type,
+              sourceUrl: doc.source_url,
+            },
+            userId
+          );
+
+          return reply.send({
+            success: true,
+            message: `Dokument naprawiony: ${textContent.length} znaków`,
+            documentId: saveResult.documentId,
+            contentLength: textContent.length,
+          });
+        }
+
+        // Przetwórz plik (PDF, DOCX, itp.)
+        const result = await processor.processFile(
+          buffer,
+          fileName,
+          contentType,
+          buffer.length
+        );
+
+        if (!result.success || result.text.length < 50) {
+          return reply.status(422).send({
+            success: false,
+            error: result.error || "Nie udało się wyodrębnić treści",
+            contentLength: result.text?.length || 0,
+          });
+        }
+
+        // Zapisz do RAG
+        const saveResult = await processor.saveToRAG(
+          result.text,
+          {
+            title: doc.title,
+            documentType: doc.document_type,
+            sourceUrl: doc.source_url,
+          },
+          userId
+        );
+
+        console.log(
+          `[Documents] Repaired document: ${doc.title} (${result.text.length} chars)`
+        );
+
+        return reply.send({
+          success: true,
+          message: `Dokument naprawiony: ${result.text.length} znaków`,
+          documentId: saveResult.documentId,
+          contentLength: result.text.length,
+        });
+      } catch (error) {
+        fastify.log.error("Repair error:", error);
+        return reply.status(500).send({
+          error:
+            error instanceof Error ? error.message : "Internal server error",
+        });
       }
     }
   );
@@ -585,7 +920,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         .select("*")
         .eq("user_id", user.id)
         .order("processed_at", { ascending: false })
-        .limit(100);
+        .limit(1000);
 
       if (error) {
         throw error;
@@ -1063,6 +1398,193 @@ Zawrzyj:
       return reply.status(500).send({
         error:
           error instanceof Error ? error.message : "Błąd tworzenia zadania",
+      });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TEST RAG SEARCH - Diagnostyka wyszukiwania
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // POST /documents/test-rag-search - Test inteligentnego wyszukiwania RAG
+  fastify.post("/documents/test-rag-search", async (request, reply) => {
+    try {
+      const authHeader = request.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const token = authHeader.substring(7);
+      const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+      const {
+        data: { user },
+        error: authError,
+      } = await supabaseAuth.auth.getUser(token);
+
+      if (authError || !user) {
+        return reply.status(401).send({ error: "Invalid token" });
+      }
+
+      const bodySchema = z.object({
+        query: z.string().min(1),
+        documentType: z.string().optional(),
+        maxResults: z.number().int().positive().max(100).default(20),
+        includeRelated: z.boolean().default(true),
+      });
+
+      const body = bodySchema.parse(request.body);
+
+      const { IntelligentRAGSearch } = await import(
+        "../services/intelligent-rag-search.js"
+      );
+
+      const ragSearch = new IntelligentRAGSearch(user.id);
+      const diagnostics = await ragSearch.runDiagnostics(body.query);
+
+      return reply.send({
+        success: true,
+        diagnostics,
+      });
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return reply
+          .status(400)
+          .send({ error: "Validation error", details: error.issues });
+      }
+      fastify.log.error(error);
+      return reply.status(500).send({
+        error: error instanceof Error ? error.message : "Błąd testu RAG",
+      });
+    }
+  });
+
+  // POST /documents/intelligent-search - Inteligentne wyszukiwanie dokumentów
+  fastify.post("/documents/intelligent-search", async (request, reply) => {
+    try {
+      const userId = request.headers["x-user-id"] as string;
+      if (!userId) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const bodySchema = z.object({
+        query: z.string().min(1),
+        sessionNumber: z.number().int().positive().optional(),
+        documentType: z.string().optional(),
+        dateFrom: z.string().optional(),
+        dateTo: z.string().optional(),
+        maxResults: z.number().int().positive().max(100).default(30),
+        includeRelated: z.boolean().default(true),
+      });
+
+      const body = bodySchema.parse(request.body);
+
+      const { IntelligentRAGSearch } = await import(
+        "../services/intelligent-rag-search.js"
+      );
+
+      const ragSearch = new IntelligentRAGSearch(userId);
+      const results = await ragSearch.search(body);
+
+      return reply.send(results);
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return reply
+          .status(400)
+          .send({ error: "Validation error", details: error.issues });
+      }
+      fastify.log.error(error);
+      return reply.status(500).send({
+        error: error instanceof Error ? error.message : "Błąd wyszukiwania",
+      });
+    }
+  });
+
+  // POST /documents/regenerate-embeddings - Regeneruj embeddingi dla dokumentów bez nich
+  fastify.post("/documents/regenerate-embeddings", async (request, reply) => {
+    try {
+      const authHeader = request.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const token = authHeader.substring(7);
+      const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+      const {
+        data: { user },
+        error: authError,
+      } = await supabaseAuth.auth.getUser(token);
+
+      if (authError || !user) {
+        return reply.status(401).send({ error: "Invalid token" });
+      }
+
+      // Pobierz dokumenty bez embeddingów
+      const { data: docs, error: fetchError } = await supabase
+        .from("processed_documents")
+        .select("id, title, content")
+        .eq("user_id", user.id)
+        .is("embedding", null)
+        .not("content", "is", null)
+        .limit(50);
+
+      if (fetchError) {
+        return reply.status(500).send({ error: fetchError.message });
+      }
+
+      if (!docs || docs.length === 0) {
+        return reply.send({
+          success: true,
+          message: "Wszystkie dokumenty mają już embeddingi",
+          processed: 0,
+        });
+      }
+
+      // Pobierz klienta embeddingów
+      const { getEmbeddingsClient, getAIConfig } = await import(
+        "../ai/index.js"
+      );
+      const embeddingsClient = await getEmbeddingsClient(user.id);
+      const embConfig = await getAIConfig(user.id, "embeddings");
+
+      let processed = 0;
+      let errors = 0;
+
+      for (const doc of docs) {
+        try {
+          const textToEmbed = `${doc.title || ""}\n\n${
+            doc.content || ""
+          }`.substring(0, 8000);
+
+          const embeddingResponse = await embeddingsClient.embeddings.create({
+            model: embConfig.modelName,
+            input: textToEmbed,
+          });
+
+          const embedding = embeddingResponse.data[0]?.embedding;
+          if (embedding) {
+            await supabase
+              .from("processed_documents")
+              .update({ embedding })
+              .eq("id", doc.id);
+            processed++;
+          }
+        } catch (err) {
+          console.error(`[Regenerate] Error for doc ${doc.id}:`, err);
+          errors++;
+        }
+      }
+
+      return reply.send({
+        success: true,
+        message: `Zregenerowano ${processed} embeddingów`,
+        processed,
+        errors,
+        remaining: docs.length - processed,
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        error: error instanceof Error ? error.message : "Błąd regeneracji",
       });
     }
   });

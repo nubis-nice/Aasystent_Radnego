@@ -67,6 +67,83 @@ export class YouTubeDownloader {
   }
 
   /**
+   * Normalizuj nazwę modelu STT dla faster-whisper-server
+   * Mapuje różne formaty nazw na prawidłowe nazwy modeli
+   */
+  private normalizeSTTModel(modelName: string, provider: string): string {
+    // Dla OpenAI API używamy whisper-1
+    if (provider === "openai") {
+      return "whisper-1";
+    }
+
+    // Dla faster-whisper-server normalizujemy nazwy
+    const normalizedModel = modelName.toLowerCase().trim();
+
+    // Usuń suffix :latest jeśli istnieje (np. dimavz/whisper-tiny:latest)
+    const withoutTag = normalizedModel.replace(/:latest$/, "");
+
+    // Mapowanie nieprawidłowych nazw na prawidłowe
+    const modelMapping: Record<string, string> = {
+      whisper: "large-v3",
+      "whisper-1": "large-v3",
+      "whisper-tiny": "tiny",
+      "whisper-base": "base",
+      "whisper-small": "small",
+      "whisper-medium": "medium",
+      "whisper-large": "large-v3",
+      "whisper-large-v2": "large-v2",
+      "whisper-large-v3": "large-v3",
+      "dimavz/whisper-tiny": "tiny",
+      "dimavz/whisper-base": "base",
+      "dimavz/whisper-small": "small",
+      "dimavz/whisper-medium": "medium",
+      "dimavz/whisper-large": "large-v3",
+    };
+
+    // Sprawdź czy mamy mapowanie
+    if (modelMapping[withoutTag]) {
+      console.log(
+        `[YouTubeDownloader] Normalized STT model: ${modelName} -> ${modelMapping[withoutTag]}`
+      );
+      return modelMapping[withoutTag];
+    }
+
+    // Sprawdź czy to już prawidłowy format Systran/faster-whisper-*
+    if (withoutTag.startsWith("systran/faster-whisper-")) {
+      return modelName; // Już prawidłowy format
+    }
+
+    // Sprawdź czy to prawidłowy rozmiar modelu
+    const validSizes = [
+      "tiny",
+      "tiny.en",
+      "base",
+      "base.en",
+      "small",
+      "small.en",
+      "medium",
+      "medium.en",
+      "large",
+      "large-v1",
+      "large-v2",
+      "large-v3",
+      "distil-large-v2",
+      "distil-medium.en",
+      "distil-small.en",
+      "distil-large-v3",
+    ];
+    if (validSizes.includes(withoutTag)) {
+      return withoutTag;
+    }
+
+    // Domyślnie użyj large-v3 dla najlepszej jakości
+    console.warn(
+      `[YouTubeDownloader] Unknown STT model "${modelName}", using large-v3`
+    );
+    return "large-v3";
+  }
+
+  /**
    * Inicjalizacja z konfiguracją użytkownika przez AIClientFactory
    */
   async initializeWithUserConfig(userId: string): Promise<void> {
@@ -77,7 +154,10 @@ export class YouTubeDownloader {
 
     // Pobierz konfigurację STT aby znać model
     const sttConfig = await getAIConfig(userId, "stt");
-    this.sttModel = sttConfig.modelName;
+    this.sttModel = this.normalizeSTTModel(
+      sttConfig.modelName,
+      sttConfig.provider
+    );
 
     // Pobierz klienta LLM do analizy transkryptu
     this.llmClient = await getLLMClient(userId);

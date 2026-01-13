@@ -318,19 +318,95 @@ export class DocumentProcessor {
       );
     }
 
-    const base64Image = fileBuffer.toString("base64");
-    const dataUrl = `data:${mimeType};base64,${base64Image}`;
-
     console.log(
       `[DocumentProcessor] Processing image with Vision model ${this.visionModel}: ${fileName}`
     );
 
-    const response = await this.visionClient.chat.completions.create({
-      model: this.visionModel,
-      messages: [
-        {
-          role: "system",
-          content: `Jesteś ekspertem OCR. Twoim zadaniem jest dokładne odczytanie i transkrypcja CAŁEGO tekstu widocznego na obrazie.
+    // Analiza statystyk obrazu
+    const stats = await this.analyzeImageStats(fileBuffer);
+    console.log(
+      `[DocumentProcessor] Image analysis: brightness=${stats.brightness.toFixed(
+        1
+      )}, contrast=${stats.contrast.toFixed(
+        2
+      )}, sharpness=${stats.sharpness.toFixed(
+        2
+      )}, noise=${stats.noiseLevel.toFixed(2)}`
+    );
+
+    // Sprawdź czy obraz jest pusty/biały
+    if (stats.brightness > 250 && stats.contrast < 0.05) {
+      console.log(
+        `[DocumentProcessor] Image appears to be blank (brightness=${stats.brightness.toFixed(
+          1
+        )}, contrast=${stats.contrast.toFixed(2)})`
+      );
+      return {
+        success: false,
+        text: "",
+        metadata: {
+          fileName,
+          fileType: "image",
+          mimeType,
+          fileSize,
+          processingMethod: "ocr",
+        },
+        error: "Obraz wydaje się być pusty lub całkowicie biały",
+      };
+    }
+
+    // Normalizacja obrazu przed OCR
+    const normalizedImage = await this.normalizeImageForOCR(fileBuffer);
+    console.log(`[DocumentProcessor] Image normalized`);
+
+    // KROK 1: Najpierw spróbuj Tesseract (darmowe, lokalne)
+    const tesseractResult = await this.processImageWithTesseract(
+      normalizedImage,
+      1 // page number
+    );
+
+    console.log(
+      `[DocumentProcessor] Tesseract result: ${
+        tesseractResult.text.length
+      } chars, confidence: ${tesseractResult.confidence.toFixed(1)}%`
+    );
+
+    // Jeśli Tesseract dał dobry wynik (confidence > 50% i tekst > 30 znaków) - użyj go
+    if (tesseractResult.confidence > 50 && tesseractResult.text.length > 30) {
+      console.log(`[DocumentProcessor] Using Tesseract result (good quality)`);
+      return {
+        success: true,
+        text: tesseractResult.text,
+        metadata: {
+          fileName,
+          fileType: "image",
+          mimeType,
+          fileSize,
+          processingMethod: "ocr",
+          confidence: tesseractResult.confidence / 100,
+          language: "pl",
+          ocrEngine: "tesseract",
+        },
+      };
+    }
+
+    // KROK 2: Tesseract słaby - użyj Vision API jako fallback
+    console.log(
+      `[DocumentProcessor] Tesseract confidence too low (${tesseractResult.confidence.toFixed(
+        1
+      )}%), using Vision API fallback`
+    );
+
+    const base64Image = normalizedImage.toString("base64");
+    const dataUrl = `data:image/png;base64,${base64Image}`;
+
+    try {
+      const response = await this.visionClient.chat.completions.create({
+        model: this.visionModel,
+        messages: [
+          {
+            role: "system",
+            content: `Jesteś ekspertem OCR. Twoim zadaniem jest dokładne odczytanie i transkrypcja CAŁEGO tekstu widocznego na obrazie.
 
 Zasady:
 1. Odczytaj CAŁY tekst, zachowując oryginalną strukturę i formatowanie
@@ -339,42 +415,78 @@ Zasady:
 4. Jeśli tekst jest nieczytelny, oznacz to jako [nieczytelne]
 5. Nie dodawaj własnych komentarzy ani interpretacji
 6. Odpowiedz TYLKO tekstem odczytanym z obrazu`,
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "image_url",
-              image_url: {
-                url: dataUrl,
-                detail: "high",
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "image_url",
+                image_url: {
+                  url: dataUrl,
+                  detail: "high",
+                },
               },
-            },
-            {
-              type: "text",
-              text: "Odczytaj cały tekst z tego obrazu. Zachowaj formatowanie i strukturę dokumentu.",
-            },
-          ],
+              {
+                type: "text",
+                text: "Odczytaj cały tekst z tego obrazu. Zachowaj formatowanie i strukturę dokumentu.",
+              },
+            ],
+          },
+        ],
+        max_completion_tokens: 4096,
+      });
+
+      const extractedText = response.choices[0]?.message?.content || "";
+
+      return {
+        success: true,
+        text: extractedText,
+        metadata: {
+          fileName,
+          fileType: "image",
+          mimeType,
+          fileSize,
+          processingMethod: "vision",
+          confidence: 0.9,
+          language: "pl",
+          ocrEngine: "vision-api",
         },
-      ],
-      max_completion_tokens: 4096,
-    });
+      };
+    } catch (visionError) {
+      console.error(`[DocumentProcessor] Vision API failed:`, visionError);
 
-    const extractedText = response.choices[0]?.message?.content || "";
+      // Użyj wyniku Tesseract nawet jeśli słaby
+      if (tesseractResult.text.trim()) {
+        return {
+          success: true,
+          text: tesseractResult.text,
+          metadata: {
+            fileName,
+            fileType: "image",
+            mimeType,
+            fileSize,
+            processingMethod: "ocr",
+            confidence: tesseractResult.confidence / 100,
+            language: "pl",
+            ocrEngine: "tesseract-fallback",
+          },
+        };
+      }
 
-    return {
-      success: true,
-      text: extractedText,
-      metadata: {
-        fileName,
-        fileType: "image",
-        mimeType,
-        fileSize,
-        processingMethod: "ocr",
-        confidence: 0.9,
-        language: "pl",
-      },
-    };
+      return {
+        success: false,
+        text: "",
+        metadata: {
+          fileName,
+          fileType: "image",
+          mimeType,
+          fileSize,
+          processingMethod: "ocr",
+        },
+        error:
+          "Nie udało się odczytać tekstu z obrazu (Tesseract i Vision API zawiodły)",
+      };
+    }
   }
 
   /**
@@ -945,6 +1057,7 @@ Zasady:
     const maxPagesToProcess = Math.min(pngPages.length, 10);
     let totalConfidence = 0;
     let pagesProcessed = 0;
+    let blankPagesSkipped = 0;
 
     for (let i = 0; i < maxPagesToProcess; i++) {
       const page = pngPages[i];
@@ -956,8 +1069,8 @@ Zasady:
         page.pageNumber
       );
 
-      // Jeśli Tesseract dał dobry wynik (confidence > 60% i tekst > 50 znaków)
-      if (tesseractResult.confidence > 60 && tesseractResult.text.length > 50) {
+      // Jeśli Tesseract dał dobry wynik (confidence > 50% i tekst > 30 znaków) - użyj go
+      if (tesseractResult.confidence > 50 && tesseractResult.text.length > 30) {
         allTexts.push(
           `--- Strona ${page.pageNumber} ---\n${tesseractResult.text}`
         );
@@ -966,12 +1079,28 @@ Zasady:
         continue;
       }
 
-      // Fallback do GPT-4 Vision dla słabych wyników Tesseract
-      if (this.visionClient) {
+      // Sprawdź czy strona jest pusta (brightness ~255 i contrast ~0)
+      const stats = await this.analyzeImageStats(page.content);
+      if (stats.brightness > 250 && stats.contrast < 0.05) {
+        console.log(
+          `[DocumentProcessor] Page ${
+            page.pageNumber
+          } appears to be blank (brightness=${stats.brightness.toFixed(
+            1
+          )}, contrast=${stats.contrast.toFixed(2)}), skipping`
+        );
+        blankPagesSkipped++;
+        continue; // Pomiń pustą stronę
+      }
+
+      // Fallback do Vision API dla słabych wyników Tesseract (tylko jeśli jest klient)
+      if (this.visionClient && this.visionModel) {
         console.log(
           `[DocumentProcessor] Tesseract confidence too low (${tesseractResult.confidence.toFixed(
             1
-          )}%), using GPT-4 Vision for page ${page.pageNumber}`
+          )}%), using Vision API (${this.visionModel}) for page ${
+            page.pageNumber
+          }`
         );
 
         try {
@@ -1017,12 +1146,12 @@ Zasady:
           const pageText = response.choices[0]?.message?.content || "";
           if (pageText.trim()) {
             allTexts.push(`--- Strona ${page.pageNumber} ---\n${pageText}`);
-            totalConfidence += 90; // GPT-4 Vision ma wysoką jakość
+            totalConfidence += 90; // Vision API ma wysoką jakość
             pagesProcessed++;
           }
         } catch (visionError) {
           console.error(
-            `[DocumentProcessor] GPT-4 Vision failed for page ${page.pageNumber}:`,
+            `[DocumentProcessor] Vision API (${this.visionModel}) failed for page ${page.pageNumber}:`,
             visionError
           );
           // Użyj wyniku Tesseract nawet jeśli słaby
@@ -1035,13 +1164,22 @@ Zasady:
           }
         }
       } else {
-        // Brak OpenAI - użyj Tesseract nawet jeśli słaby
+        // Brak Vision API - użyj Tesseract nawet jeśli słaby wynik
+        console.log(
+          `[DocumentProcessor] No Vision API available, using Tesseract result for page ${
+            page.pageNumber
+          } (confidence: ${tesseractResult.confidence.toFixed(1)}%)`
+        );
         if (tesseractResult.text.trim()) {
           allTexts.push(
             `--- Strona ${page.pageNumber} ---\n${tesseractResult.text}`
           );
-          totalConfidence += tesseractResult.confidence;
+          totalConfidence += Math.max(tesseractResult.confidence, 30); // Minimum 30% dla słabych wyników
           pagesProcessed++;
+        } else {
+          console.warn(
+            `[DocumentProcessor] Page ${page.pageNumber} has no readable text (Tesseract returned empty)`
+          );
         }
       }
     }
@@ -1078,6 +1216,7 @@ Zasady:
         processingMethod: "ocr",
         confidence: avgConfidence / 100, // Normalizuj do 0-1
         language: "pl",
+        blankPagesSkipped,
       },
     };
   }

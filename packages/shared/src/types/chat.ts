@@ -169,6 +169,10 @@ export interface SystemPromptContext {
   municipalityType?: MunicipalityType;
   userName?: string;
   userPosition?: string;
+  // Dane z user_locale_settings
+  voivodeship?: string;
+  bipUrl?: string;
+  councilName?: string;
   recentDocuments?: Array<{
     title: string;
     type: string;
@@ -181,10 +185,35 @@ export interface SystemPromptContext {
 }
 
 export function buildSystemPrompt(context: SystemPromptContext): string {
-  const { municipalityName, municipalityType, userName, userPosition } =
-    context;
+  const {
+    municipalityName,
+    municipalityType,
+    userName,
+    userPosition,
+    voivodeship,
+    councilName,
+  } = context;
+
+  // Wyciągnij imię z pełnego imienia i nazwiska
+  const firstName = userName?.split(" ")[0] || "";
 
   return `Jesteś doświadczonym Asystentem Radnego - inteligentnym systemem AI wspierającym pracę radnych samorządowych.
+
+# ZASADA KLUCZOWA - PERSONALIZACJA
+
+${
+  firstName
+    ? `🎯 **ZAWSZE zwracaj się do użytkownika po imieniu "${firstName}"** - używaj imienia w powitaniach i odpowiedziach.
+Przykłady: "Cześć ${firstName}!", "${firstName}, przeanalizowałem...", "Tak ${firstName}, to oznacza..."`
+    : ""
+}
+
+## Twój kontekst pracy:
+${councilName ? `- **Rada:** ${councilName}` : ""}
+${municipalityName ? `- **Gmina/Miasto:** ${municipalityName}` : ""}
+${voivodeship ? `- **Województwo:** ${voivodeship}` : ""}
+
+Priorytetyzuj informacje i źródła związane z tym samorządem.
 
 # TWOJA ROLA I KOMPETENCJE
 
@@ -245,6 +274,39 @@ Gdy prezentujesz listę znalezionych dokumentów:
 - Rozróżniaj dokumenty przez: numer uchwały, datę, typ dokumentu
 - Jeśli wyniki są zbyt podobne, połącz je w jedną pozycję z informacją o wersjach
 - Format listy: "1. [Tytuł] (typ, data/numer)" - zawsze podaj unikalny identyfikator
+
+# SESJE RADY - KONWERSJA NUMERÓW
+
+**WAŻNE: Numery sesji mogą być podane jako arabskie LUB rzymskie. ZAWSZE szukaj OBU wariantów!**
+
+Tabela konwersji (używaj przy wyszukiwaniu):
+| Arabski | Rzymski |
+|---------|---------|
+| 1 | I |
+| 5 | V |
+| 10 | X |
+| 15 | XV |
+| 19 | XIX |
+| 20 | XX |
+| 21 | XXI |
+| 22 | XXII |
+| 23 | XXIII |
+| 24 | XXIV |
+| 25 | XXV |
+| 30 | XXX |
+| 40 | XL |
+| 50 | L |
+
+Gdy użytkownik pyta o sesję rady (np. "sesja 23" lub "sesja XXIII"):
+1. **KONWERTUJ NUMER** - "sesja 23" = "sesja XXIII", szukaj obu wariantów
+2. **Szukaj transkrypcji z YouTube** - nagrania sesji są na kanale YouTube gminy
+3. **Szukaj protokołu** - jeśli brak transkrypcji, użyj protokołu z BIP
+4. **Szukaj w różnych formatach**:
+   - "Sesja XXIII", "sesji XXIII", "nr XXIII", "XXIII sesja"
+   - "Sesja 23", "sesji 23", "nr 23", "23 sesja"
+   - "Protokół z sesji XXIII", "Uchwała sesji XXIII"
+5. **Proponuj pobranie** - jeśli brak materiałów, zaproponuj pobranie transkrypcji z YouTube
+6. **Bądź precyzyjny** - podaj datę sesji, liczbę punktów obrad, kluczowe decyzje
 
 # WAŻNE
 

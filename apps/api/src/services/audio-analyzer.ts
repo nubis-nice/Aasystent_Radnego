@@ -5,6 +5,7 @@
 
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
+import * as path from "node:path";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Typy
@@ -75,8 +76,32 @@ export class AudioAnalyzer {
   private ffmpegPath: string;
 
   constructor() {
-    this.ffprobePath = process.env.FFPROBE_PATH || "ffprobe";
-    this.ffmpegPath = process.env.FFMPEG_PATH || "ffmpeg";
+    // Rozwiąż ścieżki do ffprobe i ffmpeg
+    let ffprobeEnv = process.env.FFPROBE_PATH || "ffprobe";
+    let ffmpegEnv = process.env.FFMPEG_PATH || "ffmpeg";
+
+    // Jeśli ścieżka to katalog, dodaj nazwę pliku
+    if (ffmpegEnv !== "ffmpeg" && fs.existsSync(ffmpegEnv)) {
+      const stats = fs.statSync(ffmpegEnv);
+      if (stats.isDirectory()) {
+        ffmpegEnv = path.join(ffmpegEnv, "ffmpeg.exe");
+        // ffprobe jest w tym samym katalogu
+        if (ffprobeEnv === "ffprobe") {
+          ffprobeEnv = path.join(process.env.FFMPEG_PATH!, "ffprobe.exe");
+        }
+      }
+    } else if (ffmpegEnv !== "ffmpeg" && !ffmpegEnv.endsWith(".exe")) {
+      const withExe = path.join(ffmpegEnv, "ffmpeg.exe");
+      if (fs.existsSync(withExe)) {
+        ffmpegEnv = withExe;
+        if (ffprobeEnv === "ffprobe") {
+          ffprobeEnv = path.join(process.env.FFMPEG_PATH!, "ffprobe.exe");
+        }
+      }
+    }
+
+    this.ffprobePath = ffprobeEnv;
+    this.ffmpegPath = ffmpegEnv;
   }
 
   /**
