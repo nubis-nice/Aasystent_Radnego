@@ -43,6 +43,7 @@ export interface DataSourcesStats {
   documents: {
     total: number;
     byType: Record<string, number>;
+    withEmbeddings?: number;
   };
   lastScrape: string | null;
   errorsLast24h: number;

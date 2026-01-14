@@ -172,18 +172,108 @@ export class DocumentScorer {
         };
     }
     /**
+     * Wykryj numer sesji z zapytania
+     */
+    extractSessionNumber(query) {
+        // Wzorce dla numeru sesji
+        const patterns = [
+            /sesj[iaęy]\s+(?:nr\.?\s*)?(\d+)/i,
+            /sesj[iaęy]\s+(?:nr\.?\s*)?([IVXLC]+)/i,
+            /(\d+)\s*sesj/i,
+            /([IVXLC]+)\s*sesj/i,
+        ];
+        for (const pattern of patterns) {
+            const match = query.match(pattern);
+            if (match && match[1]) {
+                const value = match[1];
+                // Jeśli to liczba arabska
+                if (/^\d+$/.test(value)) {
+                    const num = parseInt(value, 10);
+                    if (num > 0 && num <= 200)
+                        return num;
+                }
+                // Jeśli to liczba rzymska
+                if (/^[IVXLC]+$/i.test(value)) {
+                    const num = this.romanToArabic(value);
+                    if (num > 0 && num <= 200)
+                        return num;
+                }
+            }
+        }
+        return null;
+    }
+    romanToArabic(roman) {
+        const values = { I: 1, V: 5, X: 10, L: 50, C: 100 };
+        let result = 0, prev = 0;
+        for (let i = roman.length - 1; i >= 0; i--) {
+            const char = roman[i];
+            const curr = char ? values[char.toUpperCase()] || 0 : 0;
+            result += curr < prev ? -curr : curr;
+            prev = curr;
+        }
+        return result;
+    }
+    arabicToRoman(num) {
+        const map = [
+            [100, "C"],
+            [90, "XC"],
+            [50, "L"],
+            [40, "XL"],
+            [10, "X"],
+            [9, "IX"],
+            [5, "V"],
+            [4, "IV"],
+            [1, "I"],
+        ];
+        let result = "";
+        for (const [value, numeral] of map) {
+            while (num >= value) {
+                result += numeral;
+                num -= value;
+            }
+        }
+        return result;
+    }
+    /**
      * Pobierz dokumenty z bazy i oblicz score dla każdego
      */
     async getDocumentsWithScores(userId, options = {}) {
         const { search, documentType, dateFrom, dateTo, priority, sortBy = "score", sortOrder = "desc", limit = 20, offset = 0, } = options;
+        // Wykryj numer sesji z zapytania
+        const sessionNumber = search ? this.extractSessionNumber(search) : null;
         // Buduj query
         let query = supabase
             .from("processed_documents")
             .select("*", { count: "exact" })
             .eq("user_id", userId);
-        // Filtr tekstowy
+        // Inteligentny filtr tekstowy
         if (search) {
-            query = query.or(`title.ilike.%${search}%,content.ilike.%${search}%,keywords.cs.{${search}}`);
+            const normalizedSearch = search.trim();
+            console.log(`[DocumentScorer] Search query: "${normalizedSearch}", sessionNumber: ${sessionNumber}`);
+            if (sessionNumber) {
+                // Szukaj dokumentów powiązanych z sesją - precyzyjne wyszukiwanie
+                const romanNum = this.arabicToRoman(sessionNumber);
+                // Użyj precyzyjnych wzorców
+                query = query.or(`title.ilike.%sesja ${sessionNumber}%,` +
+                    `title.ilike.%sesji ${sessionNumber}%,` +
+                    `title.ilike.%sesja nr ${sessionNumber}%,` +
+                    `title.ilike.%sesji nr ${sessionNumber}%,` +
+                    `title.ilike.%sesja ${romanNum}%,` +
+                    `title.ilike.%sesji ${romanNum}%,` +
+                    `title.ilike.%sesja nr ${romanNum}%,` +
+                    `title.ilike.%nr ${romanNum}%,` +
+                    `title.ilike.%${romanNum} sesj%,` +
+                    `content.ilike.%sesja ${sessionNumber}%,` +
+                    `content.ilike.%sesji ${sessionNumber}%,` +
+                    `content.ilike.%sesja ${romanNum}%,` +
+                    `content.ilike.%sesji ${romanNum}%`);
+                console.log(`[DocumentScorer] Session search: ${sessionNumber} (Roman: ${romanNum})`);
+            }
+            else {
+                // Standardowe wyszukiwanie - szukaj całej frazy lub słów
+                // Najpierw próbuj dokładne dopasowanie
+                query = query.or(`title.ilike.%${normalizedSearch}%,content.ilike.%${normalizedSearch}%`);
+            }
         }
         // Filtr typu
         if (documentType) {
@@ -216,6 +306,7 @@ export class DocumentScorer {
             filteredDocuments = scoredDocuments.filter((doc) => doc.score.priority === priority);
         }
         // Sortuj
+        console.log(`[DocumentScorer] Sorting ${filteredDocuments.length} docs by: ${sortBy} (${sortOrder})`);
         filteredDocuments.sort((a, b) => {
             let comparison = 0;
             switch (sortBy) {
@@ -223,17 +314,25 @@ export class DocumentScorer {
                     comparison = b.score.totalScore - a.score.totalScore;
                     break;
                 case "date": {
-                    const dateA = new Date(a.publish_date || a.processed_at).getTime();
-                    const dateB = new Date(b.publish_date || b.processed_at).getTime();
+                    // Sortowanie chronologiczne - używaj publish_date lub processed_at
+                    const dateA = a.publish_date
+                        ? new Date(a.publish_date).getTime()
+                        : new Date(a.processed_at).getTime();
+                    const dateB = b.publish_date
+                        ? new Date(b.publish_date).getTime()
+                        : new Date(b.processed_at).getTime();
+                    // Domyślnie desc = najnowsze pierwsze
                     comparison = dateB - dateA;
                     break;
                 }
                 case "title":
-                    comparison = a.title.localeCompare(b.title, "pl");
+                    comparison = (a.title || "").localeCompare(b.title || "", "pl");
                     break;
             }
-            return sortOrder === "desc" ? comparison : -comparison;
+            // Dla asc odwróć porównanie
+            return sortOrder === "asc" ? -comparison : comparison;
         });
+        console.log(`[DocumentScorer] After sort, first doc: ${filteredDocuments[0]?.title?.substring(0, 50)}...`);
         // Paginacja
         const paginatedDocuments = filteredDocuments.slice(offset, offset + limit);
         return {

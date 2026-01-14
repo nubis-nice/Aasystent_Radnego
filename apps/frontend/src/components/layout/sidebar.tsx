@@ -96,7 +96,7 @@ export function Sidebar() {
     <aside
       className={`${
         isCollapsed ? "w-20" : "w-64"
-      } bg-white dark:bg-secondary-900 border-r border-border dark:border-border-dark h-screen flex flex-col transition-all duration-300 ease-in-out`}
+      } bg-white dark:bg-secondary-900 border-r border-border dark:border-border-dark h-full flex flex-col transition-all duration-300 ease-in-out`}
     >
       {/* Logo/Brand Section */}
       {!isCollapsed && (

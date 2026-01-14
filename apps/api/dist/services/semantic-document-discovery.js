@@ -9,11 +9,11 @@
  * 4. Relevance scoring z LLM
  */
 import { createClient } from "@supabase/supabase-js";
-import OpenAI from "openai";
 import * as cheerio from "cheerio";
 import crypto from "crypto";
 import { DocumentProcessor } from "./document-processor.js";
 import { IntelligentScraper } from "./intelligent-scraper.js";
+import { getLLMClient, getEmbeddingsClient, getAIConfig } from "../ai/index.js";
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -22,46 +22,28 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
 // ============================================================================
 export class SemanticDocumentDiscovery {
     userId;
-    openai = null;
+    llmClient = null;
+    embeddingsClient = null;
+    embeddingModel = "nomic-embed-text";
+    llmModel = "gpt-4o-mini";
     errors = [];
     constructor(userId) {
         this.userId = userId;
     }
     async initializeOpenAI() {
-        if (this.openai)
+        if (this.llmClient)
             return;
-        const { data: apiConfig } = await supabase
-            .from("api_configurations")
-            .select("*")
-            .eq("user_id", this.userId)
-            .eq("is_default", true)
-            .eq("is_active", true)
-            .single();
-        if (apiConfig) {
-            // Obsługa obu formatów szyfrowania
-            let decodedApiKey;
-            if (apiConfig.encryption_iv &&
-                apiConfig.encryption_iv.trim().length > 0) {
-                // Nowy format AES - na razie fallback do base64
-                decodedApiKey = Buffer.from(apiConfig.api_key_encrypted, "base64").toString("utf-8");
-            }
-            else {
-                decodedApiKey = Buffer.from(apiConfig.api_key_encrypted, "base64").toString("utf-8");
-            }
-            // Obsługa encodeURIComponent z frontendu
-            try {
-                decodedApiKey = decodeURIComponent(decodedApiKey);
-            }
-            catch {
-                // Jeśli nie jest URI encoded, użyj bezpośrednio
-            }
-            this.openai = new OpenAI({
-                apiKey: decodedApiKey,
-                baseURL: apiConfig.base_url || undefined,
-            });
+        try {
+            this.llmClient = await getLLMClient(this.userId);
+            this.embeddingsClient = await getEmbeddingsClient(this.userId);
+            const llmConfig = await getAIConfig(this.userId, "llm");
+            const embConfig = await getAIConfig(this.userId, "embeddings");
+            this.embeddingModel = embConfig.modelName;
+            this.llmModel = llmConfig.modelName;
+            console.log(`[SemanticDiscovery] Initialized AI clients: provider=${llmConfig.provider}, llmModel=${this.llmModel}, embeddingModel=${this.embeddingModel}`);
         }
-        else if (process.env.OPENAI_API_KEY) {
-            this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        catch (error) {
+            console.warn("[SemanticDiscovery] Failed to initialize AI clients:", error);
         }
     }
     // ============================================================================
@@ -149,12 +131,12 @@ export class SemanticDocumentDiscovery {
     // PHASE 1: RAG SEMANTIC SEARCH
     // ============================================================================
     async searchRAGDocuments(query) {
-        if (!this.openai)
+        if (!this.embeddingsClient)
             return [];
         try {
             // Generuj embedding dla zapytania
-            const embeddingResponse = await this.openai.embeddings.create({
-                model: "text-embedding-3-small",
+            const embeddingResponse = await this.embeddingsClient.embeddings.create({
+                model: this.embeddingModel,
                 input: query.query,
             });
             const queryEmbedding = embeddingResponse.data[0].embedding;
@@ -271,7 +253,7 @@ export class SemanticDocumentDiscovery {
     // PHASE 4: LLM RELEVANCE SCORING
     // ============================================================================
     async scoreRelevance(documents, query) {
-        if (!this.openai || documents.length === 0) {
+        if (!this.llmClient || documents.length === 0) {
             return documents;
         }
         // Batch scoring dla efektywności
@@ -293,7 +275,7 @@ export class SemanticDocumentDiscovery {
         return scoredDocs.sort((a, b) => b.relevanceScore - a.relevanceScore);
     }
     async scoreBatch(documents, query) {
-        if (!this.openai)
+        if (!this.llmClient)
             return documents;
         const docsForScoring = documents.map((doc, idx) => ({
             idx,
@@ -301,8 +283,8 @@ export class SemanticDocumentDiscovery {
             excerpt: doc.excerpt.slice(0, 500),
         }));
         try {
-            const response = await this.openai.chat.completions.create({
-                model: "gpt-4o-mini",
+            const response = await this.llmClient.chat.completions.create({
+                model: this.llmModel,
                 messages: [
                     {
                         role: "system",

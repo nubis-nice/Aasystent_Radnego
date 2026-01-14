@@ -9,7 +9,7 @@ import type {
   ResearchProviderConfig,
   ResearchProviderResponse,
   ResearchProvider,
-} from "@shared/types/deep-research";
+} from "@aasystent-radnego/shared";
 
 export abstract class BaseResearchProvider {
   protected config: ResearchProviderConfig;

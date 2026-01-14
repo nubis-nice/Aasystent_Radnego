@@ -2,7 +2,7 @@
  * Unified Data Service - orkiestrator dla wszystkich źródeł danych
  * Agent AI "Winsdurf" - centralne zarządzanie pobieraniem danych z API i scrapingu
  */
-import type { DataFetchResult } from "@shared/types/data-sources-api";
+import type { DataFetchResult } from "@aasystent-radnego/shared";
 export declare class UnifiedDataService {
     private sourceId;
     private userId;

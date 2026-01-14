@@ -11,7 +11,7 @@ import type {
   DeepResearchReport,
   ResearchResult,
   SearchOptions,
-} from "@shared/types/deep-research";
+} from "@aasystent-radnego/shared";
 import { ExaProvider } from "./research-providers/exa-provider.js";
 import { TavilyProvider } from "./research-providers/tavily-provider.js";
 import { SerperProvider } from "./research-providers/serper-provider.js";

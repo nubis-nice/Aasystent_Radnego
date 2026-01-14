@@ -22,6 +22,9 @@ export interface NormalizedDocumentMetadata {
   documentType: DocumentType;
   documentSubtype?: string; // np. "uchwała budżetowa", "protokół zwyczajny"
 
+  // Poziom hierarchii (1-5, gdzie 1 = najważniejszy)
+  hierarchyLevel: 1 | 2 | 3 | 4 | 5;
+
   // Powiązanie z sesją (jeśli dotyczy)
   sessionInfo?: {
     sessionNumber: number; // ZAWSZE liczba arabska (23, nie XXIII)
@@ -66,15 +69,25 @@ export interface NormalizedDocumentMetadata {
 }
 
 export type DocumentType =
+  | "budget_act" // Uchwała budżetowa
   | "resolution" // Uchwała
+  | "session_order" // Porządek obrad
+  | "resolution_project" // Projekt uchwały
   | "protocol" // Protokół
+  | "interpellation" // Interpelacja
   | "transcription" // Transkrypcja
-  | "session_materials" // Materiały sesji (porządek obrad, projekty)
-  | "announcement" // Obwieszczenie
-  | "report" // Sprawozdanie
-  | "opinion" // Opinia
-  | "motion" // Wniosek
   | "video" // Nagranie wideo
+  | "committee_opinion" // Opinia komisji
+  | "justification" // Uzasadnienie
+  | "session_materials" // Materiały sesji
+  | "order" // Zarządzenie
+  | "announcement" // Obwieszczenie
+  | "attachment" // Załącznik
+  | "reference_material" // Materiał referencyjny
+  | "news" // Aktualności
+  | "report" // Sprawozdanie
+  | "opinion" // Opinia (ogólna)
+  | "motion" // Wniosek
   | "other";
 
 export type SessionType =
@@ -82,6 +95,33 @@ export type SessionType =
   | "extraordinary" // Nadzwyczajna
   | "budget" // Budżetowa
   | "constituent"; // Konstytucyjna
+
+// ============================================================================
+// MAPOWANIE TYPÓW DOKUMENTÓW NA POZIOMY HIERARCHII
+// ============================================================================
+
+const DOCUMENT_HIERARCHY_LEVELS: Record<DocumentType, number> = {
+  budget_act: 1,
+  resolution: 1,
+  session_order: 1,
+  resolution_project: 2,
+  protocol: 2,
+  interpellation: 2,
+  transcription: 2,
+  video: 3,
+  committee_opinion: 3,
+  justification: 3,
+  session_materials: 3,
+  order: 4,
+  announcement: 4,
+  attachment: 5,
+  reference_material: 5,
+  news: 5,
+  report: 5,
+  opinion: 5,
+  motion: 5,
+  other: 5,
+};
 
 // ============================================================================
 // DOCUMENT NORMALIZER CLASS
@@ -168,18 +208,32 @@ ZADANIE:
 Wyodrębnij następujące informacje w formacie JSON:
 
 1. **documentType** - typ dokumentu (wybierz JEDEN):
-   - "resolution" - uchwała
+   - "budget_act" - uchwała budżetowa, WPF, zmiany w budżecie (NAJWAŻNIEJSZE)
+   - "resolution" - uchwała (prawo miejscowe)
+   - "session_order" - porządek obrad
+   - "resolution_project" - projekt uchwały
    - "protocol" - protokół z sesji
+   - "interpellation" - interpelacja lub zapytanie radnego
    - "transcription" - transkrypcja nagrania
-   - "session_materials" - porządek obrad, projekty uchwał
-   - "announcement" - obwieszczenie
-   - "report" - sprawozdanie
-   - "opinion" - opinia
-   - "motion" - wniosek
    - "video" - nagranie wideo
+   - "committee_opinion" - opinia komisji
+   - "justification" - uzasadnienie do uchwały
+   - "session_materials" - inne materiały sesyjne
+   - "order" - zarządzenie Burmistrza/Wójta
+   - "announcement" - ogłoszenie, obwieszczenie
+   - "attachment" - załącznik (tabela, mapa)
+   - "reference_material" - materiał zewnętrzny, analiza
+   - "news" - aktualności, informacje
    - "other" - inny
 
-2. **sessionNumber** - numer sesji (ZAWSZE jako liczba arabska, np. 23, nie XXIII):
+2. **hierarchyLevel** - poziom ważności (1-5):
+   - 1: Budżet, Uchwały, Porządek obrad (Krytyczne)
+   - 2: Projekty uchwał, Protokoły, Interpelacje, Transkrypcje (Wysoka ważność)
+   - 3: Wideo, Opinie komisji, Uzasadnienia, Materiały sesyjne (Średni priorytet)
+   - 4: Zarządzenia, Ogłoszenia (Niska ważność)
+   - 5: Załączniki, Analizy zewn., Newsy, Inne (Tło)
+
+3. **sessionNumber** - numer sesji (ZAWSZE jako liczba arabska, np. 23, nie XXIII):
    - Wykryj z tytułu: "Sesja Nr XXIII" → 23, "XIV Sesja" → 14, "sesja 45" → 45
    - Jeśli brak informacji o sesji → null
 
@@ -217,6 +271,7 @@ ODPOWIEDŹ (TYLKO JSON, bez dodatkowego tekstu):`;
       // Mapuj wynik LLM na nasz schemat
       return {
         documentType: result.documentType || "other",
+        hierarchyLevel: result.hierarchyLevel || 5, // Domyślnie najniższy
         sessionInfo: result.sessionNumber
           ? {
               sessionNumber: result.sessionNumber,
@@ -277,8 +332,17 @@ ODPOWIEDŹ (TYLKO JSON, bez dodatkowego tekstu):`;
       }
     }
 
+    // Określ hierarchyLevel na podstawie typu dokumentu
+    const hierarchyLevel = (DOCUMENT_HIERARCHY_LEVELS[documentType] || 5) as
+      | 1
+      | 2
+      | 3
+      | 4
+      | 5;
+
     return {
       documentType,
+      hierarchyLevel,
       sessionInfo: sessionNumber ? { sessionNumber } : undefined,
       topics: [],
       keywords: [],
@@ -309,7 +373,19 @@ ODPOWIEDŹ (TYLKO JSON, bez dodatkowego tekstu):`;
           `[DocumentNormalizer] Invalid session number: ${num}, removing`
         );
         metadata.sessionInfo = undefined;
-        metadata.confidence.sessionNumber = 0;
+      }
+    }
+
+    // Walidacja hierarchyLevel
+    // Jeśli LLM zwrócił dziwny poziom dla danego typu, skoryguj go (chyba że to 'other')
+    const expectedLevel = DOCUMENT_HIERARCHY_LEVELS[metadata.documentType];
+    if (expectedLevel && metadata.hierarchyLevel !== expectedLevel) {
+      // Pozwalamy na małe odchylenia (+/- 1) w decyzji LLM, ale przy dużych różnicach korygujemy
+      if (Math.abs(metadata.hierarchyLevel - expectedLevel) > 1) {
+        console.warn(
+          `[DocumentNormalizer] Correcting hierarchyLevel for ${metadata.documentType}: ${metadata.hierarchyLevel} -> ${expectedLevel}`
+        );
+        metadata.hierarchyLevel = expectedLevel as 1 | 2 | 3 | 4 | 5;
       }
     }
 

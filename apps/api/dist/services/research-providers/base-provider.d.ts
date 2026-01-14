@@ -2,7 +2,7 @@
  * Base Research Provider
  * Agent AI "Winsdurf" - Deep Internet Researcher
  */
-import type { ResearchResult, SearchOptions, ResearchProviderConfig, ResearchProvider } from "@shared/types/deep-research";
+import type { ResearchResult, SearchOptions, ResearchProviderConfig, ResearchProvider } from "@aasystent-radnego/shared";
 export declare abstract class BaseResearchProvider {
     protected config: ResearchProviderConfig;
     protected lastRequestTime: number;

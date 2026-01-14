@@ -2,10 +2,10 @@
  * Legal Reasoning Engine - analiza prawna z wykrywaniem ryzyk
  * Agent AI "Winsdurf" - wsparcie analityczno-kontrolne dla Radnego
  */
-import type { LegalReasoningRequest, LegalReasoningResponse } from "@shared/types/data-sources-api";
+import type { LegalReasoningRequest, LegalReasoningResponse } from "@aasystent-radnego/shared";
 export declare class LegalReasoningEngine {
     private userId;
-    private openai;
+    private llmClient;
     private model;
     private searchAPI;
     constructor(userId: string);

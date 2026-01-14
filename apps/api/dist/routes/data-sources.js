@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
-import { intelligentScrapeDataSource } from "../services/intelligent-scraper.js";
 import { semanticDocumentSearch } from "../services/semantic-document-discovery.js";
+import { ScrapingQueueManager, calculateSourcePriority, } from "../services/scraping-queue.js";
 import OpenAI from "openai";
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 export async function dataSourcesRoutes(fastify) {
@@ -28,14 +28,22 @@ export async function dataSourcesRoutes(fastify) {
                     .from("scraped_content")
                     .select("*", { count: "exact", head: true })
                     .eq("source_id", source.id);
-                // Licz dokumenty przez source_url (zawiera URL źródła)
-                // Użyj LIKE pattern dla URL bazowego
-                const baseUrlPattern = `${source.url}%`;
-                const { count: docsCount } = await supabase
-                    .from("processed_documents")
-                    .select("*", { count: "exact", head: true })
-                    .eq("user_id", userId)
-                    .like("source_url", baseUrlPattern);
+                // Dla YouTube pokaż liczbę scraped_content, dla innych processed_documents
+                let docsCount = 0;
+                if (source.type === "youtube" ||
+                    source.url?.includes("youtube.com")) {
+                    docsCount = scrapedCount || 0;
+                }
+                else {
+                    // Licz dokumenty przez source_url (zawiera URL źródła)
+                    const baseUrlPattern = `${source.url}%`;
+                    const { count } = await supabase
+                        .from("processed_documents")
+                        .select("*", { count: "exact", head: true })
+                        .eq("user_id", userId)
+                        .like("source_url", baseUrlPattern);
+                    docsCount = count || 0;
+                }
                 const { data: lastLog } = await supabase
                     .from("scraping_logs")
                     .select("status, created_at")
@@ -243,6 +251,7 @@ export async function dataSourcesRoutes(fastify) {
                 return reply.status(401).send({ error: "Unauthorized" });
             }
             const { id } = request.params;
+            const { maxDocumentAgeDays } = request.body || {};
             // Sprawdź czy źródło należy do użytkownika
             const { data: source } = await supabase
                 .from("data_sources")
@@ -253,40 +262,85 @@ export async function dataSourcesRoutes(fastify) {
             if (!source) {
                 return reply.status(404).send({ error: "Source not found" });
             }
-            // Uruchom inteligentny scraping z analizą LLM
-            request.log.info({ sourceId: id }, "Starting intelligent scrape with LLM analysis");
-            const result = await intelligentScrapeDataSource(id, userId, {
-                councilLocation: source.metadata?.councilLocation || "Drawno",
-                enableLLMAnalysis: true,
-                incrementalMode: true,
+            // Oblicz datę graniczną dla dokumentów
+            let minDocumentDate;
+            if (maxDocumentAgeDays && maxDocumentAgeDays > 0) {
+                minDocumentDate = new Date();
+                minDocumentDate.setDate(minDocumentDate.getDate() - maxDocumentAgeDays);
+                request.log.info({ maxDocumentAgeDays, minDocumentDate }, "Filtering documents by age");
+            }
+            // Oblicz priorytet źródła
+            const priority = calculateSourcePriority({
+                type: source.type,
+                metadata: source.metadata,
+                last_scraped_at: source.last_scraped_at,
             });
-            request.log.info({
-                sourceId: id,
-                success: result.success,
-                pagesAnalyzed: result.pagesAnalyzed,
-                documentsProcessed: result.documentsProcessed,
-                newDocuments: result.newDocuments,
-                llmAnalyses: result.llmAnalyses,
-            }, "Intelligent scrape completed");
+            // Dodaj do kolejki scrapingu
+            const queueManager = ScrapingQueueManager.getInstance();
+            const jobId = await queueManager.enqueue(id, userId, {
+                priority,
+                config: {
+                    councilLocation: source.metadata?.councilLocation || "Drawno",
+                    enableLLMAnalysis: true,
+                    incrementalMode: true,
+                },
+            });
+            request.log.info({ sourceId: id, jobId, priority, maxDocumentAgeDays }, "Scraping job enqueued");
+            // Natychmiast zwróć odpowiedź - scraping w kolejce
             return reply.send({
-                message: result.success
-                    ? "Intelligent scrape completed"
-                    : "Intelligent scrape failed",
+                message: "Scraping job enqueued",
                 source_id: id,
-                status: result.success ? "success" : "error",
-                site_map_size: result.siteMap.length,
-                pages_analyzed: result.pagesAnalyzed,
-                documents_found: result.documentsFound,
-                documents_processed: result.documentsProcessed,
-                new_documents: result.newDocuments,
-                skipped_documents: result.skippedDocuments,
-                llm_analyses: result.llmAnalyses,
-                errors: result.errors,
-                processing_time_ms: result.processingTimeMs,
+                job_id: jobId,
+                priority,
+                status: "queued",
+                async: true,
             });
         }
         catch (error) {
             request.log.error("Trigger scraping error:", error);
+            return reply.status(500).send({ error: "Internal server error" });
+        }
+    });
+    // GET /api/data-sources/queue/stats - Statystyki kolejki scrapingu
+    fastify.get("/data-sources/queue/stats", async (request, reply) => {
+        try {
+            const userId = request.headers["x-user-id"];
+            if (!userId) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const queueManager = ScrapingQueueManager.getInstance();
+            const stats = queueManager.getStats();
+            return reply.send({
+                queue: stats,
+                config: queueManager.getParallelConfig(),
+            });
+        }
+        catch (error) {
+            request.log.error("Queue stats error:", error);
+            return reply.status(500).send({ error: "Internal server error" });
+        }
+    });
+    // GET /api/data-sources/queue/job/:jobId - Status zadania scrapingu
+    fastify.get("/data-sources/queue/job/:jobId", async (request, reply) => {
+        try {
+            const userId = request.headers["x-user-id"];
+            if (!userId) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const { jobId } = request.params;
+            const queueManager = ScrapingQueueManager.getInstance();
+            const job = queueManager.getJobStatus(jobId);
+            if (!job) {
+                return reply.status(404).send({ error: "Job not found" });
+            }
+            // Sprawdź czy zadanie należy do użytkownika
+            if (job.userId !== userId) {
+                return reply.status(403).send({ error: "Forbidden" });
+            }
+            return reply.send({ job });
+        }
+        catch (error) {
+            request.log.error("Job status error:", error);
             return reply.status(500).send({ error: "Internal server error" });
         }
     });

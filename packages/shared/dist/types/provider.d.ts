@@ -11,7 +11,7 @@
  * - other: Any OpenAI API compatible endpoint
  * - exa/perplexity/tavily: Semantic search providers
  */
-export type ProviderType = "openai" | "local" | "azure" | "anthropic" | "other" | "exa" | "perplexity" | "tavily";
+export type ProviderType = "openai" | "local" | "azure" | "anthropic" | "other" | "exa" | "perplexity" | "tavily" | "brave";
 export type AuthMethod = "bearer" | "api-key" | "oauth" | "custom";
 export type ConnectionStatus = "untested" | "working" | "failed" | "testing";
 export type TestType = "connection" | "chat" | "embeddings" | "models" | "full";

@@ -1,13 +1,8 @@
-import { Buffer } from "node:buffer";
 import { createRequire } from "node:module";
 import { Readable } from "node:stream";
-import OpenAI from "openai";
-import { createClient } from "@supabase/supabase-js";
+import { getSTTClient, getLLMClient, getAIConfig } from "../ai/index.js";
 const require = createRequire(import.meta.url);
 const { toFile } = require("openai");
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
 const AUDIO_MIME_TYPES = [
     "audio/mpeg",
     "audio/mp3",
@@ -28,38 +23,28 @@ const VIDEO_MIME_TYPES = [
     "video/quicktime",
 ];
 export class AudioTranscriber {
-    openai = null;
+    sttClient = null;
+    llmClient = null;
+    sttModel = "whisper-1";
+    llmModel = "gpt-4o";
     constructor() { }
+    /**
+     * Inicjalizacja z konfiguracją użytkownika przez AIClientFactory
+     */
     async initializeWithUserConfig(userId) {
-        const { data: config } = await supabase
-            .from("api_configurations")
-            .select("*")
-            .eq("user_id", userId)
-            .eq("is_default", true)
-            .eq("is_active", true)
-            .single();
-        if (!config) {
-            throw new Error("Brak skonfigurowanego klucza API. Przejdź do ustawień.");
-        }
-        const decodedApiKey = Buffer.from(config.api_key_encrypted, "base64").toString("utf-8");
-        // Użyj base_url z konfiguracji jeśli istnieje, w przeciwnym razie użyj domyślnego
-        const baseURL = config.base_url || this.getProviderBaseUrl(config.provider);
-        this.openai = new OpenAI({
-            apiKey: decodedApiKey,
-            baseURL: baseURL,
-        });
-    }
-    getProviderBaseUrl(provider) {
-        switch (provider) {
-            case "openai":
-                return undefined;
-            case "local":
-                return "http://localhost:11434/v1"; // Ollama default
-            case "openrouter":
-                return "https://openrouter.ai/api/v1";
-            default:
-                return undefined;
-        }
+        // Pobierz klienta STT (Speech-to-Text) z fabryki
+        this.sttClient = await getSTTClient(userId);
+        // Pobierz konfigurację STT aby znać model
+        const sttConfig = await getAIConfig(userId, "stt");
+        this.sttModel = sttConfig.modelName;
+        // Pobierz klienta LLM do analizy transkryptu
+        this.llmClient = await getLLMClient(userId);
+        // Pobierz konfigurację LLM aby znać model
+        const llmConfig = await getAIConfig(userId, "llm");
+        this.llmModel = llmConfig.modelName;
+        console.log(`[AudioTranscriber] Initialized for user ${userId.substring(0, 8)}...`);
+        console.log(`[AudioTranscriber] STT: provider=${sttConfig.provider}, model=${this.sttModel}`);
+        console.log(`[AudioTranscriber] LLM: model=${this.llmModel}`);
     }
     isAudioOrVideo(mimeType) {
         return (AUDIO_MIME_TYPES.includes(mimeType) || VIDEO_MIME_TYPES.includes(mimeType));
@@ -91,8 +76,8 @@ export class AudioTranscriber {
                 error: `Plik jest zbyt duży (${Math.round(fileSize / 1024 / 1024)}MB). Maksymalny rozmiar to 25MB.`,
             };
         }
-        if (!this.openai) {
-            throw new Error("OpenAI client not initialized");
+        if (!this.sttClient) {
+            throw new Error("STT client not initialized. Call initializeWithUserConfig first.");
         }
         try {
             console.log(`[AudioTranscriber] Transcribing: ${fileName} (${mimeType})`);
@@ -168,21 +153,21 @@ export class AudioTranscriber {
         }
     }
     async whisperTranscribe(fileBuffer, fileName) {
-        if (!this.openai)
-            throw new Error("OpenAI not initialized");
+        if (!this.sttClient)
+            throw new Error("STT client not initialized");
         // Convert buffer to File-like object for OpenAI
         const file = await toFile(Readable.from(fileBuffer), fileName);
-        const response = await this.openai.audio.transcriptions.create({
+        const response = await this.sttClient.audio.transcriptions.create({
             file,
-            model: "whisper-1",
+            model: this.sttModel,
             language: "pl",
             response_format: "text",
         });
         return response;
     }
     async analyzeTranscript(transcript) {
-        if (!this.openai)
-            throw new Error("OpenAI not initialized");
+        if (!this.llmClient)
+            throw new Error("LLM client not initialized");
         const systemPrompt = `Jesteś ekspertem analizy lingwistycznej i psychologicznej. Przeanalizuj transkrypcję i zwróć szczegółową analizę w formacie JSON.
 
 Dla KAŻDEJ wypowiedzi określ:
@@ -224,8 +209,8 @@ Odpowiedz TYLKO w formacie JSON:
     "duration": "5:32"
   }
 }`;
-        const response = await this.openai.chat.completions.create({
-            model: "gpt-4o",
+        const response = await this.llmClient.chat.completions.create({
+            model: this.llmModel,
             messages: [
                 { role: "system", content: systemPrompt },
                 {

@@ -2,10 +2,10 @@
  * Budget Analysis Engine - analiza budżetowa i wykrywanie anomalii
  * Agent AI "Winsdurf" - kontrola finansowa dla Radnego
  */
-import type { BudgetAnalysisRequest, BudgetAnalysisResult } from "@shared/types/data-sources-api";
+import type { BudgetAnalysisRequest, BudgetAnalysisResult } from "@aasystent-radnego/shared";
 export declare class BudgetAnalysisEngine {
     private userId;
-    private openai;
+    private llmClient;
     private model;
     constructor(userId: string);
     private initializeOpenAI;

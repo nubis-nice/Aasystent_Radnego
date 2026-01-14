@@ -59,10 +59,19 @@ interface Conversation {
 }
 
 async function getAuthToken(): Promise<string | null> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  return session?.access_token || null;
+  // Najpierw spróbuj odświeżyć sesję, żeby mieć aktualny token
+  const { data: refreshData, error: refreshError } =
+    await supabase.auth.refreshSession();
+
+  if (refreshError || !refreshData.session) {
+    // Jeśli odświeżenie nie zadziałało, spróbuj pobrać istniejącą sesję
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    return session?.access_token || null;
+  }
+
+  return refreshData.session.access_token;
 }
 
 export async function sendMessage(

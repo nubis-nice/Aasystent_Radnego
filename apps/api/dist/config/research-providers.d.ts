@@ -2,7 +2,7 @@
  * Research Providers Configuration
  * Agent AI "Winsdurf" - Deep Internet Researcher
  */
-import type { ResearchProviderConfig } from "@shared/types/deep-research";
+import type { ResearchProviderConfig } from "@aasystent-radnego/shared";
 export declare const RESEARCH_PROVIDERS: Record<string, ResearchProviderConfig>;
 export declare const LEGAL_DOMAINS: {
     courts: string[];

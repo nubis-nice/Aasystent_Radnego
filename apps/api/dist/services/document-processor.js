@@ -1,13 +1,13 @@
-import { Buffer } from "node:buffer";
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
 import sharp from "sharp";
 import Tesseract from "tesseract.js";
 import { Poppler } from "node-poppler";
+import { getVisionClient, getEmbeddingsClient, getSTTClient, getAIConfig, } from "../ai/index.js";
+// import { getAudioPreprocessor } from "./audio-preprocessor.js"; // Tymczasowo wyłączone
 const require = createRequire(import.meta.url);
 // Konfiguracja Poppler - ścieżka do binariów na Windows
 const popplerBinPath = process.platform === "win32"
@@ -74,46 +74,29 @@ const EXTENSION_TO_MIME = {
     ".webp": "image/webp",
 };
 export class DocumentProcessor {
-    openai = null;
+    visionClient = null;
+    embeddingsClient = null;
+    embeddingModel = "nomic-embed-text";
+    visionModel = "gpt-4o";
+    userId = null;
     constructor() { }
     /**
-     * Initialize OpenAI client with user's API key
+     * Initialize AI clients with user's configuration via AIClientFactory
      */
     async initializeWithUserConfig(userId) {
-        const { data: config } = await supabase
-            .from("api_configurations")
-            .select("*")
-            .eq("user_id", userId)
-            .eq("is_default", true)
-            .eq("is_active", true)
-            .single();
-        if (!config) {
-            throw new Error("Brak skonfigurowanego klucza API. Przejdź do ustawień.");
-        }
-        const decodedApiKey = Buffer.from(config.api_key_encrypted, "base64").toString("utf-8");
-        // Użyj base_url z konfiguracji jeśli istnieje, w przeciwnym razie użyj domyślnego
-        const baseURL = config.base_url || this.getProviderBaseUrl(config.provider);
-        console.log(`[DocumentProcessor] Initializing with provider: ${config.provider}, baseURL: ${baseURL}`);
-        this.openai = new OpenAI({
-            apiKey: decodedApiKey,
-            baseURL: baseURL,
-        });
-    }
-    getProviderBaseUrl(provider) {
-        switch (provider) {
-            case "openai":
-                return undefined;
-            case "local":
-                return "http://localhost:11434/v1"; // Ollama default
-            case "openrouter":
-                return "https://openrouter.ai/api/v1";
-            case "anthropic":
-                return "https://api.anthropic.com/v1";
-            case "groq":
-                return "https://api.groq.com/openai/v1";
-            default:
-                return undefined;
-        }
+        this.userId = userId;
+        // Pobierz klienta Vision z fabryki (do analizy obrazów)
+        this.visionClient = await getVisionClient(userId);
+        // Pobierz klienta Embeddings z fabryki
+        this.embeddingsClient = await getEmbeddingsClient(userId);
+        // Pobierz konfigurację embeddings aby znać model
+        const embConfig = await getAIConfig(userId, "embeddings");
+        this.embeddingModel = embConfig.modelName;
+        const visionConfig = await getAIConfig(userId, "vision");
+        this.visionModel = visionConfig.modelName;
+        console.log(`[DocumentProcessor] Initialized for user ${userId.substring(0, 8)}...`);
+        console.log(`[DocumentProcessor] Vision: provider=${visionConfig.provider}, model=${this.visionModel}`);
+        console.log(`[DocumentProcessor] Embeddings: model=${this.embeddingModel}`);
     }
     /**
      * Process uploaded file and extract text
@@ -159,6 +142,21 @@ export class DocumentProcessor {
                 case "text/plain":
                 case "text/markdown":
                     return this.processTextFile(fileBuffer, fileName, mimeType, fileSize);
+                // Audio formats
+                case "audio/mpeg":
+                case "audio/mp3":
+                case "audio/wav":
+                case "audio/x-wav":
+                case "audio/mp4":
+                case "audio/m4a":
+                case "audio/x-m4a":
+                case "audio/ogg":
+                case "audio/webm":
+                // Video formats
+                case "video/mp4":
+                case "video/webm":
+                case "video/ogg":
+                    return await this.processAudio(fileBuffer, fileName, mimeType, fileSize);
                 default:
                     return {
                         success: false,
@@ -194,18 +192,65 @@ export class DocumentProcessor {
      * Process image using GPT-4 Vision OCR
      */
     async processImage(fileBuffer, fileName, mimeType, fileSize) {
-        if (!this.openai) {
-            throw new Error("OpenAI client not initialized");
+        if (!this.visionClient) {
+            throw new Error("Vision client not initialized. Call initializeWithUserConfig first.");
         }
-        const base64Image = fileBuffer.toString("base64");
-        const dataUrl = `data:${mimeType};base64,${base64Image}`;
-        console.log(`[DocumentProcessor] Processing image with GPT-4 Vision: ${fileName}`);
-        const response = await this.openai.chat.completions.create({
-            model: "gpt-4o",
-            messages: [
-                {
-                    role: "system",
-                    content: `Jesteś ekspertem OCR. Twoim zadaniem jest dokładne odczytanie i transkrypcja CAŁEGO tekstu widocznego na obrazie.
+        console.log(`[DocumentProcessor] Processing image with Vision model ${this.visionModel}: ${fileName}`);
+        // Analiza statystyk obrazu
+        const stats = await this.analyzeImageStats(fileBuffer);
+        console.log(`[DocumentProcessor] Image analysis: brightness=${stats.brightness.toFixed(1)}, contrast=${stats.contrast.toFixed(2)}, sharpness=${stats.sharpness.toFixed(2)}, noise=${stats.noiseLevel.toFixed(2)}`);
+        // Sprawdź czy obraz jest pusty/biały
+        if (stats.brightness > 250 && stats.contrast < 0.05) {
+            console.log(`[DocumentProcessor] Image appears to be blank (brightness=${stats.brightness.toFixed(1)}, contrast=${stats.contrast.toFixed(2)})`);
+            return {
+                success: false,
+                text: "",
+                metadata: {
+                    fileName,
+                    fileType: "image",
+                    mimeType,
+                    fileSize,
+                    processingMethod: "ocr",
+                },
+                error: "Obraz wydaje się być pusty lub całkowicie biały",
+            };
+        }
+        // Normalizacja obrazu przed OCR
+        const normalizedImage = await this.normalizeImageForOCR(fileBuffer);
+        console.log(`[DocumentProcessor] Image normalized`);
+        // KROK 1: Najpierw spróbuj Tesseract (darmowe, lokalne)
+        const tesseractResult = await this.processImageWithTesseract(normalizedImage, 1 // page number
+        );
+        console.log(`[DocumentProcessor] Tesseract result: ${tesseractResult.text.length} chars, confidence: ${tesseractResult.confidence.toFixed(1)}%`);
+        // Jeśli Tesseract dał dobry wynik (confidence > 50% i tekst > 30 znaków) - użyj go
+        if (tesseractResult.confidence > 50 && tesseractResult.text.length > 30) {
+            console.log(`[DocumentProcessor] Using Tesseract result (good quality)`);
+            return {
+                success: true,
+                text: tesseractResult.text,
+                metadata: {
+                    fileName,
+                    fileType: "image",
+                    mimeType,
+                    fileSize,
+                    processingMethod: "ocr",
+                    confidence: tesseractResult.confidence / 100,
+                    language: "pl",
+                    ocrEngine: "tesseract",
+                },
+            };
+        }
+        // KROK 2: Tesseract słaby - użyj Vision API jako fallback
+        console.log(`[DocumentProcessor] Tesseract confidence too low (${tesseractResult.confidence.toFixed(1)}%), using Vision API fallback`);
+        const base64Image = normalizedImage.toString("base64");
+        const dataUrl = `data:image/png;base64,${base64Image}`;
+        try {
+            const response = await this.visionClient.chat.completions.create({
+                model: this.visionModel,
+                messages: [
+                    {
+                        role: "system",
+                        content: `Jesteś ekspertem OCR. Twoim zadaniem jest dokładne odczytanie i transkrypcja CAŁEGO tekstu widocznego na obrazie.
 
 Zasady:
 1. Odczytaj CAŁY tekst, zachowując oryginalną strukturę i formatowanie
@@ -214,40 +259,74 @@ Zasady:
 4. Jeśli tekst jest nieczytelny, oznacz to jako [nieczytelne]
 5. Nie dodawaj własnych komentarzy ani interpretacji
 6. Odpowiedz TYLKO tekstem odczytanym z obrazu`,
-                },
-                {
-                    role: "user",
-                    content: [
-                        {
-                            type: "image_url",
-                            image_url: {
-                                url: dataUrl,
-                                detail: "high",
+                    },
+                    {
+                        role: "user",
+                        content: [
+                            {
+                                type: "image_url",
+                                image_url: {
+                                    url: dataUrl,
+                                    detail: "high",
+                                },
                             },
-                        },
-                        {
-                            type: "text",
-                            text: "Odczytaj cały tekst z tego obrazu. Zachowaj formatowanie i strukturę dokumentu.",
-                        },
-                    ],
+                            {
+                                type: "text",
+                                text: "Odczytaj cały tekst z tego obrazu. Zachowaj formatowanie i strukturę dokumentu.",
+                            },
+                        ],
+                    },
+                ],
+                max_completion_tokens: 4096,
+            });
+            const extractedText = response.choices[0]?.message?.content || "";
+            return {
+                success: true,
+                text: extractedText,
+                metadata: {
+                    fileName,
+                    fileType: "image",
+                    mimeType,
+                    fileSize,
+                    processingMethod: "vision",
+                    confidence: 0.9,
+                    language: "pl",
+                    ocrEngine: "vision-api",
                 },
-            ],
-            max_completion_tokens: 4096,
-        });
-        const extractedText = response.choices[0]?.message?.content || "";
-        return {
-            success: true,
-            text: extractedText,
-            metadata: {
-                fileName,
-                fileType: "image",
-                mimeType,
-                fileSize,
-                processingMethod: "ocr",
-                confidence: 0.9,
-                language: "pl",
-            },
-        };
+            };
+        }
+        catch (visionError) {
+            console.error(`[DocumentProcessor] Vision API failed:`, visionError);
+            // Użyj wyniku Tesseract nawet jeśli słaby
+            if (tesseractResult.text.trim()) {
+                return {
+                    success: true,
+                    text: tesseractResult.text,
+                    metadata: {
+                        fileName,
+                        fileType: "image",
+                        mimeType,
+                        fileSize,
+                        processingMethod: "ocr",
+                        confidence: tesseractResult.confidence / 100,
+                        language: "pl",
+                        ocrEngine: "tesseract-fallback",
+                    },
+                };
+            }
+            return {
+                success: false,
+                text: "",
+                metadata: {
+                    fileName,
+                    fileType: "image",
+                    mimeType,
+                    fileSize,
+                    processingMethod: "ocr",
+                },
+                error: "Nie udało się odczytać tekstu z obrazu (Tesseract i Vision API zawiodły)",
+            };
+        }
     }
     /**
      * Process PDF - try text extraction first, fallback to OCR for scanned PDFs
@@ -634,29 +713,37 @@ Zasady:
         const maxPagesToProcess = Math.min(pngPages.length, 10);
         let totalConfidence = 0;
         let pagesProcessed = 0;
+        let blankPagesSkipped = 0;
         for (let i = 0; i < maxPagesToProcess; i++) {
             const page = pngPages[i];
             if (!page || !page.content)
                 continue;
             // Najpierw spróbuj Tesseract (darmowe, lokalne)
             const tesseractResult = await this.processImageWithTesseract(page.content, page.pageNumber);
-            // Jeśli Tesseract dał dobry wynik (confidence > 60% i tekst > 50 znaków)
-            if (tesseractResult.confidence > 60 && tesseractResult.text.length > 50) {
+            // Jeśli Tesseract dał dobry wynik (confidence > 50% i tekst > 30 znaków) - użyj go
+            if (tesseractResult.confidence > 50 && tesseractResult.text.length > 30) {
                 allTexts.push(`--- Strona ${page.pageNumber} ---\n${tesseractResult.text}`);
                 totalConfidence += tesseractResult.confidence;
                 pagesProcessed++;
                 continue;
             }
-            // Fallback do GPT-4 Vision dla słabych wyników Tesseract
-            if (this.openai) {
-                console.log(`[DocumentProcessor] Tesseract confidence too low (${tesseractResult.confidence.toFixed(1)}%), using GPT-4 Vision for page ${page.pageNumber}`);
+            // Sprawdź czy strona jest pusta (brightness ~255 i contrast ~0)
+            const stats = await this.analyzeImageStats(page.content);
+            if (stats.brightness > 250 && stats.contrast < 0.05) {
+                console.log(`[DocumentProcessor] Page ${page.pageNumber} appears to be blank (brightness=${stats.brightness.toFixed(1)}, contrast=${stats.contrast.toFixed(2)}), skipping`);
+                blankPagesSkipped++;
+                continue; // Pomiń pustą stronę
+            }
+            // Fallback do Vision API dla słabych wyników Tesseract (tylko jeśli jest klient)
+            if (this.visionClient && this.visionModel) {
+                console.log(`[DocumentProcessor] Tesseract confidence too low (${tesseractResult.confidence.toFixed(1)}%), using Vision API (${this.visionModel}) for page ${page.pageNumber}`);
                 try {
                     // Normalizuj obraz przed wysłaniem do Vision API
                     const normalizedImage = await this.normalizeImageForOCR(page.content);
                     const base64Image = normalizedImage.toString("base64");
                     const dataUrl = `data:image/png;base64,${base64Image}`;
-                    const response = await this.openai.chat.completions.create({
-                        model: "gpt-4o",
+                    const response = await this.visionClient.chat.completions.create({
+                        model: this.visionModel,
                         messages: [
                             {
                                 role: "system",
@@ -691,12 +778,12 @@ Zasady:
                     const pageText = response.choices[0]?.message?.content || "";
                     if (pageText.trim()) {
                         allTexts.push(`--- Strona ${page.pageNumber} ---\n${pageText}`);
-                        totalConfidence += 90; // GPT-4 Vision ma wysoką jakość
+                        totalConfidence += 90; // Vision API ma wysoką jakość
                         pagesProcessed++;
                     }
                 }
                 catch (visionError) {
-                    console.error(`[DocumentProcessor] GPT-4 Vision failed for page ${page.pageNumber}:`, visionError);
+                    console.error(`[DocumentProcessor] Vision API (${this.visionModel}) failed for page ${page.pageNumber}:`, visionError);
                     // Użyj wyniku Tesseract nawet jeśli słaby
                     if (tesseractResult.text.trim()) {
                         allTexts.push(`--- Strona ${page.pageNumber} ---\n${tesseractResult.text}`);
@@ -706,11 +793,15 @@ Zasady:
                 }
             }
             else {
-                // Brak OpenAI - użyj Tesseract nawet jeśli słaby
+                // Brak Vision API - użyj Tesseract nawet jeśli słaby wynik
+                console.log(`[DocumentProcessor] No Vision API available, using Tesseract result for page ${page.pageNumber} (confidence: ${tesseractResult.confidence.toFixed(1)}%)`);
                 if (tesseractResult.text.trim()) {
                     allTexts.push(`--- Strona ${page.pageNumber} ---\n${tesseractResult.text}`);
-                    totalConfidence += tesseractResult.confidence;
+                    totalConfidence += Math.max(tesseractResult.confidence, 30); // Minimum 30% dla słabych wyników
                     pagesProcessed++;
+                }
+                else {
+                    console.warn(`[DocumentProcessor] Page ${page.pageNumber} has no readable text (Tesseract returned empty)`);
                 }
             }
         }
@@ -743,6 +834,7 @@ Zasady:
                 processingMethod: "ocr",
                 confidence: avgConfidence / 100, // Normalizuj do 0-1
                 language: "pl",
+                blankPagesSkipped,
             },
         };
     }
@@ -799,12 +891,12 @@ Zasady:
      */
     async saveToRAG(userId, text, title, sourceFileName, documentType = "uploaded") {
         try {
-            if (!this.openai) {
-                throw new Error("OpenAI client not initialized");
+            if (!this.embeddingsClient) {
+                throw new Error("Embeddings client not initialized. Call initializeWithUserConfig first.");
             }
             // Generate embedding
-            const embeddingResponse = await this.openai.embeddings.create({
-                model: "text-embedding-3-small",
+            const embeddingResponse = await this.embeddingsClient.embeddings.create({
+                model: this.embeddingModel,
                 input: text.slice(0, 8000), // Limit for embedding
             });
             const embeddingData = embeddingResponse.data[0];
@@ -840,6 +932,119 @@ Zasady:
             return {
                 success: false,
                 error: error instanceof Error ? error.message : "Błąd zapisu do bazy",
+            };
+        }
+    }
+    /**
+     * Process audio/video file with STT transcription
+     */
+    async processAudio(fileBuffer, fileName, mimeType, fileSize) {
+        if (!this.userId) {
+            return {
+                success: false,
+                text: "",
+                metadata: {
+                    fileName,
+                    fileType: "audio",
+                    mimeType,
+                    fileSize,
+                    processingMethod: "stt",
+                },
+                error: "User not initialized. Call initializeWithUserConfig first.",
+            };
+        }
+        try {
+            console.log(`[DocumentProcessor] Processing audio file: ${fileName}`);
+            // Get STT client
+            const sttClient = await getSTTClient(this.userId);
+            const sttConfig = await getAIConfig(this.userId, "stt");
+            console.log(`[DocumentProcessor] STT: provider=${sttConfig.provider}, model=${sttConfig.modelName}`);
+            // Zapisz plik do temp
+            const tempDir = path.join(os.tmpdir(), "aasystent-documents");
+            if (!fs.existsSync(tempDir)) {
+                fs.mkdirSync(tempDir, { recursive: true });
+            }
+            const tempPath = path.join(tempDir, `${Date.now()}-${fileName}`);
+            fs.writeFileSync(tempPath, fileBuffer);
+            // Adaptacyjny preprocessing audio
+            let processedPath = tempPath;
+            try {
+                const { getAudioPreprocessor } = await import("./audio-preprocessor.js");
+                const preprocessor = getAudioPreprocessor();
+                console.log(`[DocumentProcessor] Starting adaptive audio preprocessing...`);
+                const result = await preprocessor.preprocessAdaptive(tempPath, "wav");
+                processedPath = result.outputPath;
+                console.log(`[DocumentProcessor] Preprocessing complete. Issues: ${result.analysis.issues.map((i) => i.type).join(", ") || "none"}`);
+            }
+            catch (preprocessError) {
+                console.warn(`[DocumentProcessor] Preprocessing failed, using original audio:`, preprocessError);
+                processedPath = tempPath;
+            }
+            try {
+                // Create read stream for transcription
+                const audioStream = fs.createReadStream(processedPath);
+                const transcription = await sttClient.audio.transcriptions.create({
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    file: audioStream,
+                    model: sttConfig.modelName,
+                    language: "pl",
+                    response_format: "text",
+                });
+                const text = transcription;
+                // Cleanup temp files
+                if (fs.existsSync(processedPath))
+                    fs.unlinkSync(processedPath);
+                if (processedPath !== tempPath && fs.existsSync(tempPath))
+                    fs.unlinkSync(tempPath);
+                if (!text || text.trim().length === 0) {
+                    return {
+                        success: false,
+                        text: "",
+                        metadata: {
+                            fileName,
+                            fileType: "audio",
+                            mimeType,
+                            fileSize,
+                            processingMethod: "stt",
+                        },
+                        error: "Nie udało się rozpoznać mowy w nagraniu",
+                    };
+                }
+                return {
+                    success: true,
+                    text: text.trim(),
+                    metadata: {
+                        fileName,
+                        fileType: "audio",
+                        mimeType,
+                        fileSize,
+                        processingMethod: "stt",
+                        sttModel: sttConfig.modelName,
+                    },
+                };
+            }
+            catch (error) {
+                // Cleanup temp files on error
+                if (fs.existsSync(processedPath))
+                    fs.unlinkSync(processedPath);
+                if (processedPath !== tempPath && fs.existsSync(tempPath))
+                    fs.unlinkSync(tempPath);
+                throw error;
+            }
+        }
+        catch (error) {
+            console.error("[DocumentProcessor] Audio processing error:", error);
+            return {
+                success: false,
+                text: "",
+                metadata: {
+                    fileName,
+                    fileType: "audio",
+                    mimeType,
+                    fileSize,
+                    processingMethod: "stt",
+                },
+                error: error instanceof Error ? error.message : "Błąd transkrypcji audio",
             };
         }
     }

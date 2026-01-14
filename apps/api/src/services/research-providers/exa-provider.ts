@@ -11,7 +11,7 @@ import type {
   ExaSearchRequest,
   ExaSearchResponse,
   ExaSearchResult,
-} from "@shared/types/deep-research";
+} from "@aasystent-radnego/shared";
 
 export class ExaProvider extends BaseResearchProvider {
   async search(

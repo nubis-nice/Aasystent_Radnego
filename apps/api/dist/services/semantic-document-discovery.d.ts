@@ -57,7 +57,10 @@ export interface SemanticSearchResult {
 }
 export declare class SemanticDocumentDiscovery {
     private userId;
-    private openai;
+    private llmClient;
+    private embeddingsClient;
+    private embeddingModel;
+    private llmModel;
     private errors;
     constructor(userId: string);
     private initializeOpenAI;

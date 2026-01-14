@@ -2,7 +2,7 @@
  * Bazowa klasa dla wszystkich fetchers (API + scraping)
  * Agent AI "Winsdurf" - uniwersalny system pobierania danych
  */
-import type { DataSourceConfig, FetchedDocument, DataFetchResult } from "@shared/types/data-sources-api";
+import type { DataSourceConfig, FetchedDocument, DataFetchResult } from "@aasystent-radnego/shared";
 export declare abstract class BaseDataFetcher {
     protected config: DataSourceConfig;
     protected errors: string[];

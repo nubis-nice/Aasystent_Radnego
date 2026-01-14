@@ -473,6 +473,101 @@ export const apiModelsRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PROXY ENDPOINTS DLA FASTER-WHISPER (omijają CORS)
+  // ─────────────────────────────────────────────────────────────────────────
+  /* eslint-disable no-undef */
+
+  // GET /api/stt/status - Sprawdź status serwera STT
+  fastify.get<{
+    Querystring: { baseUrl?: string };
+  }>("/stt/status", async (request, reply) => {
+    const baseUrl = request.query.baseUrl || "http://localhost:8000/v1";
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+      const response = await fetch(`${baseUrl}/models`, {
+        method: "GET",
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = (await response.json()) as { data?: { id: string }[] };
+        return reply.send({
+          status: "online",
+          models: data.data?.map((m) => m.id) || [],
+        });
+      } else {
+        return reply.send({
+          status: "offline",
+          error: `HTTP ${response.status}`,
+        });
+      }
+    } catch (err) {
+      return reply.send({
+        status: "offline",
+        error: err instanceof Error ? err.message : "Connection failed",
+      });
+    }
+  });
+
+  // POST /api/stt/transcribe-test - Test transkrypcji audio
+  fastify.post<{
+    Querystring: { baseUrl?: string; model?: string };
+  }>("/stt/transcribe-test", async (request, reply) => {
+    const baseUrl = request.query.baseUrl || "http://localhost:8000/v1";
+    const model = request.query.model || "Systran/faster-whisper-medium";
+
+    try {
+      const data = await request.file();
+
+      if (!data) {
+        return reply.status(400).send({
+          success: false,
+          error: "Brak pliku audio",
+        });
+      }
+
+      const formData = new FormData();
+      const buffer = await data.toBuffer();
+      formData.append(
+        "file",
+        new Blob([buffer]),
+        data.filename || "audio.webm"
+      );
+      formData.append("model", model);
+      formData.append("language", "pl");
+
+      const response = await fetch(`${baseUrl}/audio/transcriptions`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (response.ok) {
+        const result = (await response.json()) as { text?: string };
+        return reply.send({
+          success: true,
+          text: result.text || "",
+        });
+      } else {
+        const error = await response.text();
+        return reply.status(response.status).send({
+          success: false,
+          error: error,
+        });
+      }
+    } catch (err) {
+      return reply.status(500).send({
+        success: false,
+        error: err instanceof Error ? err.message : "Transcription failed",
+      });
+    }
+  });
 };
 
 /**

@@ -11,7 +11,7 @@ import type {
   BraveSearchRequest,
   BraveSearchResponse,
   BraveSearchResult,
-} from "@shared/types/deep-research";
+} from "@aasystent-radnego/shared";
 
 export class BraveProvider extends BaseResearchProvider {
   async search(

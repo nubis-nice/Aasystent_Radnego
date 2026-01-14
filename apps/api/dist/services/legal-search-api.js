@@ -3,35 +3,22 @@
  * Agent AI "Winsdurf" - wyszukiwanie w dokumentach prawnych
  */
 import { createClient } from "@supabase/supabase-js";
-import OpenAI from "openai";
+import { getEmbeddingsClient, getAIConfig } from "../ai/index.js";
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 export class LegalSearchAPI {
     userId;
-    openai = null;
-    embeddingModel = "text-embedding-3-small";
+    embeddingsClient = null;
+    embeddingModel = "nomic-embed-text";
     constructor(userId) {
         this.userId = userId;
     }
     async initializeOpenAI() {
-        if (this.openai)
+        if (this.embeddingsClient)
             return;
-        const { data: apiConfig } = await supabase
-            .from("api_configurations")
-            .select("*")
-            .eq("user_id", this.userId)
-            .eq("provider", "openai")
-            .eq("is_active", true)
-            .eq("is_default", true)
-            .single();
-        if (!apiConfig) {
-            throw new Error("OpenAI API configuration not found");
-        }
-        const openaiApiKey = Buffer.from(apiConfig.api_key_encrypted, "base64").toString("utf-8");
-        this.openai = new OpenAI({
-            apiKey: openaiApiKey,
-            baseURL: apiConfig.base_url || undefined,
-        });
-        this.embeddingModel = apiConfig.embedding_model || "text-embedding-3-small";
+        this.embeddingsClient = await getEmbeddingsClient(this.userId);
+        const embConfig = await getAIConfig(this.userId, "embeddings");
+        this.embeddingModel = embConfig.modelName;
+        console.log(`[LegalSearchAPI] Initialized: model=${this.embeddingModel}`);
     }
     async search(query) {
         console.log("[LegalSearchAPI] Starting search:", query);
@@ -66,10 +53,10 @@ export class LegalSearchAPI {
     async semanticSearch(query) {
         console.log("[LegalSearchAPI] Semantic search");
         await this.initializeOpenAI();
-        if (!this.openai) {
+        if (!this.embeddingsClient) {
             throw new Error("OpenAI not initialized");
         }
-        const embeddingResponse = await this.openai.embeddings.create({
+        const embeddingResponse = await this.embeddingsClient.embeddings.create({
             model: this.embeddingModel,
             input: query.query,
         });

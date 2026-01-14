@@ -220,7 +220,7 @@ export declare const ConversationWithMessagesSchema: z.ZodObject<{
 export type ConversationWithMessages = z.infer<typeof ConversationWithMessagesSchema>;
 export declare const ChatRequestSchema: z.ZodObject<{
     message: z.ZodString;
-    conversationId: z.ZodOptional<z.ZodString>;
+    conversationId: z.ZodNullable<z.ZodOptional<z.ZodString>>;
     includeDocuments: z.ZodDefault<z.ZodBoolean>;
     includeMunicipalData: z.ZodDefault<z.ZodBoolean>;
     temperature: z.ZodDefault<z.ZodNumber>;
@@ -230,11 +230,11 @@ export declare const ChatRequestSchema: z.ZodObject<{
     includeDocuments: boolean;
     includeMunicipalData: boolean;
     temperature: number;
-    conversationId?: string | undefined;
+    conversationId?: string | null | undefined;
     systemPrompt?: string | undefined;
 }, {
     message: string;
-    conversationId?: string | undefined;
+    conversationId?: string | null | undefined;
     includeDocuments?: boolean | undefined;
     includeMunicipalData?: boolean | undefined;
     temperature?: number | undefined;

@@ -12,7 +12,7 @@ import { LegalSearchAPI } from "./legal-search-api.js";
 import type {
   LegalReasoningRequest,
   LegalReasoningResponse,
-} from "@shared/types/data-sources-api";
+} from "@aasystent-radnego/shared";
 import { getLLMClient, getAIConfig } from "../ai/index.js";
 
 const supabase = createClient(

@@ -6,7 +6,8 @@ export type GroupingScheme =
   | "cascade" // Grupowanie kaskadowe: Sesje > Komisje > Dokumenty
   | "by_type" // Grupowanie według typu dokumentu
   | "by_date" // Grupowanie według daty (miesiąc/rok)
-  | "by_reference"; // Grupowanie według powiązań (referencje w treści)
+  | "by_reference" // Grupowanie według powiązań (referencje w treści)
+  | "by_hierarchy"; // Grupowanie według hierarchii ważności (5 poziomów)
 
 export interface DocumentGroup {
   id: string;
@@ -29,22 +30,56 @@ export interface GroupingResult {
   totalDocuments: number;
 }
 
-// Wykryj typ sesji/komisji z tytułu dokumentu
-function detectSessionType(title: string): "session" | "committee" | "other" {
-  const lowerTitle = title.toLowerCase();
+// Interfejs pomocniczy dla metadanych
+interface DocMetadata {
+  sessionInfo?: {
+    sessionNumber: number;
+    sessionType?: string;
+  };
+  documentType?: string;
+  hierarchyLevel?: number;
+  people?: {
+    mentioned?: string[];
+  };
+}
 
-  if (lowerTitle.includes("sesja") || lowerTitle.includes("sesji")) {
+// Wykryj typ sesji/komisji z metadanych lub tytułu
+function detectSessionType(doc: Document): "session" | "committee" | "other" {
+  const meta = doc.metadata as unknown as DocMetadata;
+  const title = doc.title.toLowerCase();
+
+  // 1. Sprawdź metadane
+  if (meta?.sessionInfo?.sessionNumber) {
     return "session";
   }
-  if (lowerTitle.includes("komisj") || lowerTitle.includes("komitet")) {
+  if (
+    meta?.documentType === "committee_opinion" ||
+    meta?.documentType === "commission_protocol"
+  ) {
+    return "committee";
+  }
+
+  // 2. Fallback do tytułu
+  if (title.includes("sesja") || title.includes("sesji")) {
+    return "session";
+  }
+  if (title.includes("komisj") || title.includes("komitet")) {
     return "committee";
   }
   return "other";
 }
 
-// Wyodrębnij numer sesji z tytułu
-function extractSessionNumber(title: string): string | null {
-  // Wzorce: "LXXX Sesja", "Sesja nr 80", "80. sesja"
+// Wyodrębnij numer sesji z metadanych lub tytułu
+function extractSessionNumber(doc: Document): string | null {
+  const meta = doc.metadata as unknown as DocMetadata;
+
+  // 1. Sprawdź metadane
+  if (meta?.sessionInfo?.sessionNumber) {
+    return meta.sessionInfo.sessionNumber.toString();
+  }
+
+  // 2. Fallback do tytułu
+  const title = doc.title;
   const patterns = [
     /([IVXLCDM]+)\s*sesj/i,
     /sesj[aei]\s*n?r?\.?\s*(\d+)/i,
@@ -74,28 +109,27 @@ function extractCommitteeName(title: string): string | null {
 
 // Grupowanie kaskadowe: Sesje Rady > Komisje > Inne dokumenty
 export function groupCascade(documents: Document[]): GroupingResult {
-  const sessions: DocumentGroup[] = [];
+  const sessions: Map<string, Document[]> = new Map(); // Mapa sesji po numerze
   const committees: Map<string, Document[]> = new Map();
   const otherDocs: Document[] = [];
 
   // Kategoryzuj dokumenty
   for (const doc of documents) {
-    const sessionType = detectSessionType(doc.title);
+    const sessionType = detectSessionType(doc);
 
     if (sessionType === "session") {
-      const sessionNum = extractSessionNumber(doc.title) || "Sesja";
-      sessions.push({
-        id: `session-${doc.id}`,
-        title: doc.title,
-        icon: "🏛️",
-        documents: [doc],
-        metadata: {
-          count: 1,
-          dateRange: doc.publish_date
-            ? { from: doc.publish_date, to: doc.publish_date }
-            : undefined,
-        },
-      });
+      const sessionNum = extractSessionNumber(doc);
+      // Dokumenty bez numeru sesji trafiają do "Inne dokumenty"
+      if (!sessionNum) {
+        otherDocs.push(doc);
+        continue;
+      }
+      const sessionKey = sessionNum;
+
+      if (!sessions.has(sessionKey)) {
+        sessions.set(sessionKey, []);
+      }
+      sessions.get(sessionKey)!.push(doc);
     } else if (sessionType === "committee") {
       const committeeName = extractCommitteeName(doc.title) || "Komisja";
       if (!committees.has(committeeName)) {
@@ -107,11 +141,42 @@ export function groupCascade(documents: Document[]): GroupingResult {
     }
   }
 
-  // Sortuj sesje według daty (najnowsze pierwsze)
-  sessions.sort((a, b) => {
-    const dateA = a.documents[0]?.publish_date || "";
-    const dateB = b.documents[0]?.publish_date || "";
-    return dateB.localeCompare(dateA);
+  // Twórz grupy sesji
+  const sessionGroups: DocumentGroup[] = [];
+  for (const [num, docs] of sessions) {
+    // Znajdź datę sesji (najczęstszą lub najnowszą z dokumentów)
+    docs.sort((a, b) =>
+      (b.publish_date || "").localeCompare(a.publish_date || "")
+    );
+    const latestDate = docs[0]?.publish_date;
+
+    // Próba konwersji rzymskich na arabskie dla sortowania
+    let sortNum = parseInt(num);
+    if (isNaN(sortNum)) sortNum = 0; // Dla rzymskich lub błędów
+
+    sessionGroups.push({
+      id: `session-${num}`,
+      title: `Sesja ${num}`,
+      icon: "🏛️",
+      documents: docs,
+      metadata: {
+        count: docs.length,
+        dateRange: latestDate
+          ? { from: latestDate, to: latestDate }
+          : undefined,
+      },
+    });
+  }
+
+  // Sortuj sesje: najpierw te z wyższym numerem (zakładając arabskie)
+  // Jeśli numery są rzymskie, sortowanie alfabetyczne może być mylące, ale to fallback
+  sessionGroups.sort((a, b) => {
+    const numA = parseInt(a.title.replace("Sesja ", ""));
+    const numB = parseInt(b.title.replace("Sesja ", ""));
+    if (!isNaN(numA) && !isNaN(numB)) {
+      return numB - numA; // Malejąco
+    }
+    return b.title.localeCompare(a.title);
   });
 
   // Twórz grupy komisji
@@ -134,15 +199,20 @@ export function groupCascade(documents: Document[]): GroupingResult {
   // Główna struktura
   const groups: DocumentGroup[] = [];
 
-  if (sessions.length > 0) {
+  if (sessionGroups.length > 0) {
     groups.push({
       id: "sessions-group",
       title: "Sesje Rady",
       icon: "🏛️",
       documents: [],
-      subgroups: sessions,
+      subgroups: sessionGroups,
       isExpanded: true,
-      metadata: { count: sessions.length },
+      metadata: {
+        count: sessionGroups.reduce(
+          (acc, g) => acc + (g.metadata?.count || 0),
+          0
+        ),
+      },
     });
   }
 
@@ -184,12 +254,31 @@ export function groupByType(documents: Document[]): GroupingResult {
   const typeMap: Map<string, Document[]> = new Map();
 
   const typeLabels: Record<string, { label: string; icon: string }> = {
+    // Poziom 1 - Krytyczne
+    budget_act: { label: "Uchwały budżetowe", icon: "💰" },
     resolution: { label: "Uchwały", icon: "📜" },
+    session_order: { label: "Porządki obrad", icon: "📋" },
+    // Poziom 2 - Wysokie
+    resolution_project: { label: "Projekty uchwał", icon: "📝" },
     protocol: { label: "Protokoły", icon: "📋" },
-    news: { label: "Aktualności", icon: "📰" },
+    interpellation: { label: "Interpelacje", icon: "❓" },
+    transcription: { label: "Transkrypcje", icon: "🎙️" },
+    // Poziom 3 - Średnie
+    video: { label: "Nagrania wideo", icon: "🎬" },
+    committee_opinion: { label: "Opinie komisji", icon: "👥" },
+    justification: { label: "Uzasadnienia", icon: "📑" },
+    session_materials: { label: "Materiały sesyjne", icon: "📁" },
+    // Poziom 4 - Niskie
+    order: { label: "Zarządzenia", icon: "📋" },
     announcement: { label: "Ogłoszenia", icon: "📢" },
-    article: { label: "Artykuły", icon: "📝" },
+    // Poziom 5 - Tło
+    attachment: { label: "Załączniki", icon: "📎" },
+    reference_material: { label: "Materiały referencyjne", icon: "📚" },
+    news: { label: "Aktualności", icon: "📰" },
     report: { label: "Raporty", icon: "📊" },
+    opinion: { label: "Opinie", icon: "💭" },
+    motion: { label: "Wnioski", icon: "✍️" },
+    article: { label: "Artykuły", icon: "📝" },
     other: { label: "Inne", icon: "📄" },
   };
 
@@ -371,7 +460,6 @@ export function groupByReference(documents: Document[]): GroupingResult {
 
   const groups: DocumentGroup[] = [];
 
-  let clusterIndex = 1;
   for (const [clusterId, docs] of clusters) {
     docs.sort((a, b) =>
       (b.publish_date || "").localeCompare(a.publish_date || "")
@@ -385,7 +473,6 @@ export function groupByReference(documents: Document[]): GroupingResult {
       isExpanded: true,
       metadata: { count: docs.length },
     });
-    clusterIndex++;
   }
 
   // Sortuj klastry według liczby dokumentów
@@ -399,6 +486,82 @@ export function groupByReference(documents: Document[]): GroupingResult {
   };
 }
 
+// Mapowanie typów dokumentów na poziomy hierarchii
+const HIERARCHY_LEVELS: Record<string, number> = {
+  budget_act: 1,
+  resolution: 1,
+  session_order: 1,
+  resolution_project: 2,
+  protocol: 2,
+  interpellation: 2,
+  transcription: 2,
+  video: 3,
+  committee_opinion: 3,
+  justification: 3,
+  session_materials: 3,
+  order: 4,
+  announcement: 4,
+  attachment: 5,
+  reference_material: 5,
+  news: 5,
+  report: 5,
+  opinion: 5,
+  motion: 5,
+  other: 5,
+};
+
+// Grupowanie według hierarchii ważności (5 poziomów)
+export function groupByHierarchy(documents: Document[]): GroupingResult {
+  const levelMap: Map<number, Document[]> = new Map();
+
+  const levelLabels: Record<number, { label: string; icon: string }> = {
+    1: { label: "🔴 Krytyczne (Budżet, Uchwały, Porządek)", icon: "🔴" },
+    2: { label: "🟠 Wysokie (Projekty, Protokoły, Interpelacje)", icon: "🟠" },
+    3: { label: "🟡 Średnie (Wideo, Opinie, Materiały)", icon: "🟡" },
+    4: { label: "🔵 Niskie (Zarządzenia, Ogłoszenia)", icon: "🔵" },
+    5: { label: "⚪ Tło (Załączniki, Inne)", icon: "⚪" },
+  };
+
+  for (const doc of documents) {
+    const docType = doc.document_type || "other";
+    const level = HIERARCHY_LEVELS[docType] || 5;
+    if (!levelMap.has(level)) {
+      levelMap.set(level, []);
+    }
+    levelMap.get(level)!.push(doc);
+  }
+
+  const groups: DocumentGroup[] = [];
+  // Sortuj poziomy rosnąco (1 = najważniejsze na górze)
+  const sortedLevels = Array.from(levelMap.keys()).sort((a, b) => a - b);
+
+  for (const level of sortedLevels) {
+    const docs = levelMap.get(level)!;
+    const info = levelLabels[level] || { label: `Poziom ${level}`, icon: "📄" };
+
+    // Sortuj dokumenty w grupie według daty
+    docs.sort((a, b) =>
+      (b.publish_date || "").localeCompare(a.publish_date || "")
+    );
+
+    groups.push({
+      id: `hierarchy-${level}`,
+      title: info.label,
+      icon: info.icon,
+      documents: docs,
+      isExpanded: level <= 2, // Rozwiń tylko krytyczne i wysokie
+      metadata: { count: docs.length },
+    });
+  }
+
+  return {
+    scheme: "by_hierarchy",
+    groups,
+    ungrouped: [],
+    totalDocuments: documents.length,
+  };
+}
+
 // Główna funkcja grupowania
 export function groupDocuments(
   documents: Document[],
@@ -406,17 +569,57 @@ export function groupDocuments(
   sortBy: string = "date",
   sortOrder: "asc" | "desc" = "desc"
 ): GroupingResult {
+  // Funkcja wyciągająca numer z tytułu (np. "Sesja 23", "Uchwała nr 45/2024")
+  const extractNumber = (title: string): number => {
+    // Szukaj numerów: rzymskich lub arabskich
+    const patterns = [
+      /(?:nr|numer|sesja|uchwała)[\s.:]*(\d+)/i,
+      /(\d+)(?:\/\d+)?/,
+      /([IVXLCDM]+)\s*(?:sesj|uchwal)/i,
+    ];
+    for (const pattern of patterns) {
+      const match = title.match(pattern);
+      if (match) {
+        const num = match[1];
+        // Konwersja rzymskich na arabskie (uproszczona)
+        if (/^[IVXLCDM]+$/i.test(num)) {
+          const roman: Record<string, number> = {
+            I: 1,
+            V: 5,
+            X: 10,
+            L: 50,
+            C: 100,
+            D: 500,
+            M: 1000,
+          };
+          let result = 0,
+            prev = 0;
+          for (const char of num.toUpperCase().split("").reverse()) {
+            const val = roman[char] || 0;
+            result += val < prev ? -val : val;
+            prev = val;
+          }
+          return result;
+        }
+        return parseInt(num) || 0;
+      }
+    }
+    return 0;
+  };
+
   // Najpierw sortuj dokumenty
   const sortedDocs = [...documents].sort((a, b) => {
     let comparison = 0;
 
     switch (sortBy) {
       case "date":
-      case "session":
         comparison = (a.publish_date || "").localeCompare(b.publish_date || "");
         break;
       case "title":
-        comparison = a.title.localeCompare(b.title);
+        comparison = a.title.localeCompare(b.title, "pl");
+        break;
+      case "number":
+        comparison = extractNumber(a.title) - extractNumber(b.title);
         break;
       case "score":
         comparison = (a.score?.totalScore || 0) - (b.score?.totalScore || 0);
@@ -437,6 +640,8 @@ export function groupDocuments(
       return groupByDate(sortedDocs);
     case "by_reference":
       return groupByReference(sortedDocs);
+    case "by_hierarchy":
+      return groupByHierarchy(sortedDocs);
     case "flat":
     default:
       return {
@@ -477,5 +682,11 @@ export const GROUPING_SCHEME_LABELS: Record<
     label: "Powiązane dokumenty",
     icon: "🔗",
     description: "Grupowanie według referencji w treści",
+  },
+  by_hierarchy: {
+    label: "Według ważności",
+    icon: "⭐",
+    description:
+      "Grupowanie według hierarchii: Krytyczne > Ważne > Standardowe > Niskie > Tło",
   },
 };

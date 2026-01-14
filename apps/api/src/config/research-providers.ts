@@ -3,7 +3,7 @@
  * Agent AI "Winsdurf" - Deep Internet Researcher
  */
 
-import type { ResearchProviderConfig } from "@shared/types/deep-research";
+import type { ResearchProviderConfig } from "@aasystent-radnego/shared";
 
 export const RESEARCH_PROVIDERS: Record<string, ResearchProviderConfig> = {
   exa: {

@@ -13,7 +13,7 @@ import type {
   DataSourceConfig,
   FetchedDocument,
   ApiClientConfig,
-} from "@shared/types/data-sources-api";
+} from "@aasystent-radnego/shared";
 
 export class ApiDataFetcher extends BaseDataFetcher {
   private apiConfig: ApiClientConfig;

@@ -11,7 +11,7 @@ import OpenAI from "openai";
 import type {
   LegalSearchQuery,
   LegalSearchResult,
-} from "@shared/types/data-sources-api";
+} from "@aasystent-radnego/shared";
 import { getEmbeddingsClient, getAIConfig } from "../ai/index.js";
 
 const supabase = createClient(

@@ -27,7 +27,8 @@ export interface AnalysisResult {
     systemPrompt: string;
 }
 export declare class DocumentAnalysisService {
-    private openai;
+    private llmClient;
+    private embeddingsClient;
     private embeddingModel;
     initialize(userId: string): Promise<void>;
     extractReferences(content: string): DocumentReference[];

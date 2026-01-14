@@ -42,14 +42,35 @@ export interface ScoredDocument {
 
 // Wagi bazowe dla typów dokumentów
 const TYPE_WEIGHTS: Record<string, number> = {
-  session: 100,
-  resolution: 90,
+  // Poziom 1: Akty Prawne i Decyzje (Krytyczne)
+  budget_act: 100,
+  resolution: 95,
+  session_order: 90,
+
+  // Poziom 2: Zapis Przebiegu i Narzędzia Kontrolne (Wysoka ważność)
+  resolution_project: 85,
   protocol: 80,
-  announcement: 60,
-  news: 50,
-  article: 40,
-  pdf_attachment: 35,
-  other: 30,
+  interpellation: 75,
+  transcription: 70,
+
+  // Poziom 3: Materiały Merytoryczne i Opinie (Średni priorytet)
+  video: 65,
+  committee_opinion: 60,
+  justification: 55,
+  session: 50, // alias dla session_materials
+  session_materials: 50,
+
+  // Poziom 4: Dokumentacja Administracyjna (Niska ważność)
+  order: 40,
+  announcement: 30,
+
+  // Poziom 5: Załączniki i Dane Referencyjne (Tło)
+  attachment: 20,
+  pdf_attachment: 20, // alias
+  reference_material: 15,
+  other: 10,
+  news: 10,
+  article: 10,
 };
 
 // Słowa kluczowe zwiększające priorytet dla radnego
@@ -332,7 +353,11 @@ export class DocumentScorer {
       .select("*", { count: "exact" })
       .eq("user_id", userId);
 
-    // Inteligentny filtr tekstowy
+    // ═══════════════════════════════════════════════════════════════════════
+    // INTELIGENTNE WYSZUKIWANIE
+    // Wykorzystuje znormalizowane pola: session_number, normalized_title
+    // ═══════════════════════════════════════════════════════════════════════
+
     if (search) {
       const normalizedSearch = search.trim();
       console.log(
@@ -340,34 +365,27 @@ export class DocumentScorer {
       );
 
       if (sessionNumber) {
-        // Szukaj dokumentów powiązanych z sesją - precyzyjne wyszukiwanie
-        const romanNum = this.arabicToRoman(sessionNumber);
-
-        // Użyj precyzyjnych wzorców
-        query = query.or(
-          `title.ilike.%sesja ${sessionNumber}%,` +
-            `title.ilike.%sesji ${sessionNumber}%,` +
-            `title.ilike.%sesja nr ${sessionNumber}%,` +
-            `title.ilike.%sesji nr ${sessionNumber}%,` +
-            `title.ilike.%sesja ${romanNum}%,` +
-            `title.ilike.%sesji ${romanNum}%,` +
-            `title.ilike.%sesja nr ${romanNum}%,` +
-            `title.ilike.%nr ${romanNum}%,` +
-            `title.ilike.%${romanNum} sesj%,` +
-            `content.ilike.%sesja ${sessionNumber}%,` +
-            `content.ilike.%sesji ${sessionNumber}%,` +
-            `content.ilike.%sesja ${romanNum}%,` +
-            `content.ilike.%sesji ${romanNum}%`
+        // PRIORYTET 1: Szukaj po znormalizowanym polu session_number (najszybsze)
+        console.log(
+          `[DocumentScorer] Using session_number filter: ${sessionNumber}`
         );
 
-        console.log(
-          `[DocumentScorer] Session search: ${sessionNumber} (Roman: ${romanNum})`
+        // Szukaj po session_number LUB tradycyjnie po tytule (dla starych dokumentów)
+        const romanNum = this.arabicToRoman(sessionNumber);
+        query = query.or(
+          `session_number.eq.${sessionNumber},` +
+            `title.ilike.%sesja ${sessionNumber}%,` +
+            `title.ilike.%sesja nr ${sessionNumber}%,` +
+            `title.ilike.%sesja ${romanNum}%,` +
+            `title.ilike.%nr ${romanNum}%,` +
+            `normalized_title.ilike.%Sesja ${sessionNumber}%`
         );
       } else {
-        // Standardowe wyszukiwanie - szukaj całej frazy lub słów
-        // Najpierw próbuj dokładne dopasowanie
+        // Standardowe wyszukiwanie - szukaj w tytule i znormalizowanym tytule
         query = query.or(
-          `title.ilike.%${normalizedSearch}%,content.ilike.%${normalizedSearch}%`
+          `title.ilike.%${normalizedSearch}%,` +
+            `normalized_title.ilike.%${normalizedSearch}%,` +
+            `content.ilike.%${normalizedSearch}%`
         );
       }
     }
@@ -377,12 +395,22 @@ export class DocumentScorer {
       query = query.eq("document_type", documentType);
     }
 
-    // Filtr dat
+    // ═══════════════════════════════════════════════════════════════════════
+    // FILTR DAT - priorytetowo używa normalized_publish_date
+    // ═══════════════════════════════════════════════════════════════════════
+
     if (dateFrom) {
-      query = query.gte("publish_date", dateFrom);
+      // Szukaj w normalized_publish_date, publish_date LUB processed_at
+      query = query.or(
+        `normalized_publish_date.gte.${dateFrom},publish_date.gte.${dateFrom},processed_at.gte.${dateFrom}`
+      );
     }
     if (dateTo) {
-      query = query.lte("publish_date", dateTo);
+      // Dla processed_at dodajemy czas do końca dnia, aby objąć cały dzień
+      const dateToEndOfDay = `${dateTo}T23:59:59`;
+      query = query.or(
+        `normalized_publish_date.lte.${dateTo},publish_date.lte.${dateTo},processed_at.lte.${dateToEndOfDay}`
+      );
     }
 
     // Wykonaj query
@@ -397,8 +425,23 @@ export class DocumentScorer {
       return { documents: [], total: 0 };
     }
 
+    // Deduplikacja - usuń duplikaty po ID (mogą powstać z zapytań OR)
+    const seenIds = new Set<string>();
+    const uniqueDocuments = documents.filter((doc) => {
+      if (seenIds.has(doc.id)) {
+        console.log(`[DocumentScorer] Removing duplicate document: ${doc.id}`);
+        return false;
+      }
+      seenIds.add(doc.id);
+      return true;
+    });
+
+    console.log(
+      `[DocumentScorer] After deduplication: ${uniqueDocuments.length} unique docs (was ${documents.length})`
+    );
+
     // Oblicz score dla każdego dokumentu
-    const scoredDocuments: ScoredDocument[] = documents.map((doc) => ({
+    const scoredDocuments: ScoredDocument[] = uniqueDocuments.map((doc) => ({
       ...doc,
       score: this.calculateScore(doc),
     }));

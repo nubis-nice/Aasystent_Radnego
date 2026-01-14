@@ -2,10 +2,10 @@
  * Legal Search API - wyszukiwanie prawne (fulltext + semantic)
  * Agent AI "Winsdurf" - wyszukiwanie w dokumentach prawnych
  */
-import type { LegalSearchQuery, LegalSearchResult } from "@shared/types/data-sources-api";
+import type { LegalSearchQuery, LegalSearchResult } from "@aasystent-radnego/shared";
 export declare class LegalSearchAPI {
     private userId;
-    private openai;
+    private embeddingsClient;
     private embeddingModel;
     constructor(userId: string);
     private initializeOpenAI;

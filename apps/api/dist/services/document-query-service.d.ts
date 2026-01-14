@@ -14,6 +14,12 @@ export interface DocumentReference {
     type: "id" | "title" | "druk" | "uchwala" | "protokol" | "sesja";
     value: string;
     originalText: string;
+    sessionNumber?: number;
+}
+export interface SessionQueryIntent {
+    sessionNumber: number;
+    requestType: "streszczenie" | "protokol" | "glosowania" | "transkrypcja" | "wideo" | "ogolne";
+    originalQuery: string;
 }
 export interface DocumentMatch {
     id: string;
@@ -22,6 +28,7 @@ export interface DocumentMatch {
     publishDate?: string;
     summary?: string;
     sourceUrl?: string;
+    content?: string;
     similarity: number;
 }
 export interface DocumentQueryResult {
@@ -45,7 +52,7 @@ export interface DocumentContext {
     attachments: DocumentMatch[];
 }
 export declare class DocumentQueryService {
-    private openai;
+    private embeddingsClient;
     private userId;
     private embeddingModel;
     constructor(userId: string);
@@ -54,6 +61,16 @@ export declare class DocumentQueryService {
      * Wykrywa referencje do dokumentów w wiadomości użytkownika
      */
     detectDocumentReferences(message: string): DocumentReference[];
+    /**
+     * Wykrywa intencję zapytania o sesję rady
+     * Rozpoznaje numer sesji i typ żądania (streszczenie, protokół, głosowania, itp.)
+     */
+    detectSessionIntent(message: string): SessionQueryIntent | null;
+    /**
+     * Szuka dokumentów związanych z konkretną sesją rady
+     * Przeszukuje różne warianty numeracji (arabskie i rzymskie)
+     */
+    findSessionDocuments(sessionNumber: number): Promise<DocumentMatch[]>;
     /**
      * Szuka dokumentu po ID (dokładne dopasowanie)
      */

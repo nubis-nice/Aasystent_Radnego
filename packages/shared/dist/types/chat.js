@@ -37,8 +37,8 @@ export const ConversationWithMessagesSchema = ConversationSchema.extend({
 // Chat Request/Response Types
 // ============================================================================
 export const ChatRequestSchema = z.object({
-    message: z.string().min(1).max(50000), // Zwiększony limit dla analizy dokumentów
-    conversationId: z.string().uuid().optional(),
+    message: z.string().min(1).max(100000), // Zwiększony limit dla profesjonalnej analizy dokumentów z pełnym kontekstem
+    conversationId: z.string().uuid().optional().nullable(), // Może być undefined, null lub prawidłowy UUID
     includeDocuments: z.boolean().default(true),
     includeMunicipalData: z.boolean().default(true),
     temperature: z.number().min(0).max(2).default(0.7),

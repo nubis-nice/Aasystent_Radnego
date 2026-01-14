@@ -90,6 +90,13 @@ Agent AI "Winsdurf" oparty na aktualnych, zewnętrznych źródłach prawa zamias
 
 - Tytuł, numer, data, autor, temat/tags.
 - Źródło i identyfikatory.
+- **Hierarchia Ważności** (1-5):
+  - Poziom 1: Akty prawne, budżet (100-90 pkt)
+  - Poziom 2: Protokoły, transkrypcje (89-70 pkt)
+  - Poziom 3: Opinie, analizy (69-50 pkt)
+  - Poziom 4: Administracyjne (49-30 pkt)
+  - Poziom 5: Załączniki, tło (<30 pkt)
+  - Szczegóły: `docs/document_hierarchy.md`
 
 ### 4.5. Index/RAG
 

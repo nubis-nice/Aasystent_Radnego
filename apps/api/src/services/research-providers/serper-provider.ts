@@ -10,7 +10,7 @@ import type {
   SearchOptions,
   SerperSearchRequest,
   SerperSearchResponse,
-} from "@shared/types/deep-research";
+} from "@aasystent-radnego/shared";
 
 export class SerperProvider extends BaseResearchProvider {
   async search(

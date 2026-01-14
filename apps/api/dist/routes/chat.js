@@ -3,8 +3,11 @@ import OpenAI from "openai";
 import { ChatRequestSchema, buildSystemPrompt, } from "@aasystent-radnego/shared";
 import { createClient } from "@supabase/supabase-js";
 import { decryptApiKey } from "../utils/encryption.js";
-import { optimizeContext, } from "../services/context-compressor.js";
+import { optimizeContext } from "../services/context-compressor.js";
 import { DocumentQueryService } from "../services/document-query-service.js";
+import { SessionDiscoveryService } from "../services/session-discovery-service.js";
+import { getEmbeddingsClient, getAIConfig } from "../ai/index.js";
+import { AIToolOrchestrator, shouldUseOrchestrator, } from "../services/ai-tool-orchestrator.js";
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -90,12 +93,27 @@ export const chatRoutes = async (fastify) => {
             if (!userId) {
                 return reply.status(401).send({ error: "Unauthorized" });
             }
-            // Pobierz profil użytkownika
+            // Pobierz profil użytkownika (tabela: profiles, klucz: id)
             const { data: profile } = await supabase
-                .from("user_profiles")
+                .from("profiles")
+                .select("*")
+                .eq("id", userId)
+                .single();
+            // Pobierz ustawienia lokalne użytkownika (gmina, rada, BIP)
+            const { data: localeSettings } = await supabase
+                .from("user_locale_settings")
                 .select("*")
                 .eq("user_id", userId)
                 .single();
+            // Fallback: pobierz imię z auth.users jeśli brak w profiles
+            let userName = profile?.full_name;
+            if (!userName) {
+                const { data: authUser } = await supabase.auth.admin.getUserById(userId);
+                userName =
+                    authUser?.user?.user_metadata?.full_name ||
+                        authUser?.user?.user_metadata?.name ||
+                        authUser?.user?.email?.split("@")[0]; // fallback do nazwy z email
+            }
             // Pobierz domyślną konfigurację API użytkownika (dowolny provider)
             const { data: apiConfig } = await supabase
                 .from("api_configurations")
@@ -110,9 +128,9 @@ export const chatRoutes = async (fastify) => {
                 local: "http://localhost:11434/v1", // Ollama default
                 other: "", // Custom endpoint
             };
-            // Jeśli użytkownik nie ma konfiguracji, użyj zmiennej środowiskowej
-            let apiKey = process.env.OPENAI_API_KEY;
-            let model = process.env.OPENAI_MODEL || "gpt-4-turbo-preview";
+            // Konfiguracja AI - wymagana z bazy danych
+            let apiKey = undefined;
+            let model = process.env.OPENAI_MODEL || "gpt-4o-mini";
             let baseUrl = undefined;
             let embeddingModel = "text-embedding-3-small";
             let provider = "openai";
@@ -196,11 +214,167 @@ export const chatRoutes = async (fastify) => {
                 .order("created_at", { ascending: true })
                 .limit(10);
             // ========================================================================
-            // PHASE 1: WYKRYWANIE DOKUMENTÓW W WIADOMOŚCI
-            // Zamiast przekazywać pełną treść, wykrywamy ID/nazwę i szukamy w RAG
+            // PHASE 0: WYKRYWANIE INTENCJI SESJI RADY
+            // Sprawdzamy czy użytkownik pyta o konkretną sesję rady
             // ========================================================================
             const documentQueryService = new DocumentQueryService(userId);
             await documentQueryService.initialize();
+            const sessionIntent = documentQueryService.detectSessionIntent(message);
+            if (sessionIntent) {
+                console.log(`[Chat] Session intent detected: session=${sessionIntent.sessionNumber}, type=${sessionIntent.requestType}`);
+                // Uruchom kaskadowe wyszukiwanie sesji
+                const sessionDiscovery = new SessionDiscoveryService(userId);
+                await sessionDiscovery.initialize();
+                const discoveryResult = await sessionDiscovery.discoverSession(sessionIntent);
+                // Jeśli nie znaleziono transkrypcji ale jest wideo - zaproponuj transkrypcję
+                if (!discoveryResult.hasTranscription &&
+                    discoveryResult.hasVideo &&
+                    discoveryResult.suggestions.length > 0) {
+                    const { data: suggestionMessage } = await supabase
+                        .from("messages")
+                        .insert({
+                        conversation_id: currentConversationId,
+                        role: "assistant",
+                        content: discoveryResult.message,
+                    })
+                        .select()
+                        .single();
+                    return reply.send({
+                        conversationId: currentConversationId,
+                        message: suggestionMessage || {
+                            id: `temp-${Date.now()}`,
+                            conversationId: currentConversationId,
+                            role: "assistant",
+                            content: discoveryResult.message,
+                            citations: [],
+                            createdAt: new Date().toISOString(),
+                        },
+                        citations: [],
+                        sessionDiscovery: {
+                            found: discoveryResult.found,
+                            sessionNumber: discoveryResult.sessionNumber,
+                            hasTranscription: discoveryResult.hasTranscription,
+                            hasProtocol: discoveryResult.hasProtocol,
+                            hasVideo: discoveryResult.hasVideo,
+                            suggestions: discoveryResult.suggestions,
+                        },
+                    });
+                }
+                // Jeśli nie znaleziono żadnych materiałów
+                if (!discoveryResult.found) {
+                    const { data: notFoundMessage } = await supabase
+                        .from("messages")
+                        .insert({
+                        conversation_id: currentConversationId,
+                        role: "assistant",
+                        content: discoveryResult.message,
+                    })
+                        .select()
+                        .single();
+                    return reply.send({
+                        conversationId: currentConversationId,
+                        message: notFoundMessage || {
+                            id: `temp-${Date.now()}`,
+                            conversationId: currentConversationId,
+                            role: "assistant",
+                            content: discoveryResult.message,
+                            citations: [],
+                            createdAt: new Date().toISOString(),
+                        },
+                        citations: [],
+                    });
+                }
+                // Jeśli znaleziono materiały - dodaj je priorytetowo do kontekstu RAG
+                console.log(`[Chat] Session documents found: ${discoveryResult.documents.length}`);
+                // Zapisz dokumenty sesji do późniejszego użycia w kontekście RAG
+                // Te dokumenty będą miały priorytet nad standardowym wyszukiwaniem
+                if (discoveryResult.documents.length > 0) {
+                    // @ts-expect-error - sessionDocuments będzie użyte później
+                    request.sessionDocuments = discoveryResult.documents;
+                }
+            }
+            // ========================================================================
+            // PHASE 0.5: AI TOOL ORCHESTRATOR - Zaawansowane wyszukiwanie
+            // Sprawdzamy czy pytanie wymaga głębokiego researchu z wieloma narzędziami
+            // ========================================================================
+            if (shouldUseOrchestrator(message)) {
+                console.log(`[Chat] Deep research detected, using AI Tool Orchestrator`);
+                try {
+                    const orchestrator = new AIToolOrchestrator(userId);
+                    // Pobierz kontekst konwersacji
+                    const conversationContext = (history || [])
+                        .slice(-5)
+                        .map((m) => `${m.role}: ${m.content}`)
+                        .join("\n");
+                    const orchestratorResult = await orchestrator.process(message, conversationContext);
+                    // Sprawdź czy orchestrator udzielił sensownej odpowiedzi
+                    const hasValidResponse = orchestratorResult.synthesizedResponse &&
+                        orchestratorResult.synthesizedResponse.length > 100 &&
+                        !orchestratorResult.synthesizedResponse.includes("nie udało się znaleźć") &&
+                        orchestratorResult.toolResults.some((r) => r.success && r.data);
+                    console.log(`[Chat] Orchestrator result: hasValidResponse=${hasValidResponse}, responseLen=${orchestratorResult.synthesizedResponse?.length || 0}, successfulTools=${orchestratorResult.toolResults.filter((r) => r.success).length}`);
+                    // Jeśli orchestrator udzielił pełnej odpowiedzi
+                    if (hasValidResponse) {
+                        // Dodaj informację o czasie i źródłach
+                        let responseContent = orchestratorResult.synthesizedResponse;
+                        // Dodaj źródła na końcu
+                        if (orchestratorResult.sources.length > 0) {
+                            responseContent += "\n\n---\n**Źródła:**\n";
+                            orchestratorResult.sources.slice(0, 5).forEach((src, i) => {
+                                responseContent += `${i + 1}. ${src.title}`;
+                                if (src.url)
+                                    responseContent += ` - [link](${src.url})`;
+                                responseContent += ` _(${src.type})_\n`;
+                            });
+                        }
+                        // Dodaj ostrzeżenia jeśli są
+                        if (orchestratorResult.warnings.length > 0) {
+                            responseContent +=
+                                "\n\n⚠️ " + orchestratorResult.warnings.join("\n⚠️ ");
+                        }
+                        // Zapisz odpowiedź
+                        const { data: assistantMessage } = await supabase
+                            .from("messages")
+                            .insert({
+                            conversation_id: currentConversationId,
+                            role: "assistant",
+                            content: responseContent,
+                        })
+                            .select()
+                            .single();
+                        return reply.send({
+                            conversationId: currentConversationId,
+                            message: assistantMessage || {
+                                id: `temp-${Date.now()}`,
+                                conversationId: currentConversationId,
+                                role: "assistant",
+                                content: responseContent,
+                                citations: [],
+                                createdAt: new Date().toISOString(),
+                            },
+                            citations: orchestratorResult.sources.map((s) => ({
+                                title: s.title,
+                                url: s.url,
+                                type: s.type,
+                            })),
+                            orchestratorMeta: {
+                                intent: orchestratorResult.intent.primaryIntent,
+                                toolsUsed: orchestratorResult.toolResults.map((r) => r.tool),
+                                totalTimeMs: orchestratorResult.totalTimeMs,
+                                requiresDeepSearch: orchestratorResult.intent.requiresDeepSearch,
+                            },
+                        });
+                    }
+                }
+                catch (orchError) {
+                    console.warn("[Chat] Orchestrator failed, falling back to standard flow:", orchError);
+                    // Kontynuuj standardowy flow
+                }
+            }
+            // ========================================================================
+            // PHASE 1: WYKRYWANIE DOKUMENTÓW W WIADOMOŚCI
+            // Zamiast przekazywać pełną treść, wykrywamy ID/nazwę i szukamy w RAG
+            // ========================================================================
             const documentQuery = await documentQueryService.queryDocuments(message);
             // Jeśli wykryto dokument i wymaga potwierdzenia - zwróć pytanie
             if (documentQuery.found &&
@@ -250,25 +424,15 @@ export const chatRoutes = async (fastify) => {
             // Przygotuj kontekst RAG
             let ragContext;
             if (includeDocuments || includeMunicipalData) {
-                // ZAWSZE używaj OpenAI API dla embeddings (zunifikowany format 1536 wymiarów)
-                // Niezależnie od providera używanego do chatu
-                // Fallback: jeśli OPENAI_API_KEY nie jest w env, użyj klucza użytkownika (jeśli provider to OpenAI)
-                const openaiApiKey = process.env.OPENAI_API_KEY ||
-                    (provider === "openai" ? apiKey : undefined);
-                if (!openaiApiKey) {
-                    console.log("[Chat] Skipping RAG - no OpenAI API key available");
-                    ragContext = undefined;
-                }
-                else {
-                    const embeddingConfig = {
-                        apiKey: openaiApiKey,
-                        baseURL: undefined, // Zawsze oficjalne OpenAI API
-                    };
-                    const embeddingOpenai = new OpenAI(embeddingConfig);
+                // Użyj klienta embeddings z AIClientFactory (obsługuje OpenAI i lokalnych providerów)
+                try {
+                    const embeddingsClient = await getEmbeddingsClient(userId);
+                    const embConfig = await getAIConfig(userId, "embeddings");
+                    const currentEmbeddingModel = embConfig.modelName;
+                    console.log(`[Chat] Using embeddings: provider=${embConfig.provider}, model=${currentEmbeddingModel}`);
                     // Batch embedding dla długich wiadomości
-                    // text-embedding-3-small: limit 8192 tokenów ≈ 20000 znaków
                     const maxChunkChars = 18000;
-                    const queryEmbedding = await generateBatchEmbedding(embeddingOpenai, message, embeddingModel, maxChunkChars);
+                    const queryEmbedding = await generateBatchEmbedding(embeddingsClient, message, currentEmbeddingModel, maxChunkChars);
                     ragContext = {
                         documents: [],
                         municipalData: [],
@@ -293,8 +457,8 @@ export const chatRoutes = async (fastify) => {
                         });
                         const { data: relevantDocs, error: searchError } = await supabase.rpc("search_processed_documents", {
                             query_embedding: queryEmbedding,
-                            match_threshold: 0.3, // Obniżony próg dla lepszych wyników
-                            match_count: 10,
+                            match_threshold: 0.25, // Obniżony próg dla lepszych wyników
+                            match_count: 30, // Zwiększony limit dla pełniejszego kontekstu
                             filter_user_id: userId,
                             filter_types: null, // Wszystkie typy dokumentów
                         });
@@ -348,14 +512,33 @@ export const chatRoutes = async (fastify) => {
                         }
                     }
                 }
+                catch (embError) {
+                    console.warn("[Chat] RAG embeddings failed:", embError);
+                    ragContext = undefined;
+                }
             }
-            // Zbuduj system prompt
+            // Zbuduj system prompt z danymi lokalnymi (priorytet: localeSettings > profile)
             const systemPromptContext = {
-                municipalityName: profile?.municipality_name,
+                // Priorytet dla danych z user_locale_settings (gmina, rada)
+                municipalityName: localeSettings?.municipality ||
+                    localeSettings?.council_name ||
+                    profile?.municipality_name,
                 municipalityType: profile?.municipality_type,
-                userName: profile?.full_name,
+                // Dane użytkownika - używamy userName z fallbackiem
+                userName: userName,
                 userPosition: profile?.position,
+                // Dodatkowe dane lokalne
+                voivodeship: localeSettings?.voivodeship,
+                bipUrl: localeSettings?.bip_url,
+                councilName: localeSettings?.council_name,
             };
+            // Log personalizacji
+            console.log("[Chat] Personalization context:", {
+                userName: systemPromptContext.userName,
+                municipality: systemPromptContext.municipalityName,
+                council: systemPromptContext.councilName,
+                voivodeship: systemPromptContext.voivodeship,
+            });
             const systemPrompt = buildSystemPrompt(systemPromptContext);
             // ========================================================================
             // CONTEXT COMPRESSION - optymalizacja kontekstu dla oszczędności tokenów
@@ -363,6 +546,26 @@ export const chatRoutes = async (fastify) => {
             // Przygotuj dokumenty do kompresji
             // WAŻNE: Jeśli mamy documentContext z wykrytego dokumentu, użyj chunków zamiast pełnej treści
             let ragDocuments = [];
+            // PRIORYTET 1: Dokumenty sesji znalezione przez SessionDiscoveryService
+            // @ts-expect-error - sessionDocuments jest dynamicznie dodane
+            const sessionDocuments = request.sessionDocuments;
+            if (sessionDocuments && sessionDocuments.length > 0) {
+                console.log(`[Chat] Using ${sessionDocuments.length} session documents from SessionDiscoveryService`);
+                sessionDocuments.forEach((doc) => {
+                    const documentContent = doc.content || doc.summary || `Dokument sesji: ${doc.title}`;
+                    ragDocuments.push({
+                        id: doc.id,
+                        title: `[Sesja] ${doc.title}`,
+                        content: documentContent,
+                        relevanceScore: doc.similarity || 0.95,
+                        metadata: {
+                            documentType: doc.documentType,
+                            isSessionDocument: true,
+                        },
+                    });
+                });
+            }
+            // PRIORYTET 2: Dokumenty z wykrytego kontekstu dokumentu
             if (documentContext && documentContext.relevantChunks.length > 0) {
                 // Użyj chunków z wykrytego dokumentu (nie pełnej treści!)
                 console.log(`[Chat] Using ${documentContext.relevantChunks.length} chunks from detected document`);
@@ -473,6 +676,7 @@ export const chatRoutes = async (fastify) => {
             }
             const openai = new OpenAI(clientConfig);
             // Użyj max_completion_tokens dla nowych modeli OpenAI, max_tokens dla starszych
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const completionParams = {
                 model: model,
                 messages,
@@ -544,6 +748,8 @@ export const chatRoutes = async (fastify) => {
         }
         catch (error) {
             if (error instanceof ZodError) {
+                console.error("[Chat] Zod validation error:", JSON.stringify(error.issues, null, 2));
+                console.error("[Chat] Request body was:", JSON.stringify(request.body, null, 2));
                 return reply
                     .status(400)
                     .send({ error: "Validation error", details: error.issues });
@@ -719,7 +925,7 @@ export const chatRoutes = async (fastify) => {
                 .eq("is_default", true)
                 .eq("provider", "openai")
                 .single();
-            let openaiApiKey = process.env.OPENAI_API_KEY;
+            let openaiApiKey = undefined;
             let openaiBaseUrl = undefined;
             if (apiConfig) {
                 openaiApiKey = Buffer.from(apiConfig.api_key_encrypted, "base64").toString("utf-8");
@@ -811,8 +1017,8 @@ export const chatRoutes = async (fastify) => {
                 .eq("is_default", true)
                 .eq("provider", "openai")
                 .single();
-            let openaiApiKey = process.env.OPENAI_API_KEY;
-            let openaiModel = process.env.OPENAI_MODEL || "gpt-4-turbo-preview";
+            let openaiApiKey = undefined;
+            let openaiModel = process.env.OPENAI_MODEL || "gpt-4o-mini";
             let openaiBaseUrl = undefined;
             if (apiConfig) {
                 openaiApiKey = Buffer.from(apiConfig.api_key_encrypted, "base64").toString("utf-8");
@@ -821,7 +1027,7 @@ export const chatRoutes = async (fastify) => {
             }
             if (!openaiApiKey) {
                 return reply.status(400).send({
-                    error: "Brak konfiguracji OpenAI",
+                    error: "Brak konfiguracji OpenAI. Dodaj klucz API w ustawieniach.",
                 });
             }
             const openai = new OpenAI({
@@ -837,8 +1043,8 @@ export const chatRoutes = async (fastify) => {
             // Wyszukaj relevantne dokumenty
             const { data: relevantDocs } = await supabase.rpc("search_processed_documents", {
                 query_embedding: queryEmbedding,
-                match_threshold: 0.6,
-                match_count: 10,
+                match_threshold: 0.3,
+                match_count: 30,
                 filter_user_id: userId,
                 filter_types: documentTypes || null,
             });
@@ -855,6 +1061,7 @@ export const chatRoutes = async (fastify) => {
                 contextMessage += `Treść: ${doc.content}\n\n`;
             });
             // Poproś AI o podsumowanie
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const summaryParams = {
                 model: openaiModel,
                 messages: [
@@ -1046,4 +1253,5 @@ export const chatRoutes = async (fastify) => {
         }
     });
 };
+//# sourceMappingURL=chat.js.map
 //# sourceMappingURL=chat.js.map

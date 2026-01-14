@@ -86,8 +86,10 @@ export interface ProcessedDocument {
     pageCount?: number;
     confidence?: number;
     language?: string;
-    processingMethod: "ocr" | "text-extraction" | "direct" | "stt";
+    processingMethod: "ocr" | "text-extraction" | "direct" | "stt" | "vision";
     sttModel?: string;
+    ocrEngine?: string;
+    blankPagesSkipped?: number;
   };
   error?: string;
 }
@@ -1283,6 +1285,7 @@ Zasady:
 
   /**
    * Save extracted text to RAG database
+   * Sprawdza duplikaty przed zapisem i normalizuje metadane
    */
   async saveToRAG(
     userId: string,
@@ -1298,10 +1301,74 @@ Zasady:
         );
       }
 
-      // Generate embedding
+      const sourceUrl = `file://${sourceFileName}`;
+
+      // ═══════════════════════════════════════════════════════════════════
+      // SPRAWDZENIE DUPLIKATÓW
+      // ═══════════════════════════════════════════════════════════════════
+
+      const { data: existingByUrl } = await supabase
+        .from("processed_documents")
+        .select("id, title")
+        .eq("user_id", userId)
+        .eq("source_url", sourceUrl)
+        .maybeSingle();
+
+      if (existingByUrl) {
+        console.log(
+          `[DocumentProcessor] Document already exists (by URL): ${existingByUrl.id} - "${existingByUrl.title}"`
+        );
+        return {
+          success: true,
+          documentId: existingByUrl.id,
+          error: "Dokument już istnieje w bazie (ten sam URL)",
+        };
+      }
+
+      // ═══════════════════════════════════════════════════════════════════
+      // NORMALIZACJA METADANYCH
+      // ═══════════════════════════════════════════════════════════════════
+
+      const normalized = this.extractNormalizedMetadata(title, text);
+
+      console.log(
+        `[DocumentProcessor] Normalized: session=${
+          normalized.sessionNumber || "N/A"
+        }, ` +
+          `title="${normalized.normalizedTitle}", date=${
+            normalized.publishDate || "N/A"
+          }`
+      );
+
+      // Sprawdź duplikat po znormalizowanym tytule
+      if (normalized.normalizedTitle) {
+        const { data: existingByNormTitle } = await supabase
+          .from("processed_documents")
+          .select("id, title, source_url")
+          .eq("user_id", userId)
+          .eq("document_type", documentType)
+          .ilike("normalized_title", normalized.normalizedTitle)
+          .maybeSingle();
+
+        if (existingByNormTitle) {
+          console.log(
+            `[DocumentProcessor] Document already exists (by normalized title): ${existingByNormTitle.id}`
+          );
+          return {
+            success: true,
+            documentId: existingByNormTitle.id,
+            error: "Dokument już istnieje w bazie (ten sam tytuł)",
+          };
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════════
+      // GENEROWANIE EMBEDDINGU I ZAPIS
+      // ═══════════════════════════════════════════════════════════════════
+
       const embeddingResponse = await this.embeddingsClient.embeddings.create({
         model: this.embeddingModel,
-        input: text.slice(0, 8000), // Limit for embedding
+        input: text.slice(0, 8000),
       });
 
       const embeddingData = embeddingResponse.data[0];
@@ -1310,17 +1377,24 @@ Zasady:
       }
       const embedding = embeddingData.embedding;
 
-      // Save to processed_documents
       const { data, error } = await supabase
         .from("processed_documents")
         .insert({
           user_id: userId,
           title,
           content: text,
-          source_url: `file://${sourceFileName}`,
+          source_url: sourceUrl,
           document_type: documentType,
           embedding,
           processed_at: new Date().toISOString(),
+          // Nowe znormalizowane pola
+          session_number: normalized.sessionNumber,
+          normalized_title: normalized.normalizedTitle,
+          normalized_publish_date: normalized.publishDate,
+          document_number: normalized.documentNumber,
+          session_type: normalized.sessionType,
+          is_normalized: true,
+          normalization_confidence: 70,
         })
         .select("id")
         .single();
@@ -1342,6 +1416,202 @@ Zasady:
         error: error instanceof Error ? error.message : "Błąd zapisu do bazy",
       };
     }
+  }
+
+  /**
+   * Wyodrębnia znormalizowane metadane z tytułu i treści dokumentu
+   */
+  private extractNormalizedMetadata(
+    title: string,
+    content: string
+  ): {
+    sessionNumber: number | null;
+    normalizedTitle: string | null;
+    publishDate: string | null;
+    documentNumber: string | null;
+    sessionType: string | null;
+  } {
+    // Wyodrębnij numer sesji
+    const sessionNumber =
+      this.extractSessionNumber(title) ||
+      this.extractSessionNumber(content.slice(0, 500));
+
+    // Znormalizuj tytuł
+    let normalizedTitle = title
+      .replace(/\s*\|.*$/, "") // Usuń " | Urząd Miejski..."
+      .replace(/\s*-?\s*System\s+Rada.*$/i, "") // Usuń "System Rada"
+      .trim();
+
+    if (sessionNumber) {
+      // Zamień różne formaty numeru sesji na zunifikowany
+      normalizedTitle = normalizedTitle.replace(
+        /(?:sesj[iaęy])\s+(?:nr\.?\s*)?[IVXLC0-9]+/gi,
+        `Sesja ${sessionNumber}`
+      );
+    }
+    normalizedTitle = normalizedTitle.replace(/\s+/g, " ").trim();
+
+    // Wyodrębnij datę publikacji
+    const publishDate = this.extractPublishDate(title, content);
+
+    // Wyodrębnij numer dokumentu (np. XV/123/24)
+    const documentNumber = this.extractDocumentNumber(title);
+
+    // Określ typ sesji
+    const sessionType = this.extractSessionType(title, content);
+
+    return {
+      sessionNumber,
+      normalizedTitle: normalizedTitle || null,
+      publishDate,
+      documentNumber,
+      sessionType,
+    };
+  }
+
+  private extractSessionNumber(text: string): number | null {
+    if (!text) return null;
+
+    // Wzorce dla numeru sesji (arabskie)
+    const arabicPatterns = [
+      /sesj[iaęy]\s+(?:nr\.?\s*)?(\d{1,3})/i,
+      /(\d{1,3})\s*sesj/i,
+    ];
+
+    for (const pattern of arabicPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1]) {
+        const num = parseInt(match[1], 10);
+        if (num > 0 && num <= 200) return num;
+      }
+    }
+
+    // Wzorce dla numeru sesji (rzymskie)
+    const romanPatterns = [
+      /sesj[iaęy]\s+(?:nr\.?\s*)?([IVXLC]{1,10})/i,
+      /([IVXLC]{1,10})\s*sesj/i,
+      /nr\.?\s*([IVXLC]{1,10})/i,
+    ];
+
+    for (const pattern of romanPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1]) {
+        const num = this.romanToArabic(match[1]);
+        if (num > 0 && num <= 200) return num;
+      }
+    }
+
+    return null;
+  }
+
+  private romanToArabic(roman: string): number {
+    const values: Record<string, number> = { I: 1, V: 5, X: 10, L: 50, C: 100 };
+    let result = 0,
+      prev = 0;
+    for (let i = roman.length - 1; i >= 0; i--) {
+      const char = roman[i];
+      const curr = char ? values[char.toUpperCase()] || 0 : 0;
+      result += curr < prev ? -curr : curr;
+      prev = curr;
+    }
+    return result;
+  }
+
+  private extractPublishDate(title: string, content: string): string | null {
+    const text = title + " " + content.slice(0, 1000);
+
+    // Wzorce dat: "15.01.2026", "15-01-2026", "15 stycznia 2026", "2026-01-15"
+    const patterns = [
+      /(\d{1,2})\.(\d{1,2})\.(\d{4})/,
+      /(\d{1,2})-(\d{1,2})-(\d{4})/,
+      /(\d{4})-(\d{2})-(\d{2})/,
+      /(\d{1,2})\s+(stycznia|lutego|marca|kwietnia|maja|czerwca|lipca|sierpnia|września|października|listopada|grudnia)\s+(\d{4})/i,
+    ];
+
+    const monthNames: Record<string, string> = {
+      stycznia: "01",
+      lutego: "02",
+      marca: "03",
+      kwietnia: "04",
+      maja: "05",
+      czerwca: "06",
+      lipca: "07",
+      sierpnia: "08",
+      września: "09",
+      października: "10",
+      listopada: "11",
+      grudnia: "12",
+    };
+
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match) {
+        try {
+          let year: string, month: string, day: string;
+
+          if (match[2] && monthNames[match[2].toLowerCase()]) {
+            // Format: "15 stycznia 2026"
+            day = match[1].padStart(2, "0");
+            month = monthNames[match[2].toLowerCase()];
+            year = match[3];
+          } else if (match[1].length === 4) {
+            // Format: "2026-01-15"
+            year = match[1];
+            month = match[2];
+            day = match[3];
+          } else {
+            // Format: "15.01.2026" lub "15-01-2026"
+            day = match[1].padStart(2, "0");
+            month = match[2].padStart(2, "0");
+            year = match[3];
+          }
+
+          const dateStr = `${year}-${month}-${day}`;
+          // Walidacja daty
+          const date = new Date(dateStr);
+          if (
+            !isNaN(date.getTime()) &&
+            date.getFullYear() >= 2000 &&
+            date.getFullYear() <= 2030
+          ) {
+            return dateStr;
+          }
+        } catch {
+          continue;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private extractDocumentNumber(title: string): string | null {
+    // Wzorce dla numerów uchwał: XV/123/24, 123/2024, Nr 123
+    const patterns = [
+      /([IVXLC]+\/\d+\/\d+)/i, // XV/123/24
+      /(?:uchwała|uchwały)\s+(?:nr\.?\s*)?(\d+\/\d+)/i, // uchwała 123/2024
+      /(?:nr\.?\s*)(\d+\/\d+\/\d+)/i, // Nr 123/456/24
+    ];
+
+    for (const pattern of patterns) {
+      const match = title.match(pattern);
+      if (match && match[1]) {
+        return match[1].toUpperCase();
+      }
+    }
+
+    return null;
+  }
+
+  private extractSessionType(title: string, content: string): string | null {
+    const text = (title + " " + content.slice(0, 500)).toLowerCase();
+
+    if (text.includes("nadzwyczajn")) return "extraordinary";
+    if (text.includes("budżet") || text.includes("budzetow")) return "budget";
+    if (text.includes("konstytucyjn") || text.includes("inauguracyjn"))
+      return "constituent";
+
+    return "ordinary";
   }
 
   /**

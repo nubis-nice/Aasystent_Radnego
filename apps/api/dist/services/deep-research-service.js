@@ -3,70 +3,48 @@
  * Agent AI "Winsdurf" - Deep Internet Researcher
  * Main service coordinating multi-provider research with AI synthesis
  */
-import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
 import { ExaProvider } from "./research-providers/exa-provider.js";
 import { TavilyProvider } from "./research-providers/tavily-provider.js";
 import { SerperProvider } from "./research-providers/serper-provider.js";
+import { BraveProvider } from "./research-providers/brave-provider.js";
 import { RESEARCH_PROVIDERS, SEARCH_DEPTH_CONFIG, getDomainsForResearchType, } from "../config/research-providers.js";
+import { getLLMClient, getAIConfig } from "../ai/index.js";
 export class DeepResearchService {
     providers;
     openai;
     supabase;
     userId;
     initialized = false;
+    model = "gpt-4";
     constructor(userId) {
         this.userId = userId;
         this.providers = new Map();
         // Initialize Supabase
         this.supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
-        // Initialize OpenAI (will be replaced with user's config)
-        this.openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY || "placeholder",
-        });
+        // OpenAI will be initialized in initializeProviders()
+        this.openai = null;
     }
     async initializeProviders() {
         if (this.initialized)
             return;
         try {
             console.log(`[DeepResearch] Initializing for user: ${this.userId}`);
-            // Get user's default LLM configuration (for AI synthesis)
-            const { data: defaultConfig, error: configError } = await this.supabase
-                .from("api_configurations")
-                .select("provider, api_key_encrypted, base_url, model_name")
-                .eq("user_id", this.userId)
-                .eq("is_active", true)
-                .eq("is_default", true)
-                .single();
-            console.log(`[DeepResearch] Default config query result:`, {
-                found: !!defaultConfig,
-                provider: defaultConfig?.provider,
-                hasKey: !!defaultConfig?.api_key_encrypted,
-                keyLength: defaultConfig?.api_key_encrypted?.length,
-                error: configError?.message,
-            });
-            // Initialize OpenAI with user's default LLM config
-            if (defaultConfig?.api_key_encrypted) {
-                // Dekoduj klucz z base64 (tak jak w chat.ts)
-                const decodedApiKey = Buffer.from(defaultConfig.api_key_encrypted, "base64").toString("utf-8");
-                const baseUrl = defaultConfig.base_url ||
-                    this.getProviderBaseUrl(defaultConfig.provider);
-                this.openai = new OpenAI({
-                    apiKey: decodedApiKey,
-                    baseURL: baseUrl,
-                });
-                console.log(`[DeepResearch] Using LLM provider: ${defaultConfig.provider}, baseUrl: ${baseUrl}`);
+            // Initialize LLM client via AIClientFactory - REQUIRED
+            this.openai = await getLLMClient(this.userId);
+            const llmConfig = await getAIConfig(this.userId, "llm");
+            this.model = llmConfig.modelName;
+            console.log(`[DeepResearch] Using LLM: provider=${llmConfig.provider}, model=${this.model}`);
+            if (!this.openai) {
+                throw new Error("Brak skonfigurowanego klienta LLM. Skonfiguruj providera AI w ustawieniach.");
             }
-            else {
-                console.log(`[DeepResearch] No default LLM config found, using env var`);
-            }
-            // Get research provider configs (Exa, Tavily, Serper)
+            // Get research provider configs (Exa, Tavily, Serper, Brave)
             const { data: configs, error } = await this.supabase
                 .from("api_configurations")
                 .select("provider, api_key_encrypted, is_active")
                 .eq("user_id", this.userId)
                 .eq("is_active", true)
-                .in("provider", ["exa", "tavily", "serper", "firecrawl"]);
+                .in("provider", ["exa", "tavily", "serper", "brave", "firecrawl"]);
             if (error)
                 throw error;
             const apiKeys = {};
@@ -101,6 +79,15 @@ export class DeepResearchService {
                     enabled: true,
                 };
                 this.providers.set("serper", new SerperProvider(config));
+            }
+            // Initialize Brave Search
+            if (apiKeys.brave) {
+                const config = {
+                    ...RESEARCH_PROVIDERS.brave,
+                    apiKey: apiKeys.brave,
+                    enabled: true,
+                };
+                this.providers.set("brave", new BraveProvider(config));
             }
             // Fallback to env vars if no DB configs
             if (this.providers.size === 0) {
@@ -206,7 +193,7 @@ export class DeepResearchService {
     async decomposeQuery(query) {
         try {
             const completion = await this.openai.chat.completions.create({
-                model: "gpt-4",
+                model: this.model,
                 messages: [
                     {
                         role: "system",
@@ -341,7 +328,7 @@ export class DeepResearchService {
                 .map((r, i) => `${i + 1}. ${r.title}\n${r.excerpt}`)
                 .join("\n\n");
             const completion = await this.openai.chat.completions.create({
-                model: "gpt-4",
+                model: this.model,
                 messages: [
                     {
                         role: "system",
@@ -372,7 +359,7 @@ export class DeepResearchService {
                 .map((r, i) => `${i + 1}. ${r.title}\n${r.excerpt}`)
                 .join("\n\n");
             const completion = await this.openai.chat.completions.create({
-                model: "gpt-4",
+                model: this.model,
                 messages: [
                     {
                         role: "system",
@@ -403,7 +390,7 @@ export class DeepResearchService {
     async generateRelatedQueries(query) {
         try {
             const completion = await this.openai.chat.completions.create({
-                model: "gpt-4",
+                model: this.model,
                 messages: [
                     {
                         role: "system",

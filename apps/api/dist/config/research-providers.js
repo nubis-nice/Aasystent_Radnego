@@ -36,6 +36,17 @@ export const RESEARCH_PROVIDERS = {
             perSeconds: 60,
         },
     },
+    brave: {
+        name: "Brave Search",
+        baseUrl: "https://api.search.brave.com",
+        apiKey: process.env.BRAVE_API_KEY || "",
+        priority: 2, // high priority - good for Polish sources
+        enabled: !!process.env.BRAVE_API_KEY,
+        rateLimit: {
+            maxRequests: 100,
+            perSeconds: 60,
+        },
+    },
     firecrawl: {
         name: "Firecrawl",
         baseUrl: "https://api.firecrawl.dev",

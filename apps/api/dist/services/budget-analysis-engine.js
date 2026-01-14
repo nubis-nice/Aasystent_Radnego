@@ -3,35 +3,22 @@
  * Agent AI "Winsdurf" - kontrola finansowa dla Radnego
  */
 import { createClient } from "@supabase/supabase-js";
-import OpenAI from "openai";
+import { getLLMClient, getAIConfig } from "../ai/index.js";
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 export class BudgetAnalysisEngine {
     userId;
-    openai = null;
+    llmClient = null;
     model = "gpt-4";
     constructor(userId) {
         this.userId = userId;
     }
     async initializeOpenAI() {
-        if (this.openai)
+        if (this.llmClient)
             return;
-        const { data: apiConfig } = await supabase
-            .from("api_configurations")
-            .select("*")
-            .eq("user_id", this.userId)
-            .eq("provider", "openai")
-            .eq("is_active", true)
-            .eq("is_default", true)
-            .single();
-        if (!apiConfig) {
-            throw new Error("OpenAI API configuration not found");
-        }
-        const openaiApiKey = Buffer.from(apiConfig.api_key_encrypted, "base64").toString("utf-8");
-        this.openai = new OpenAI({
-            apiKey: openaiApiKey,
-            baseURL: apiConfig.base_url || undefined,
-        });
-        this.model = apiConfig.model || "gpt-4";
+        this.llmClient = await getLLMClient(this.userId);
+        const llmConfig = await getAIConfig(this.userId, "llm");
+        this.model = llmConfig.modelName;
+        console.log(`[BudgetAnalysisEngine] Initialized: provider=${llmConfig.provider}, model=${this.model}`);
     }
     async analyze(request) {
         console.log("[BudgetAnalysisEngine] Starting analysis:", request.analysisType);
@@ -76,7 +63,7 @@ export class BudgetAnalysisEngine {
         return rioDocuments || [];
     }
     async analyzeChanges(document, compareDocument, rioReferences) {
-        if (!this.openai)
+        if (!this.llmClient)
             throw new Error("OpenAI not initialized");
         const systemPrompt = `Jesteś ekspertem finansów publicznych analizującym zmiany budżetowe.
 
@@ -88,7 +75,7 @@ Zadania:
 
 Zwróć odpowiedź w formacie JSON z polami: findings, summary, rioReferences`;
         const userPrompt = this.buildBudgetPrompt(document, compareDocument, rioReferences);
-        const completion = await this.openai.chat.completions.create({
+        const completion = await this.llmClient.chat.completions.create({
             model: this.model,
             temperature: 0,
             messages: [
@@ -100,7 +87,7 @@ Zwróć odpowiedź w formacie JSON z polami: findings, summary, rioReferences`;
         return this.parseBudgetResponse(responseText, document.id, "changes");
     }
     async analyzeCompliance(document, rioReferences) {
-        if (!this.openai)
+        if (!this.llmClient)
             throw new Error("OpenAI not initialized");
         const systemPrompt = `Jesteś ekspertem finansów publicznych sprawdzającym zgodność budżetu.
 
@@ -112,7 +99,7 @@ Zadania:
 
 Zwróć odpowiedź w formacie JSON z polami: findings, summary, rioReferences`;
         const userPrompt = this.buildBudgetPrompt(document, null, rioReferences);
-        const completion = await this.openai.chat.completions.create({
+        const completion = await this.llmClient.chat.completions.create({
             model: this.model,
             temperature: 0,
             messages: [
@@ -124,7 +111,7 @@ Zwróć odpowiedź w formacie JSON z polami: findings, summary, rioReferences`;
         return this.parseBudgetResponse(responseText, document.id, "compliance");
     }
     async analyzeRisks(document, rioReferences) {
-        if (!this.openai)
+        if (!this.llmClient)
             throw new Error("OpenAI not initialized");
         const systemPrompt = `Jesteś ekspertem finansów publicznych identyfikującym ryzyka budżetowe.
 
@@ -137,7 +124,7 @@ Zadania:
 
 Zwróć odpowiedź w formacie JSON z polami: findings, summary, rioReferences`;
         const userPrompt = this.buildBudgetPrompt(document, null, rioReferences);
-        const completion = await this.openai.chat.completions.create({
+        const completion = await this.llmClient.chat.completions.create({
             model: this.model,
             temperature: 0,
             messages: [
@@ -152,7 +139,7 @@ Zwróć odpowiedź w formacie JSON z polami: findings, summary, rioReferences`;
         if (!compareDocument) {
             throw new Error("Comparison document required for comparison analysis");
         }
-        if (!this.openai)
+        if (!this.llmClient)
             throw new Error("OpenAI not initialized");
         const systemPrompt = `Jesteś ekspertem finansów publicznych porównującym dokumenty budżetowe.
 
@@ -164,7 +151,7 @@ Zadania:
 
 Zwróć odpowiedź w formacie JSON z polami: findings, summary, rioReferences`;
         const userPrompt = this.buildComparisonPrompt(document, compareDocument, rioReferences);
-        const completion = await this.openai.chat.completions.create({
+        const completion = await this.llmClient.chat.completions.create({
             model: this.model,
             temperature: 0,
             messages: [

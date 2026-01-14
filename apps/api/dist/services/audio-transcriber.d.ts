@@ -33,10 +33,15 @@ export interface TranscriptionResult {
     error?: string;
 }
 export declare class AudioTranscriber {
-    private openai;
+    private sttClient;
+    private llmClient;
+    private sttModel;
+    private llmModel;
     constructor();
+    /**
+     * Inicjalizacja z konfiguracją użytkownika przez AIClientFactory
+     */
     initializeWithUserConfig(userId: string): Promise<void>;
-    private getProviderBaseUrl;
     isAudioOrVideo(mimeType: string): boolean;
     transcribe(fileBuffer: Buffer, fileName: string, mimeType: string): Promise<TranscriptionResult>;
     private whisperTranscribe;

@@ -10,7 +10,7 @@ import type {
   DataSourceConfig,
   FetchedDocument,
   DataFetchResult,
-} from "@shared/types/data-sources-api";
+} from "@aasystent-radnego/shared";
 
 export abstract class BaseDataFetcher {
   protected config: DataSourceConfig;

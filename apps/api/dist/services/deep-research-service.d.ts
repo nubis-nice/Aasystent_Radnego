@@ -3,13 +3,14 @@
  * Agent AI "Winsdurf" - Deep Internet Researcher
  * Main service coordinating multi-provider research with AI synthesis
  */
-import type { DeepResearchRequest, DeepResearchReport } from "@shared/types/deep-research";
+import type { DeepResearchRequest, DeepResearchReport } from "@aasystent-radnego/shared";
 export declare class DeepResearchService {
     private providers;
     private openai;
     private supabase;
     private userId;
     private initialized;
+    private model;
     constructor(userId: string);
     private initializeProviders;
     /**

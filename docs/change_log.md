@@ -1,5 +1,210 @@
 # Change Log
 
+## 2026-01-14 - Rozszerzenie wyszukiwarki i grupowania dokumentów
+
+### Nowe funkcjonalności
+
+**1. Nowy schemat grupowania "Według ważności" (`by_hierarchy`):**
+
+- Grupuje dokumenty według 5 poziomów hierarchii ważności
+- 🔴 Krytyczne: Budżet, Uchwały, Porządek obrad
+- 🟠 Wysokie: Projekty uchwał, Protokoły, Interpelacje, Transkrypcje
+- 🟡 Średnie: Wideo, Opinie komisji, Uzasadnienia, Materiały sesyjne
+- 🔵 Niskie: Zarządzenia, Ogłoszenia
+- ⚪ Tło: Załączniki, Aktualności, Raporty, Inne
+
+**2. Rozszerzony filtr typów dokumentów:**
+
+- Select z optgroup dla lepszej organizacji
+- 20+ typów dokumentów zorganizowanych według hierarchii
+- Ikony emoji dla łatwej identyfikacji
+
+**3. Pliki zmienione:**
+
+- `apps/frontend/src/lib/documents/grouping.ts` - nowa funkcja `groupByHierarchy()`, rozszerzone `typeLabels`, stała `HIERARCHY_LEVELS`
+- `apps/frontend/src/app/documents/page.tsx` - rozszerzony select typów z optgroup, zaktualizowana funkcja `getDocumentTypeLabel()`
+
+**Status:** ✅ Ukończone
+
+---
+
+## 2026-01-14 - Naprawa błędów kompilacji i lintera (filtry dokumentów)
+
+### Naprawione błędy:
+
+**1. `document-normalizer.ts`:**
+
+- Dodano stałą `DOCUMENT_HIERARCHY_LEVELS` mapującą typy dokumentów na poziomy hierarchii
+- Dodano `hierarchyLevel` do metody `fallbackExtraction()`
+- Usunięto zduplikowaną definicję `EXPECTED_HIERARCHY` w `validateAndEnrich()`
+
+**2. `document-processor.ts`:**
+
+- Dodano `ocrEngine?: string` do interfejsu `ProcessedDocument`
+- Zmieniono `blankPagesSkipped` z `boolean` na `number`
+- Dodano `"vision"` do unii `processingMethod`
+- Usunięto komentarze w `switch` case powodujące błąd `no-fallthrough`
+
+**3. `page.tsx` (DocumentsPage):**
+
+- Zdefiniowano zmienną `filteredDocuments` dla filtrowania po stronie klienta
+- Zaktualizowano JSX do użycia `filteredDocuments`
+
+**4. `grouping.ts`:**
+
+- Usunięto nieużywaną zmienną `clusterIndex`
+
+**5. `document-query-service.ts`:**
+
+- Naprawiono błąd `Unexpected any` przez dodanie jawnego typu dla `target_document`
+
+**6. `architecture_data_normalization.md`:**
+
+- Dodano specyfikatory języka do bloków kodu (MD040)
+
+**Status:** ✅ Ukończone
+
+---
+
+## 2026-01-14 - Inteligentne wyszukiwanie dokumentów RAG
+
+### Rozszerzenie systemu wyszukiwania i normalizacji dokumentów
+
+**Problem:**
+
+- Wyszukiwanie "Sesja 23" nie znajdowało dokumentów z "Sesja Nr XXIII"
+- Brak wyodrębniania dat publikacji z treści
+- Duplikaty dokumentów z różnymi formatami tytułów
+
+### Zmiany:
+
+**1. Nowe pola w tabeli `processed_documents`:**
+
+- `session_number` (INT) - znormalizowany numer sesji
+- `normalized_title` (VARCHAR) - zunifikowany tytuł
+- `normalized_publish_date` (DATE) - data wyodrębniona z treści
+- `document_number` (VARCHAR) - numer uchwały
+- `session_type` (VARCHAR) - typ sesji
+- `is_normalized` (BOOLEAN) - flaga normalizacji
+
+**Migracja:** `docs/supabase_migrations/022_add_normalized_fields_processed_documents.sql`
+
+**2. Automatyczna normalizacja przy zapisie:**
+
+Plik: `apps/api/src/services/document-processor.ts`
+
+Funkcja `saveToRAG()` teraz automatycznie:
+
+- Wyodrębnia numer sesji (rzymski → arabski)
+- Normalizuje tytuł (usuwa " | Urząd Miejski...")
+- Wyodrębnia datę publikacji z treści
+- Wyodrębnia numer uchwały
+
+**3. Inteligentne wyszukiwanie:**
+
+Plik: `apps/api/src/services/document-scorer.ts`
+
+- Wyszukiwanie po `session_number` (szybkie, precyzyjne)
+- Wyszukiwanie po `normalized_title`
+- Filtrowanie po `normalized_publish_date`
+
+**4. Zunifikowany moduł konwersji liczb rzymskich:**
+
+Nowy plik: `apps/api/src/utils/roman-numbers.ts`
+
+- `romanToArabic()` - XXIII → 23
+- `arabicToRoman()` - 23 → XXIII
+- `extractSessionNumberFromText()` - wyodrębnia z tekstu
+- `getSessionSearchVariants()` - generuje warianty wyszukiwania
+
+**Uruchomienie migracji:**
+
+```sql
+-- Uruchom w Supabase SQL Editor
+-- 1. Najpierw duplikaty
+\i docs/supabase_migrations/021_add_unique_constraints_processed_documents.sql
+
+-- 2. Potem nowe pola
+\i docs/supabase_migrations/022_add_normalized_fields_processed_documents.sql
+```
+
+**Status:** ✅ Ukończone
+
+---
+
+## 2026-01-14 - Hierarchia Ważności Dokumentów
+
+### Nowa funkcjonalność: System priorytetyzacji dokumentów sesyjnych
+
+**Cel:** Automatyczne rozpoznawanie i promowanie najważniejszych dokumentów (Budżet, Uchwały) nad mniej istotnymi (Załączniki, Ogłoszenia) w wynikach wyszukiwania i kontekście AI.
+
+**1. Definicja Hierarchii (`docs/document_hierarchy.md`):**
+
+- **Poziom 1 (90-100 pkt):** Budżet, Uchwały, Porządek Obrad
+- **Poziom 2 (70-89 pkt):** Projekty uchwał, Protokoły, Interpelacje, Transkrypcje
+- **Poziom 3 (50-69 pkt):** Wideo, Opinie komisji, Uzasadnienia
+- **Poziom 4 (30-49 pkt):** Zarządzenia, Ogłoszenia
+- **Poziom 5 (<30 pkt):** Załączniki, Analizy zewn.
+
+**2. Aktualizacja `DocumentScorer` (`apps/api/src/services/document-scorer.ts`):**
+
+- Zaktualizowano wagi `TYPE_WEIGHTS` zgodnie z nową hierarchią
+- Dodano obsługę nowych typów dokumentów: `budget_act`, `resolution_project`, `interpellation`, `committee_opinion`
+
+**3. Aktualizacja `DocumentNormalizer` (`apps/api/src/services/document-normalizer.ts`):**
+
+- Rozszerzono `NormalizedDocumentMetadata` o pole `hierarchyLevel` (1-5)
+- Zaktualizowano prompt LLM, aby klasyfikował dokumenty do odpowiednich poziomów
+- Dodano logikę fallback mapującą typ dokumentu na poziom hierarchii
+- Dodano walidację zgodności poziomu z typem dokumentu
+
+**4. Dokumentacja:**
+
+- Nowy plik: `docs/document_hierarchy.md`
+- Aktualizacja: `docs/architecture.md`, `docs/architecture_data_normalization.md`
+
+**Status:** ✅ Ukończone
+
+### Problem: Duplikaty w bazie processed_documents
+
+**Objawy:**
+
+- Logi: `[DocumentQuery] Removing duplicate by title: "Sesja Nr XXIII..."`
+- Wielokrotne wyniki dla tego samego dokumentu
+- Scraping zapisywał dokumenty wielokrotnie
+
+**Przyczyna:** Funkcja `saveToRAG()` w `DocumentProcessor` nie sprawdzała czy dokument już istnieje przed zapisem.
+
+### Rozwiązanie A: Sprawdzanie duplikatów w kodzie
+
+**Plik:** `apps/api/src/services/document-processor.ts`
+
+Funkcja `saveToRAG()` teraz:
+
+1. Sprawdza duplikaty po `source_url` (dokładne dopasowanie)
+2. Sprawdza duplikaty po `title` (case-insensitive)
+3. Zwraca istniejący `documentId` zamiast tworzyć duplikat
+
+### Rozwiązanie B: Constraint w bazie danych
+
+**Migracja:** `docs/supabase_migrations/021_add_unique_constraints_processed_documents.sql`
+
+1. Usuwa istniejące duplikaty (zachowuje najnowsze)
+2. Dodaje unique index na `(user_id, source_url)`
+3. Dodaje index na `(user_id, document_type, lower(title))`
+4. Trigger normalizujący URL przed zapisem
+
+**Uruchomienie migracji:**
+
+```sql
+-- Uruchom w Supabase SQL Editor
+\i docs/supabase_migrations/021_add_unique_constraints_processed_documents.sql
+```
+
+**Status:** ✅ Ukończone
+
+---
+
 ## 2026-01-13 - Naprawa błędów transkrypcji Whisper
 
 ### Naprawiona normalizacja nazw modeli STT

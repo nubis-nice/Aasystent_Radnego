@@ -4,7 +4,7 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import type { DeepResearchRequest } from "@shared/types/deep-research";
+import type { DeepResearchRequest } from "@aasystent-radnego/shared";
 import { DeepResearchService } from "../services/deep-research-service.js";
 
 export async function deepResearchRoutes(fastify: FastifyInstance) {

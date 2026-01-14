@@ -14,7 +14,7 @@ import type {
   DataSourceConfig,
   FetchedDocument,
   ScraperConfig,
-} from "@shared/types/data-sources-api";
+} from "@aasystent-radnego/shared";
 
 // Domyślna konfiguracja scrapera
 const DEFAULT_SCRAPER_CONFIG: ScraperConfig = {

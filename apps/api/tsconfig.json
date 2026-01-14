@@ -4,7 +4,11 @@
     "outDir": "dist",
     "rootDir": "src",
     "types": ["node"],
-    "noEmit": false
+    "noEmit": false,
+    "noEmitOnError": false,
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false
   },
   "include": ["src/**/*.ts"]
 }

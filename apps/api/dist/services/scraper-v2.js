@@ -500,6 +500,87 @@ export async function scrapeDataSourceV2(sourceId, userId) {
     return result;
 }
 // ============================================================================
+// INTELLIGENCE FILTER - AI-based relevance check
+// ============================================================================
+async function checkDocumentRelevance(openai, title, content, url) {
+    // Szybkie filtrowanie na podstawie wzorców URL - odrzuć znane nieistotne strony
+    const irrelevantPatterns = [
+        /howyoutubeworks/i,
+        /privacy.*policy/i,
+        /terms.*service/i,
+        /cookie.*policy/i,
+        /business.*model/i,
+        /creator.*economy/i,
+        /zarobki.*twórców/i,
+        /help\.youtube/i,
+        /support\.google/i,
+        /developers\.google/i,
+        /policies\.google/i,
+    ];
+    for (const pattern of irrelevantPatterns) {
+        if (pattern.test(url) || pattern.test(title)) {
+            return false;
+        }
+    }
+    // Szybkie filtrowanie - jeśli tytuł zawiera słowa kluczowe samorządowe, akceptuj
+    const relevantKeywords = [
+        "sesja",
+        "rada",
+        "gmina",
+        "uchwała",
+        "protokół",
+        "burmistrz",
+        "wójt",
+        "radny",
+        "budżet",
+        "obwieszczenie",
+        "zarządzenie",
+        "bip",
+        "urząd",
+        "powiat",
+    ];
+    const lowerTitle = title.toLowerCase();
+    for (const keyword of relevantKeywords) {
+        if (lowerTitle.includes(keyword)) {
+            return true;
+        }
+    }
+    // Dla niejasnych przypadków - użyj AI do oceny relevancji
+    try {
+        const prompt = `Oceń czy poniższy dokument jest istotny dla systemu wspomagającego pracę radnego gminy/powiatu w Polsce.
+
+TYTUŁ: ${title}
+URL: ${url}
+TREŚĆ (fragment): ${content.substring(0, 1000)}
+
+Odpowiedz TYLKO jednym słowem: TAK lub NIE
+
+Dokument jest istotny jeśli dotyczy:
+- Samorządu lokalnego (gmina, powiat, miasto)
+- Sesji rady, uchwał, protokołów
+- Prawa lokalnego, budżetu, inwestycji
+- Działalności radnych, komisji
+- Spraw mieszkańców gminy
+
+Dokument NIE jest istotny jeśli dotyczy:
+- Dokumentów technicznych platform (YouTube, Google, itp.)
+- Polityki prywatności, regulaminów serwisów
+- Treści niezwiązanych z samorządem`;
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [{ role: "user", content: prompt }],
+            max_tokens: 10,
+            temperature: 0,
+        });
+        const answer = response.choices[0]?.message?.content?.trim().toUpperCase();
+        return answer === "TAK";
+    }
+    catch (error) {
+        console.warn("[Scraper] AI relevance check failed, accepting document:", error);
+        return true; // W przypadku błędu, akceptuj dokument
+    }
+}
+// ============================================================================
 // DOCUMENT PROCESSING
 // ============================================================================
 async function processScrapedContentV2(sourceId, userId) {
@@ -510,7 +591,7 @@ async function processScrapedContentV2(sourceId, userId) {
         .select("*")
         .eq("source_id", sourceId)
         .order("scraped_at", { ascending: false })
-        .limit(100);
+        .limit(1000);
     console.log("[Scraper] Found scraped content items:", unprocessedContent?.length || 0);
     if (!unprocessedContent || unprocessedContent.length === 0) {
         console.log("[Scraper] No unprocessed content found, returning 0");
@@ -530,7 +611,7 @@ async function processScrapedContentV2(sourceId, userId) {
         console.log("[Scraper] API key query error:", apiError.message);
     }
     console.log("[Scraper] API config found:", apiConfig ? "yes" : "no");
-    let openaiApiKey = process.env.OPENAI_API_KEY;
+    let openaiApiKey = undefined;
     let openaiBaseUrl = undefined;
     let embeddingModel = "text-embedding-3-small"; // domyślny model
     if (apiConfig) {
@@ -540,14 +621,14 @@ async function processScrapedContentV2(sourceId, userId) {
         if (apiConfig.embedding_model) {
             embeddingModel = apiConfig.embedding_model;
         }
-        console.log("[Scraper] Using OpenAI API key from database, embedding model:", embeddingModel);
+        console.log("[Scraper] Using API key from database, embedding model:", embeddingModel);
     }
     else {
-        console.log("[Scraper] No API config in DB, checking env variable");
-        console.log("[Scraper] Env OPENAI_API_KEY:", openaiApiKey ? "set" : "not set");
+        console.log("[Scraper] No API config in DB, skipping AI processing");
+        return 0;
     }
-    if (!openaiApiKey || openaiApiKey === "your_openai_api_key") {
-        console.warn("[Scraper] OPENAI_API_KEY not set, skipping AI processing");
+    if (!openaiApiKey) {
+        console.warn("[Scraper] No API key configured, skipping AI processing");
         return 0;
     }
     const openai = new OpenAI({ apiKey: openaiApiKey, baseURL: openaiBaseUrl });
@@ -564,6 +645,12 @@ async function processScrapedContentV2(sourceId, userId) {
             // Pomiń zbyt krótkie treści
             if (!content.raw_content || content.raw_content.length < 100)
                 continue;
+            // INTELLIGENCE FILTER: Sprawdź relevancję dokumentu przed przetwarzaniem
+            const isRelevant = await checkDocumentRelevance(openai, content.title || "", content.raw_content, content.url || "");
+            if (!isRelevant) {
+                console.log(`[Scraper] Pomijam nieistotny dokument: ${content.title?.substring(0, 50)}...`);
+                continue;
+            }
             // Określ typ dokumentu
             const documentType = classifyDocument(content.title || "", content.raw_content);
             // Generuj embedding

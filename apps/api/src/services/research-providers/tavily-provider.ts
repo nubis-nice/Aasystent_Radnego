@@ -10,7 +10,7 @@ import type {
   SearchOptions,
   TavilySearchRequest,
   TavilySearchResponse,
-} from "@shared/types/deep-research";
+} from "@aasystent-radnego/shared";
 
 export class TavilyProvider extends BaseResearchProvider {
   async search(

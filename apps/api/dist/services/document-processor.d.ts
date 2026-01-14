@@ -10,7 +10,8 @@ export interface ProcessedDocument {
         pageCount?: number;
         confidence?: number;
         language?: string;
-        processingMethod: "ocr" | "text-extraction" | "direct";
+        processingMethod: "ocr" | "text-extraction" | "direct" | "stt";
+        sttModel?: string;
     };
     error?: string;
 }
@@ -20,13 +21,16 @@ export interface SaveToRAGResult {
     error?: string;
 }
 export declare class DocumentProcessor {
-    private openai;
+    private visionClient;
+    private embeddingsClient;
+    private embeddingModel;
+    private visionModel;
+    private userId;
     constructor();
     /**
-     * Initialize OpenAI client with user's API key
+     * Initialize AI clients with user's configuration via AIClientFactory
      */
     initializeWithUserConfig(userId: string): Promise<void>;
-    private getProviderBaseUrl;
     /**
      * Process uploaded file and extract text
      */
@@ -63,5 +67,9 @@ export declare class DocumentProcessor {
      * Save extracted text to RAG database
      */
     saveToRAG(userId: string, text: string, title: string, sourceFileName: string, documentType?: string): Promise<SaveToRAGResult>;
+    /**
+     * Process audio/video file with STT transcription
+     */
+    private processAudio;
 }
 //# sourceMappingURL=document-processor.d.ts.map

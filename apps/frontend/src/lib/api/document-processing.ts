@@ -19,6 +19,7 @@ export interface ProcessedDocument {
     speakers?: string[];
     duration?: string;
     audioIssues?: string[];
+    topics?: string[];
   };
   savedToRag: boolean;
   ragDocumentId?: string;

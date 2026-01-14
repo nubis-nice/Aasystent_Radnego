@@ -46,6 +46,12 @@ export declare class DocumentScorer {
         metadata?: Record<string, unknown>;
     }): DocumentScore;
     /**
+     * Wykryj numer sesji z zapytania
+     */
+    private extractSessionNumber;
+    private romanToArabic;
+    private arabicToRoman;
+    /**
      * Pobierz dokumenty z bazy i oblicz score dla każdego
      */
     getDocumentsWithScores(userId: string, options?: {

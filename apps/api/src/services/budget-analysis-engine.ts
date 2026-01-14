@@ -11,7 +11,7 @@ import OpenAI from "openai";
 import type {
   BudgetAnalysisRequest,
   BudgetAnalysisResult,
-} from "@shared/types/data-sources-api";
+} from "@aasystent-radnego/shared";
 import { getLLMClient, getAIConfig } from "../ai/index.js";
 
 const supabase = createClient(

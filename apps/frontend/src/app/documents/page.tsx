@@ -26,11 +26,7 @@ import {
   type DocumentPriority,
 } from "@/lib/api/documents-list";
 import { supabase } from "@/lib/supabase/client";
-import {
-  groupDocuments,
-  type GroupingScheme,
-  GROUPING_SCHEME_LABELS,
-} from "@/lib/documents/grouping";
+import { groupDocuments, type GroupingScheme } from "@/lib/documents/grouping";
 import { DocumentGroupView } from "@/components/documents/DocumentGroupView";
 
 interface UserPreferences {
@@ -49,8 +45,8 @@ export default function DocumentsPage() {
   const [search, setSearch] = useState("");
   const [documentType, setDocumentType] = useState("");
   const [priority, setPriority] = useState<DocumentPriority | "">("");
-  const [sortBy, setSortBy] = useState<"score" | "date" | "title" | "session">(
-    "score"
+  const [sortBy, setSortBy] = useState<"score" | "date" | "title" | "number">(
+    "date"
   );
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [dateRange, setDateRange] = useState("");
@@ -62,7 +58,8 @@ export default function DocumentsPage() {
   const [showOnlyMyCommittees, setShowOnlyMyCommittees] = useState(false);
   const [userCommittees, setUserCommittees] = useState<string[]>([]);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
-  const [groupingScheme, setGroupingScheme] =
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [groupingScheme, _setGroupingScheme] =
     useState<GroupingScheme>("cascade");
 
   // Załaduj preferencje użytkownika
@@ -89,14 +86,20 @@ export default function DocumentsPage() {
           // Zastosuj domyślne sortowanie
           if (prefs.default_sort_by) {
             setSortBy(
-              prefs.default_sort_by as "score" | "date" | "title" | "session"
+              prefs.default_sort_by as "score" | "date" | "title" | "number"
             );
           }
           if (prefs.default_sort_order) {
             setSortOrder(prefs.default_sort_order as "asc" | "desc");
           }
-          if (prefs.default_grouping_scheme) {
-            setGroupingScheme(prefs.default_grouping_scheme as GroupingScheme);
+          if (prefs.default_document_type) {
+            setDocumentType(prefs.default_document_type);
+          }
+          if (prefs.default_priority) {
+            setPriority(prefs.default_priority);
+          }
+          if (prefs.default_date_range) {
+            setDateRange(prefs.default_date_range);
           }
           setShowOnlyMyCommittees(prefs.show_only_my_committees || false);
         }
@@ -246,8 +249,8 @@ export default function DocumentsPage() {
         );
 
         // Użytkownik zalogowany - pobierz dane
-        // Mapowanie sortBy "session" na "date" dla API (session to sortowanie chronologiczne)
-        const apiSortBy = sortBy === "session" ? "date" : sortBy;
+        // Mapowanie sortBy dla API (number to sortowanie po tytule z wyciąganiem numerów)
+        const apiSortBy = sortBy === "number" ? "title" : sortBy;
         const response = await getDocuments({
           search: search || undefined,
           documentType: documentType || undefined,
@@ -293,14 +296,47 @@ export default function DocumentsPage() {
 
   const getDocumentTypeLabel = (type: string) => {
     const labels: Record<string, string> = {
+      // Poziom 1 - Krytyczne
+      budget_act: "Uchwała budżetowa",
       resolution: "Uchwała",
+      session_order: "Porządek obrad",
+      // Poziom 2 - Wysokie
+      resolution_project: "Projekt uchwały",
       protocol: "Protokół",
-      news: "Aktualność",
+      interpellation: "Interpelacja",
+      transcription: "Transkrypcja",
+      // Poziom 3 - Średnie
+      video: "Nagranie wideo",
+      committee_opinion: "Opinia komisji",
+      justification: "Uzasadnienie",
+      session_materials: "Materiały sesyjne",
+      // Poziom 4 - Niskie
+      order: "Zarządzenie",
       announcement: "Ogłoszenie",
+      // Poziom 5 - Tło
+      attachment: "Załącznik",
+      reference_material: "Materiał referencyjny",
+      news: "Aktualność",
+      report: "Raport",
+      opinion: "Opinia",
+      motion: "Wniosek",
       article: "Artykuł",
+      other: "Inne",
     };
     return labels[type] || type;
   };
+
+  // Filtrowanie dokumentów po stronie klienta (np. dla "Moje komisje")
+  const filteredDocuments = documents.filter((doc) => {
+    if (showOnlyMyCommittees && userCommittees.length > 0) {
+      const text = (doc.title + " " + (doc.summary || "")).toLowerCase();
+      const matchesCommittee = userCommittees.some((committee) =>
+        text.includes(committee.toLowerCase())
+      );
+      if (!matchesCommittee) return false;
+    }
+    return true;
+  });
 
   return (
     <div className="space-y-8">
@@ -397,12 +433,33 @@ export default function DocumentsPage() {
               className="w-full pl-10 pr-8 py-3 rounded-xl border-2 border-slate-300 bg-white focus:border-primary-500 focus:ring-4 focus:ring-primary-100 transition-all duration-200 appearance-none font-medium cursor-pointer"
             >
               <option value="">Wszystkie typy</option>
-              <option value="resolution">📜 Uchwała</option>
-              <option value="protocol">📋 Protokół</option>
-              <option value="session">🏛️ Sesja rady</option>
-              <option value="news">📰 Aktualność</option>
-              <option value="announcement">📢 Ogłoszenie</option>
-              <option value="article">📄 Artykuł</option>
+              <optgroup label="🔴 Krytyczne">
+                <option value="budget_act">💰 Uchwała budżetowa</option>
+                <option value="resolution">📜 Uchwała</option>
+                <option value="session_order">📋 Porządek obrad</option>
+              </optgroup>
+              <optgroup label="🟠 Wysokie">
+                <option value="resolution_project">📝 Projekt uchwały</option>
+                <option value="protocol">📋 Protokół</option>
+                <option value="interpellation">❓ Interpelacja</option>
+                <option value="transcription">🎙️ Transkrypcja</option>
+              </optgroup>
+              <optgroup label="🟡 Średnie">
+                <option value="video">� Nagranie wideo</option>
+                <option value="committee_opinion">👥 Opinia komisji</option>
+                <option value="justification">📑 Uzasadnienie</option>
+                <option value="session_materials">� Materiały sesyjne</option>
+              </optgroup>
+              <optgroup label="🔵 Niskie">
+                <option value="order">📋 Zarządzenie</option>
+                <option value="announcement">📢 Ogłoszenie</option>
+              </optgroup>
+              <optgroup label="⚪ Tło">
+                <option value="attachment">📎 Załącznik</option>
+                <option value="news">� Aktualność</option>
+                <option value="report">📊 Raport</option>
+                <option value="other">📄 Inne</option>
+              </optgroup>
             </select>
             <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
           </div>
@@ -452,44 +509,34 @@ export default function DocumentsPage() {
               value={sortBy}
               onChange={(e) =>
                 setSortBy(
-                  e.target.value as "score" | "date" | "title" | "session"
+                  e.target.value as "score" | "date" | "title" | "number"
                 )
               }
               className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-medium cursor-pointer"
+              title="Kryterium sortowania"
             >
-              <option value="score">Wg ważności</option>
-              <option value="date">Wg daty</option>
-              <option value="session">📅 Chronologicznie (sesje)</option>
-              <option value="title">Wg nazwy</option>
+              <option value="date">📅 Wg daty</option>
+              <option value="title">🔤 Alfabetycznie</option>
+              <option value="number">� Wg numeracji</option>
+              <option value="score">⭐ Wg ważności</option>
             </select>
             <button
               onClick={() =>
                 setSortOrder(sortOrder === "desc" ? "asc" : "desc")
               }
-              className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-medium hover:bg-slate-50"
+              className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                sortOrder === "desc"
+                  ? "border-primary-300 bg-primary-50 text-primary-700 hover:bg-primary-100"
+                  : "border-slate-300 bg-white hover:bg-slate-50"
+              }`}
+              title={
+                sortOrder === "desc"
+                  ? "Od najnowszych/Z-A/Najwyższe"
+                  : "Od najstarszych/A-Z/Najniższe"
+              }
             >
               {sortOrder === "desc" ? "↓ Malejąco" : "↑ Rosnąco"}
             </button>
-          </div>
-
-          {/* Schemat grupowania */}
-          <div className="flex items-center gap-2">
-            <select
-              value={groupingScheme}
-              onChange={(e) =>
-                setGroupingScheme(e.target.value as GroupingScheme)
-              }
-              className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-medium cursor-pointer"
-              title="Schemat wyświetlania dokumentów"
-            >
-              {Object.entries(GROUPING_SCHEME_LABELS).map(
-                ([key, { label, icon }]) => (
-                  <option key={key} value={key}>
-                    {icon} {label}
-                  </option>
-                )
-              )}
-            </select>
           </div>
 
           {/* Filtr Moje komisje */}
@@ -505,30 +552,44 @@ export default function DocumentsPage() {
             </label>
           )}
 
-          {/* Zapisz jako domyślne */}
+          {/* Zapisz jako domyślne - wszystkie opcje wyszukiwarki */}
           <button
             onClick={async () => {
               try {
                 const {
                   data: { user },
                 } = await supabase.auth.getUser();
-                if (!user) return;
+                if (!user) {
+                  alert("Musisz być zalogowany, aby zapisać preferencje.");
+                  return;
+                }
 
-                await supabase.from("user_document_preferences").upsert(
-                  {
-                    user_id: user.id,
-                    default_sort_by: sortBy,
-                    default_sort_order: sortOrder,
-                    default_grouping_scheme: groupingScheme,
-                    show_only_my_committees: showOnlyMyCommittees,
-                    updated_at: new Date().toISOString(),
-                  },
-                  { onConflict: "user_id" }
-                );
+                const { error } = await supabase
+                  .from("user_document_preferences")
+                  .upsert(
+                    {
+                      user_id: user.id,
+                      default_sort_by: sortBy,
+                      default_sort_order: sortOrder,
+                      default_document_type: documentType || null,
+                      default_priority: priority || null,
+                      default_date_range: dateRange || null,
+                      show_only_my_committees: showOnlyMyCommittees,
+                      updated_at: new Date().toISOString(),
+                    },
+                    { onConflict: "user_id" }
+                  );
+
+                if (error) {
+                  console.error("Error saving preferences:", error);
+                  alert(`Błąd zapisu: ${error.message}`);
+                  return;
+                }
 
                 alert("Preferencje zapisane!");
               } catch (err) {
                 console.error("Error saving preferences:", err);
+                alert("Błąd zapisu preferencji. Sprawdź konsolę.");
               }
             }}
             className="px-3 py-2 rounded-lg border border-primary-300 bg-primary-50 text-primary-700 text-sm font-medium hover:bg-primary-100 transition-colors"
@@ -602,14 +663,14 @@ export default function DocumentsPage() {
           <div className="bg-danger/10 border border-danger/30 rounded-2xl p-6 text-center">
             <p className="text-danger font-semibold">{error}</p>
           </div>
-        ) : documents.length === 0 ? (
+        ) : filteredDocuments.length === 0 ? (
           <div className="bg-secondary-50 rounded-2xl p-12 text-center">
             <FileText className="h-16 w-16 text-secondary-400 mx-auto mb-4" />
             <h3 className="text-xl font-bold text-text mb-2">
               Brak dokumentów
             </h3>
             <p className="text-text-secondary">
-              {search || documentType
+              {search || documentType || showOnlyMyCommittees
                 ? "Nie znaleziono dokumentów pasujących do filtrów"
                 : "Dodaj pierwszy dokument lub uruchom scraping źródeł danych"}
             </p>
@@ -617,7 +678,7 @@ export default function DocumentsPage() {
         ) : groupingScheme !== "flat" ? (
           <DocumentGroupView
             groupingResult={groupDocuments(
-              documents,
+              filteredDocuments,
               groupingScheme,
               sortBy,
               sortOrder
@@ -628,7 +689,7 @@ export default function DocumentsPage() {
             getDocumentTypeLabel={getDocumentTypeLabel}
           />
         ) : (
-          documents.map((doc, index) => {
+          filteredDocuments.map((doc, index) => {
             const priorityStyle = getPriorityStyles(doc.score?.priority);
             const isTopDocument = index < 5;
 

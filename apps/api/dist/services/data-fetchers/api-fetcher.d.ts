@@ -3,7 +3,7 @@
  * Agent AI "Winsdurf" - pobieranie danych z API (ISAP, WSA/NSA, RIO, etc.)
  */
 import { BaseDataFetcher } from "./base-fetcher.js";
-import type { DataSourceConfig, FetchedDocument } from "@shared/types/data-sources-api";
+import type { DataSourceConfig, FetchedDocument } from "@aasystent-radnego/shared";
 export declare class ApiDataFetcher extends BaseDataFetcher {
     private apiConfig;
     private fetchedDocuments;

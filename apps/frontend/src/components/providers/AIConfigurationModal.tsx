@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   X,
   Save,
@@ -9,12 +9,16 @@ import {
   Database,
   Eye,
   Mic,
+  MicOff,
   Volume2,
   Check,
   AlertCircle,
   Loader2,
   Settings2,
   Sparkles,
+  Radio,
+  Square,
+  TestTube,
 } from "lucide-react";
 import { ProviderType } from "@aasystent-radnego/shared";
 import { AIConnectionTester } from "./AIConnectionTester";
@@ -261,6 +265,21 @@ export function AIConfigurationModal({
     {}
   );
 
+  // Faster-Whisper dedykowane ustawienia
+  const [sttBaseUrl, setSttBaseUrl] = useState("http://localhost:8000/v1");
+  const [sttServerStatus, setSttServerStatus] = useState<
+    "unknown" | "online" | "offline" | "checking"
+  >("unknown");
+
+  // Test mikrofonu
+  const [micTestState, setMicTestState] = useState<
+    "idle" | "recording" | "transcribing" | "done" | "error"
+  >("idle");
+  const [micTestResult, setMicTestResult] = useState<string | null>(null);
+  const [micTestError, setMicTestError] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
   // Inicjalizacja z editingConfig
   useEffect(() => {
     if (editingConfig) {
@@ -477,6 +496,142 @@ export function AIConfigurationModal({
 
     return models;
   };
+
+  // Test serwera Faster-Whisper (przez proxy API)
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
+  const checkSttServer = useCallback(async () => {
+    setSttServerStatus("checking");
+    try {
+      const response = await fetch(
+        `${API_URL}/api/stt/status?baseUrl=${encodeURIComponent(sttBaseUrl)}`,
+        {
+          method: "GET",
+        }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        if (data.status === "online") {
+          setSttServerStatus("online");
+          // Zaktualizuj listę modeli STT
+          if (data.models?.length > 0) {
+            setDynamicModels((prev) => ({ ...prev, stt: data.models }));
+          }
+        } else {
+          setSttServerStatus("offline");
+        }
+      } else {
+        setSttServerStatus("offline");
+      }
+    } catch {
+      setSttServerStatus("offline");
+    }
+  }, [sttBaseUrl, API_URL]);
+
+  // Test mikrofonu z transkrypcją (przez proxy API)
+  const startMicTest = async () => {
+    setMicTestState("recording");
+    setMicTestResult(null);
+    setMicTestError(null);
+    audioChunksRef.current = [];
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: "audio/webm",
+      });
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+
+        if (audioChunksRef.current.length === 0) {
+          setMicTestState("error");
+          setMicTestError("Brak danych audio");
+          return;
+        }
+
+        setMicTestState("transcribing");
+
+        try {
+          const audioBlob = new Blob(audioChunksRef.current, {
+            type: "audio/webm",
+          });
+          const formData = new FormData();
+          formData.append("file", audioBlob, "test.webm");
+
+          const model =
+            functionConfigs.stt.modelName || "Systran/faster-whisper-medium";
+          const response = await fetch(
+            `${API_URL}/api/stt/transcribe-test?baseUrl=${encodeURIComponent(
+              sttBaseUrl
+            )}&model=${encodeURIComponent(model)}`,
+            {
+              method: "POST",
+              body: formData,
+            }
+          );
+
+          if (response.ok) {
+            const result = await response.json();
+            if (result.success) {
+              setMicTestResult(result.text || "(brak tekstu)");
+              setMicTestState("done");
+            } else {
+              setMicTestError(result.error || "Błąd transkrypcji");
+              setMicTestState("error");
+            }
+          } else {
+            const error = await response.text();
+            setMicTestError(`Błąd serwera: ${error}`);
+            setMicTestState("error");
+          }
+        } catch (err) {
+          setMicTestError(
+            err instanceof Error ? err.message : "Błąd transkrypcji"
+          );
+          setMicTestState("error");
+        }
+      };
+
+      mediaRecorder.start();
+
+      // Automatycznie zatrzymaj po 5 sekundach
+      setTimeout(() => {
+        if (mediaRecorderRef.current?.state === "recording") {
+          mediaRecorderRef.current.stop();
+        }
+      }, 5000);
+    } catch (err) {
+      setMicTestError(
+        err instanceof Error ? err.message : "Brak dostępu do mikrofonu"
+      );
+      setMicTestState("error");
+    }
+  };
+
+  const stopMicTest = () => {
+    if (mediaRecorderRef.current?.state === "recording") {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  // Sprawdź serwer STT przy włączeniu zakładki
+  useEffect(() => {
+    if (
+      activeTab === "stt" &&
+      functionConfigs.stt.enabled &&
+      sttServerStatus === "unknown"
+    ) {
+      checkSttServer();
+    }
+  }, [activeTab, functionConfigs.stt.enabled, sttServerStatus, checkSttServer]);
 
   if (!isOpen) return null;
 
@@ -760,6 +915,155 @@ export function AIConfigurationModal({
                       disabled={saving}
                     />
                   </div>
+
+                  {/* Sekcja Faster-Whisper - tylko dla STT */}
+                  {activeTab === "stt" && (
+                    <div className="mt-6 pt-6 border-t border-slate-200">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Radio className="h-5 w-5 text-orange-600" />
+                        <h4 className="font-semibold text-slate-900">
+                          Serwer Faster-Whisper
+                        </h4>
+                      </div>
+
+                      {/* Base URL dla STT */}
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                          URL serwera transkrypcji
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={sttBaseUrl}
+                            onChange={(e) => setSttBaseUrl(e.target.value)}
+                            placeholder="http://localhost:8000/v1"
+                            className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all"
+                            disabled={saving}
+                          />
+                          <button
+                            onClick={checkSttServer}
+                            disabled={sttServerStatus === "checking"}
+                            className="px-3 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+                            title="Sprawdź połączenie"
+                          >
+                            {sttServerStatus === "checking" ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <TestTube className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
+
+                        {/* Status serwera */}
+                        <div className="mt-2 flex items-center gap-2">
+                          {sttServerStatus === "online" && (
+                            <span className="flex items-center gap-1.5 text-sm text-green-600">
+                              <Check className="h-4 w-4" />
+                              Serwer online
+                            </span>
+                          )}
+                          {sttServerStatus === "offline" && (
+                            <span className="flex items-center gap-1.5 text-sm text-red-600">
+                              <AlertCircle className="h-4 w-4" />
+                              Serwer niedostępny - uruchom Docker
+                            </span>
+                          )}
+                          {sttServerStatus === "checking" && (
+                            <span className="flex items-center gap-1.5 text-sm text-slate-500">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Sprawdzanie...
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Test mikrofonu */}
+                      <div className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl p-4 border border-orange-200">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Mic className="h-5 w-5 text-orange-600" />
+                          <h5 className="font-medium text-slate-900">
+                            Test mikrofonu
+                          </h5>
+                        </div>
+
+                        <p className="text-sm text-slate-600 mb-3">
+                          Nagraj 5 sekund audio, aby przetestować transkrypcję.
+                        </p>
+
+                        <div className="flex items-center gap-3">
+                          {micTestState === "idle" && (
+                            <button
+                              onClick={startMicTest}
+                              disabled={sttServerStatus !== "online"}
+                              className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 transition-colors flex items-center gap-2"
+                            >
+                              <Mic className="h-4 w-4" />
+                              Rozpocznij nagrywanie
+                            </button>
+                          )}
+
+                          {micTestState === "recording" && (
+                            <button
+                              onClick={stopMicTest}
+                              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2 animate-pulse"
+                            >
+                              <Square className="h-4 w-4" />
+                              Zatrzymaj (lub poczekaj 5s)
+                            </button>
+                          )}
+
+                          {micTestState === "transcribing" && (
+                            <div className="flex items-center gap-2 text-orange-600">
+                              <Loader2 className="h-5 w-5 animate-spin" />
+                              <span>Transkrybuję...</span>
+                            </div>
+                          )}
+
+                          {micTestState === "done" && (
+                            <button
+                              onClick={() => setMicTestState("idle")}
+                              className="px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors flex items-center gap-2"
+                            >
+                              <RefreshCw className="h-4 w-4" />
+                              Powtórz test
+                            </button>
+                          )}
+
+                          {micTestState === "error" && (
+                            <button
+                              onClick={() => setMicTestState("idle")}
+                              className="px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors flex items-center gap-2"
+                            >
+                              <RefreshCw className="h-4 w-4" />
+                              Spróbuj ponownie
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Wynik testu */}
+                        {micTestResult && (
+                          <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                            <div className="flex items-center gap-2 text-green-700 mb-1">
+                              <Check className="h-4 w-4" />
+                              <span className="font-medium">Transkrypcja:</span>
+                            </div>
+                            <p className="text-green-800 italic">
+                              &quot;{micTestResult}&quot;
+                            </p>
+                          </div>
+                        )}
+
+                        {micTestError && (
+                          <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                            <div className="flex items-center gap-2 text-red-700">
+                              <MicOff className="h-4 w-4" />
+                              <span>{micTestError}</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

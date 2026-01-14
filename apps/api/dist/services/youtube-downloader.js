@@ -1,39 +1,106 @@
-import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, unlinkSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import OpenAI from "openai";
-import { createClient } from "@supabase/supabase-js";
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+import { getSTTClient, getLLMClient, getAIConfig } from "../ai/index.js";
+import { getAudioPreprocessor } from "./audio-preprocessor.js";
 export class YouTubeDownloader {
-    openai = null;
+    sttClient = null;
+    llmClient = null;
     tempDir;
+    userId = null;
+    sttModel = "whisper-1";
+    llmModel = "gpt-4o";
     constructor() {
         this.tempDir = join(tmpdir(), "aasystent-youtube");
         if (!existsSync(this.tempDir)) {
             mkdirSync(this.tempDir, { recursive: true });
         }
     }
-    async initializeWithUserConfig(userId) {
-        const { data: config } = await supabase
-            .from("api_configurations")
-            .select("*")
-            .eq("user_id", userId)
-            .eq("is_default", true)
-            .eq("is_active", true)
-            .single();
-        if (!config) {
-            throw new Error("Brak skonfigurowanego klucza API. Przejdź do ustawień.");
+    /**
+     * Normalizuj nazwę modelu STT dla faster-whisper-server
+     * Mapuje różne formaty nazw na prawidłowe nazwy modeli
+     */
+    normalizeSTTModel(modelName, provider) {
+        // Dla OpenAI API używamy whisper-1
+        if (provider === "openai") {
+            return "whisper-1";
         }
-        const decodedApiKey = Buffer.from(config.api_key_encrypted, "base64").toString("utf-8");
-        this.openai = new OpenAI({
-            apiKey: decodedApiKey,
-            baseURL: config.base_url || undefined,
-        });
+        // Dla faster-whisper-server normalizujemy nazwy
+        const normalizedModel = modelName.toLowerCase().trim();
+        // Usuń suffix :latest jeśli istnieje (np. dimavz/whisper-tiny:latest)
+        const withoutTag = normalizedModel.replace(/:latest$/, "");
+        // Mapowanie nieprawidłowych nazw na prawidłowe
+        const modelMapping = {
+            whisper: "large-v3",
+            "whisper-1": "large-v3",
+            "whisper-tiny": "tiny",
+            "whisper-base": "base",
+            "whisper-small": "small",
+            "whisper-medium": "medium",
+            "whisper-large": "large-v3",
+            "whisper-large-v2": "large-v2",
+            "whisper-large-v3": "large-v3",
+            "dimavz/whisper-tiny": "tiny",
+            "dimavz/whisper-base": "base",
+            "dimavz/whisper-small": "small",
+            "dimavz/whisper-medium": "medium",
+            "dimavz/whisper-large": "large-v3",
+        };
+        // Sprawdź czy mamy mapowanie
+        if (modelMapping[withoutTag]) {
+            console.log(`[YouTubeDownloader] Normalized STT model: ${modelName} -> ${modelMapping[withoutTag]}`);
+            return modelMapping[withoutTag];
+        }
+        // Sprawdź czy to już prawidłowy format Systran/faster-whisper-*
+        if (withoutTag.startsWith("systran/faster-whisper-")) {
+            return modelName; // Już prawidłowy format
+        }
+        // Sprawdź czy to prawidłowy rozmiar modelu
+        const validSizes = [
+            "tiny",
+            "tiny.en",
+            "base",
+            "base.en",
+            "small",
+            "small.en",
+            "medium",
+            "medium.en",
+            "large",
+            "large-v1",
+            "large-v2",
+            "large-v3",
+            "distil-large-v2",
+            "distil-medium.en",
+            "distil-small.en",
+            "distil-large-v3",
+        ];
+        if (validSizes.includes(withoutTag)) {
+            return withoutTag;
+        }
+        // Domyślnie użyj large-v3 dla najlepszej jakości
+        console.warn(`[YouTubeDownloader] Unknown STT model "${modelName}", using large-v3`);
+        return "large-v3";
+    }
+    /**
+     * Inicjalizacja z konfiguracją użytkownika przez AIClientFactory
+     */
+    async initializeWithUserConfig(userId) {
+        this.userId = userId;
+        // Pobierz klienta STT (Speech-to-Text) z fabryki
+        this.sttClient = await getSTTClient(userId);
+        // Pobierz konfigurację STT aby znać model
+        const sttConfig = await getAIConfig(userId, "stt");
+        this.sttModel = this.normalizeSTTModel(sttConfig.modelName, sttConfig.provider);
+        // Pobierz klienta LLM do analizy transkryptu
+        this.llmClient = await getLLMClient(userId);
+        // Pobierz konfigurację LLM aby znać model
+        const llmConfig = await getAIConfig(userId, "llm");
+        this.llmModel = llmConfig.modelName;
+        console.log(`[YouTubeDownloader] Initialized for user ${userId.substring(0, 8)}...`);
+        console.log(`[YouTubeDownloader] STT: provider=${sttConfig.provider}, model=${this.sttModel}, baseUrl=${sttConfig.baseUrl}`);
+        console.log(`[YouTubeDownloader] LLM: model=${this.llmModel}`);
     }
     async downloadAudio(videoUrl) {
         const videoId = this.extractVideoId(videoUrl);
@@ -67,19 +134,8 @@ export class YouTubeDownloader {
         return new Promise((resolve) => {
             // Remove .mp3 extension - yt-dlp will add it
             const outputBase = outputPath.replace(/\.mp3$/, "");
-            // FFmpeg and Deno locations (winget installation)
-            const ffmpegPath = "C:\\Users\\nubis\\AppData\\Local\\Microsoft\\WinGet\\Packages\\yt-dlp.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-N-121938-g2456a39581-win64-gpl\\bin";
-            const denoPath = "C:\\Users\\nubis\\AppData\\Local\\Microsoft\\WinGet\\Links\\deno.exe";
             // yt-dlp arguments for audio extraction (64kbps mono for smaller files)
             const args = [
-                "--ffmpeg-location",
-                ffmpegPath,
-                "--js-runtimes",
-                `deno:${denoPath}`, // JavaScript runtime for YouTube extraction
-                "--cookies-from-browser",
-                "chrome", // Użyj cookies z Chrome aby ominąć weryfikację bota
-                "-f", // Format selector
-                "bestaudio/best", // Pobierz tylko najlepszą ścieżkę audio (bez wideo)
                 "-x", // Extract audio
                 "--audio-format",
                 "mp3",
@@ -96,9 +152,14 @@ export class YouTubeDownloader {
                 "%(title)s|||%(duration_string)s",
                 videoUrl,
             ];
-            // Use full path to yt-dlp (try multiple installation locations)
+            // Add FFmpeg location if specified in environment
+            const ffmpegPath = process.env.FFMPEG_PATH;
+            if (ffmpegPath) {
+                args.unshift("--ffmpeg-location", ffmpegPath);
+            }
+            // Use full path to yt-dlp
             const ytdlpPath = process.env.YTDLP_PATH ||
-                "C:\\ProgramData\\chocolatey\\lib\\yt-dlp\\tools\\x64\\yt-dlp.exe"; // Chocolatey installation (x64)
+                "C:\\ProgramData\\chocolatey\\lib\\yt-dlp\\tools\\x64\\yt-dlp.exe";
             console.log(`[YouTubeDownloader] Using yt-dlp path: ${ytdlpPath}`);
             console.log(`[YouTubeDownloader] Running command with args: ${args
                 .slice(0, 5)
@@ -113,7 +174,6 @@ export class YouTubeDownloader {
                 stderr += data.toString();
             });
             childProcess.on("close", (code) => {
-                console.log(`[YouTubeDownloader] Process exited with code: ${code}`);
                 if (code === 0) {
                     // Parse output - first line is filepath, second is title|||duration
                     const lines = stdout.trim().split("\n");
@@ -131,9 +191,7 @@ export class YouTubeDownloader {
                     });
                 }
                 else {
-                    console.error("[YouTubeDownloader] yt-dlp failed with code:", code);
-                    console.error("[YouTubeDownloader] stderr:", stderr);
-                    console.error("[YouTubeDownloader] stdout:", stdout);
+                    console.error("[YouTubeDownloader] yt-dlp stderr:", stderr);
                     // Check for common errors
                     if (stderr.includes("not found") ||
                         stderr.includes("nie odnaleziono")) {
@@ -172,23 +230,41 @@ export class YouTubeDownloader {
             });
         });
     }
-    async transcribeAndAnalyze(audioPath, videoId, videoTitle, videoUrl) {
-        if (!this.openai) {
-            throw new Error("OpenAI not initialized");
+    async transcribeAndAnalyze(audioPath, videoId, videoTitle, videoUrl, enablePreprocessing = true) {
+        if (!this.sttClient) {
+            throw new Error("STT client not initialized. Call initializeWithUserConfig first.");
         }
+        let processedPath = audioPath;
+        let audioAnalysis;
         try {
             console.log(`[YouTubeDownloader] Transcribing: ${audioPath}`);
+            // Adaptacyjny preprocessing audio (jeśli włączony)
+            if (enablePreprocessing) {
+                try {
+                    console.log(`[YouTubeDownloader] Starting adaptive audio preprocessing...`);
+                    const preprocessor = getAudioPreprocessor();
+                    const result = await preprocessor.preprocessAdaptive(audioPath, "wav");
+                    processedPath = result.outputPath;
+                    audioAnalysis = result.analysis;
+                    console.log(`[YouTubeDownloader] Preprocessing complete. Issues: ${audioAnalysis.issues.map((i) => i.type).join(", ") || "none"}`);
+                }
+                catch (preprocessError) {
+                    console.warn(`[YouTubeDownloader] Preprocessing failed, using original audio:`, preprocessError);
+                    processedPath = audioPath;
+                }
+            }
             // Read audio file
-            const audioBuffer = readFileSync(audioPath);
+            const audioBuffer = readFileSync(processedPath);
             const fileSizeMB = (audioBuffer.length / 1024 / 1024).toFixed(2);
             console.log(`[YouTubeDownloader] Audio file size: ${fileSizeMB}MB`);
             // Transcribe with Whisper using fs.createReadStream
             const { createReadStream } = await import("node:fs");
-            const audioStream = createReadStream(audioPath);
-            const transcription = await this.openai.audio.transcriptions.create({
+            const audioStream = createReadStream(processedPath);
+            console.log(`[YouTubeDownloader] Using STT model: ${this.sttModel}`);
+            const transcription = await this.sttClient.audio.transcriptions.create({
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                file: audioStream, // OpenAI SDK accepts ReadStream but types require File
-                model: "whisper-1",
+                file: audioStream,
+                model: this.sttModel,
                 language: "pl",
                 response_format: "text",
             });
@@ -218,9 +294,12 @@ export class YouTubeDownloader {
             const analysis = await this.analyzeTranscript(correctedTranscript);
             // Format output as Markdown for export
             const formattedTranscript = this.formatTranscriptMarkdown(correctedTranscript, analysis.segments, analysis.summary, videoTitle, videoUrl);
-            // Cleanup temp file
+            // Cleanup temp files
             try {
                 unlinkSync(audioPath);
+                if (processedPath !== audioPath && existsSync(processedPath)) {
+                    unlinkSync(processedPath);
+                }
             }
             catch {
                 /* ignore cleanup errors */
@@ -232,13 +311,17 @@ export class YouTubeDownloader {
                 segments: analysis.segments,
                 summary: analysis.summary,
                 metadata: { videoId, videoTitle, videoUrl },
+                audioAnalysis,
             };
         }
         catch (error) {
             console.error("[YouTubeDownloader] Transcription error:", error);
-            // Cleanup temp file
+            // Cleanup temp files
             try {
                 unlinkSync(audioPath);
+                if (processedPath !== audioPath && existsSync(processedPath)) {
+                    unlinkSync(processedPath);
+                }
             }
             catch {
                 /* ignore cleanup errors */
@@ -262,8 +345,8 @@ export class YouTubeDownloader {
         }
     }
     async correctTranscript(rawTranscript) {
-        if (!this.openai)
-            throw new Error("OpenAI not initialized");
+        if (!this.llmClient)
+            throw new Error("LLM client not initialized");
         console.log("[YouTubeDownloader] Correcting transcript errors...");
         const correctionPrompt = `Jesteś korektorem transkrypcji sesji rady miejskiej/gminnej. 
 
@@ -279,8 +362,8 @@ ZASADY:
 7. Poprawiaj typowe błędy ASR: "rady" zamiast "raty", "sesja" zamiast "sesję" itp.
 
 Zwróć TYLKO poprawiony tekst, bez komentarzy.`;
-        const response = await this.openai.chat.completions.create({
-            model: "gpt-4o",
+        const response = await this.llmClient.chat.completions.create({
+            model: this.llmModel,
             messages: [
                 { role: "system", content: correctionPrompt },
                 { role: "user", content: rawTranscript.slice(0, 30000) },
@@ -290,8 +373,8 @@ Zwróć TYLKO poprawiony tekst, bez komentarzy.`;
         return response.choices[0]?.message?.content || rawTranscript;
     }
     async analyzeTranscript(transcript) {
-        if (!this.openai)
-            throw new Error("OpenAI not initialized");
+        if (!this.llmClient)
+            throw new Error("LLM client not initialized");
         const systemPrompt = `Jesteś ekspertem analizy lingwistycznej sesji rady miejskiej/gminnej. Przeanalizuj transkrypcję i zwróć szczegółową analizę w formacie JSON.
 
 Dla KAŻDEJ wypowiedzi określ:
@@ -327,8 +410,8 @@ Odpowiedz TYLKO w formacie JSON:
     "duration": "1:32:00"
   }
 }`;
-        const response = await this.openai.chat.completions.create({
-            model: "gpt-4o",
+        const response = await this.llmClient.chat.completions.create({
+            model: this.llmModel,
             messages: [
                 { role: "system", content: systemPrompt },
                 {

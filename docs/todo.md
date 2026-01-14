@@ -31,6 +31,13 @@
 - [ ] **Adaptery API**: Implementacja konkretnych adapterów dla ISAP, WSA/NSA, RIO (obecnie placeholder).
 - [ ] **Transkrypcja**: Sesje rady (audio/wideo) - ASR + segmentacja czasowa.
 
+## Hierarchia i Wyszukiwanie (2026-01-14)
+
+- [x] Opracowanie hierarchii ważności dokumentów (`docs/document_hierarchy.md`).
+- [x] Aktualizacja wag w `document-scorer.ts`.
+- [x] Aktualizacja dokumentacji normalizacji danych.
+- [x] Implementacja logiki wypełniania `hierarchyLevel` w `DocumentNormalizer`.
+
 ---
 
 ## Frontend: konkretne zadania (2025-12-26)

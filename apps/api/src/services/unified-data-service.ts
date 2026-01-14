@@ -16,7 +16,7 @@ import type {
   DataSourceConfig,
   FetchedDocument,
   DataFetchResult,
-} from "@shared/types/data-sources-api";
+} from "@aasystent-radnego/shared";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,

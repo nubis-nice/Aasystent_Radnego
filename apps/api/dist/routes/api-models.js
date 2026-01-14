@@ -1,4 +1,199 @@
 export const apiModelsRoutes = async (fastify) => {
+    // POST /api/test/function - Test specific AI function (public endpoint)
+    fastify.post("/test/function", async (request, reply) => {
+        const startTime = Date.now();
+        try {
+            const { provider, api_key, base_url, function_type, model_name } = request.body;
+            if (!provider || !model_name) {
+                return reply.status(400).send({
+                    success: false,
+                    error: "Brak wymaganych parametrów (provider, model_name)",
+                });
+            }
+            // Dla lokalnych providerów klucz API jest opcjonalny
+            if (!api_key && provider !== "local") {
+                return reply.status(400).send({
+                    success: false,
+                    error: "Brak klucza API",
+                });
+            }
+            const baseUrl = base_url ||
+                (provider === "local"
+                    ? "http://localhost:11434/v1"
+                    : "https://api.openai.com/v1");
+            // Import OpenAI dynamicznie
+            const OpenAI = (await import("openai")).default;
+            const client = new OpenAI({
+                apiKey: api_key || "ollama",
+                baseURL: baseUrl,
+                timeout: 30000,
+            });
+            let details = {};
+            switch (function_type) {
+                case "llm": {
+                    const response = await client.chat.completions.create({
+                        model: model_name,
+                        messages: [
+                            { role: "user", content: "Odpowiedz jednym słowem: OK" },
+                        ],
+                        max_tokens: 10,
+                    });
+                    details = {
+                        response: response.choices[0]?.message?.content || "",
+                        model: response.model,
+                        usage: response.usage,
+                    };
+                    break;
+                }
+                case "embeddings": {
+                    const response = await client.embeddings.create({
+                        model: model_name,
+                        input: "Test embedding",
+                    });
+                    details = {
+                        dimensions: response.data[0]?.embedding?.length || 0,
+                        model: response.model,
+                    };
+                    break;
+                }
+                case "vision": {
+                    // Dla Ollama używamy natywnego API - testujemy tylko tekstem
+                    // (obrazy mogą crashować modele z powodu braku zasobów)
+                    if (provider === "local" || baseUrl.includes("11434")) {
+                        const ollamaBaseUrl = baseUrl.replace(/\/v1\/?$/, "");
+                        // Test tekstowy - bezpieczny dla wszystkich modeli
+                        const textTestResponse = await globalThis.fetch(`${ollamaBaseUrl}/api/chat`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                model: model_name,
+                                messages: [
+                                    {
+                                        role: "user",
+                                        content: "Odpowiedz jednym słowem: OK",
+                                    },
+                                ],
+                                stream: false,
+                            }),
+                        });
+                        if (!textTestResponse.ok) {
+                            const errorText = await textTestResponse.text();
+                            throw new Error(`Ollama error: ${textTestResponse.status} - ${errorText}`);
+                        }
+                        const textData = (await textTestResponse.json());
+                        const isCloudModel = model_name.includes("-cloud") || model_name.includes(":cloud");
+                        details = {
+                            response: textData.message?.content || "",
+                            model: textData.model || model_name,
+                            note: isCloudModel
+                                ? "Model cloud - test tekstowy OK. Przetwarzanie obrazów przez Ollama cloud."
+                                : "Model lokalny - test tekstowy OK. Przetwarzanie obrazów wymaga wystarczających zasobów.",
+                        };
+                    }
+                    else {
+                        // Dla OpenAI i innych używamy standardowego formatu
+                        const response = await client.chat.completions.create({
+                            model: model_name,
+                            messages: [
+                                {
+                                    role: "user",
+                                    content: [
+                                        { type: "text", text: "Opisz ten obraz jednym słowem." },
+                                        {
+                                            type: "image_url",
+                                            image_url: {
+                                                url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+                                            },
+                                        },
+                                    ],
+                                },
+                            ],
+                            max_tokens: 10,
+                        });
+                        details = {
+                            response: response.choices[0]?.message?.content || "",
+                            model: response.model,
+                        };
+                    }
+                    break;
+                }
+                case "stt": {
+                    try {
+                        const models = await client.models.list();
+                        const modelExists = Array.from(models.data).some((m) => m.id === model_name || m.id.includes("whisper"));
+                        if (modelExists) {
+                            details = { supported: true, note: "Model STT dostępny" };
+                        }
+                        else {
+                            details = {
+                                supported: true,
+                                note: "Endpoint dostępny, model może wymagać pobrania",
+                            };
+                        }
+                    }
+                    catch {
+                        if (provider === "local") {
+                            details = {
+                                supported: true,
+                                note: "Lokalny provider - zakładamy dostępność STT",
+                            };
+                        }
+                        else {
+                            throw new Error("Nie można zweryfikować modelu STT");
+                        }
+                    }
+                    break;
+                }
+                case "tts": {
+                    try {
+                        const response = await client.audio.speech.create({
+                            model: model_name,
+                            voice: "alloy",
+                            input: "Test",
+                        });
+                        details = {
+                            supported: true,
+                            contentType: response.headers.get("content-type"),
+                        };
+                    }
+                    catch (e) {
+                        const error = e;
+                        if (error.message?.includes("not found") ||
+                            error.message?.includes("404")) {
+                            throw new Error(`Model TTS "${model_name}" nie znaleziony`);
+                        }
+                        throw e;
+                    }
+                    break;
+                }
+                default:
+                    return reply.status(400).send({
+                        success: false,
+                        error: `Nieznany typ funkcji: ${function_type}`,
+                    });
+            }
+            return reply.send({
+                success: true,
+                function_type,
+                model_name,
+                response_time_ms: Date.now() - startTime,
+                details,
+            });
+        }
+        catch (error) {
+            const err = error;
+            fastify.log.error({ error: err, message: err.message }, "Function test error");
+            return reply.status(200).send({
+                success: false,
+                error: err.message || "Test nieudany",
+                response_time_ms: Date.now() - startTime,
+                details: {
+                    code: err.code,
+                    status: err.status,
+                },
+            });
+        }
+    });
     // POST /api/fetch-models - Pobierz listę modeli z API providera (public endpoint)
     fastify.post("/fetch-models", async (request, reply) => {
         try {
@@ -14,10 +209,10 @@ export const apiModelsRoutes = async (fastify) => {
                     error: "Klucz API jest wymagany dla tego providera",
                 });
             }
-            // Domyślne URL dla providerów - tylko OpenAI API compatible
+            // Domyślne URL dla providerów
             const providerBaseUrls = {
                 openai: "https://api.openai.com/v1",
-                local: "http://localhost:11434/v1", // Ollama default
+                local: "http://localhost:11434", // Ollama default (bez /v1)
                 other: "", // Custom endpoint
             };
             const finalBaseUrl = baseUrl || providerBaseUrls[provider];
@@ -26,9 +221,21 @@ export const apiModelsRoutes = async (fastify) => {
                     error: "Nieznany provider lub brak URL API",
                 });
             }
-            // Pobierz listę modeli z API
-            const modelsUrl = `${finalBaseUrl.replace(/\/$/, "")}/models`;
-            console.log(`[FetchModels] Fetching from: ${modelsUrl}`);
+            // Ollama używa natywnego API /api/tags, nie OpenAI-compatible /v1/models
+            let modelsUrl;
+            let isOllama = false;
+            if (provider === "local" || finalBaseUrl.includes("11434")) {
+                // Ollama native API
+                modelsUrl = `${finalBaseUrl
+                    .replace(/\/$/, "")
+                    .replace(/\/v1$/, "")}/api/tags`;
+                isOllama = true;
+            }
+            else {
+                // OpenAI-compatible API
+                modelsUrl = `${finalBaseUrl.replace(/\/$/, "")}/models`;
+            }
+            console.log(`[FetchModels] Fetching from: ${modelsUrl} (isOllama: ${isOllama})`);
             // Różne providery używają różnych metod autoryzacji
             const headers = {
                 "Content-Type": "application/json",
@@ -37,8 +244,8 @@ export const apiModelsRoutes = async (fastify) => {
             if (provider === "google" && !finalBaseUrl.includes("/openai")) {
                 headers["x-goog-api-key"] = apiKey;
             }
-            else {
-                // Pozostali providerzy używają Bearer token
+            else if (!isOllama) {
+                // Pozostali providerzy używają Bearer token (Ollama nie wymaga)
                 headers["Authorization"] = `Bearer ${apiKey}`;
             }
             const response = await globalThis.fetch(modelsUrl, {
@@ -56,8 +263,17 @@ export const apiModelsRoutes = async (fastify) => {
             const data = (await response.json());
             // Różne providery zwracają różne formaty
             let models = [];
+            // Ollama native API: { models: [{ name: "llama3.2:latest", model: "llama3.2:latest", ... }] }
+            if (isOllama && data.models && Array.isArray(data.models)) {
+                models = data.models.map((m) => ({
+                    id: m.name || m.model || "",
+                    name: m.name || m.model || "",
+                    owned_by: "ollama",
+                }));
+                console.log(`[FetchModels] Ollama models found: ${models.length}`);
+            }
             // Google Gemini: { models: [{ name: "models/gemini-...", displayName: "..." }] }
-            if (data.models && Array.isArray(data.models)) {
+            else if (data.models && Array.isArray(data.models)) {
                 models = data.models.map((m) => ({
                     id: m.name?.replace("models/", "") || m.displayName || "",
                     name: m.displayName || m.name?.replace("models/", "") || "",
@@ -101,11 +317,24 @@ export const apiModelsRoutes = async (fastify) => {
             });
             const visionModels = models.filter((m) => {
                 const id = m.id.toLowerCase();
-                return ((id.includes("gpt-4") && id.includes("vision")) ||
+                return (
+                // OpenAI vision models
+                (id.includes("gpt-4") && id.includes("vision")) ||
                     id.includes("gpt-4o") ||
                     id.includes("gpt-4-turbo") ||
+                    // Google vision models
                     (id.includes("gemini") && id.includes("vision")) ||
-                    (id.includes("claude") && id.includes("vision")));
+                    // Anthropic vision models
+                    (id.includes("claude") && id.includes("vision")) ||
+                    // Ollama/Local vision models
+                    id.includes("llava") ||
+                    id.includes("bakllava") ||
+                    id.includes("moondream") ||
+                    (id.includes("qwen") && id.includes("vl")) ||
+                    id.includes("minicpm-v") ||
+                    id.includes("llama3.2-vision") ||
+                    id.includes("cogvlm") ||
+                    id.includes("yi-vl"));
             });
             // Sortuj modele chat
             chatModels.sort((a, b) => {
@@ -151,6 +380,85 @@ export const apiModelsRoutes = async (fastify) => {
             return reply.status(500).send({
                 error: "Nie udało się pobrać listy modeli",
                 details: error instanceof Error ? error.message : "Unknown error",
+            });
+        }
+    });
+    // ─────────────────────────────────────────────────────────────────────────
+    // PROXY ENDPOINTS DLA FASTER-WHISPER (omijają CORS)
+    // ─────────────────────────────────────────────────────────────────────────
+    /* eslint-disable no-undef */
+    // GET /api/stt/status - Sprawdź status serwera STT
+    fastify.get("/stt/status", async (request, reply) => {
+        const baseUrl = request.query.baseUrl || "http://localhost:8000/v1";
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            const response = await fetch(`${baseUrl}/models`, {
+                method: "GET",
+                signal: controller.signal,
+            });
+            clearTimeout(timeoutId);
+            if (response.ok) {
+                const data = (await response.json());
+                return reply.send({
+                    status: "online",
+                    models: data.data?.map((m) => m.id) || [],
+                });
+            }
+            else {
+                return reply.send({
+                    status: "offline",
+                    error: `HTTP ${response.status}`,
+                });
+            }
+        }
+        catch (err) {
+            return reply.send({
+                status: "offline",
+                error: err instanceof Error ? err.message : "Connection failed",
+            });
+        }
+    });
+    // POST /api/stt/transcribe-test - Test transkrypcji audio
+    fastify.post("/stt/transcribe-test", async (request, reply) => {
+        const baseUrl = request.query.baseUrl || "http://localhost:8000/v1";
+        const model = request.query.model || "Systran/faster-whisper-medium";
+        try {
+            const data = await request.file();
+            if (!data) {
+                return reply.status(400).send({
+                    success: false,
+                    error: "Brak pliku audio",
+                });
+            }
+            const formData = new FormData();
+            const buffer = await data.toBuffer();
+            formData.append("file", new Blob([buffer]), data.filename || "audio.webm");
+            formData.append("model", model);
+            formData.append("language", "pl");
+            const response = await fetch(`${baseUrl}/audio/transcriptions`, {
+                method: "POST",
+                body: formData,
+            });
+            if (response.ok) {
+                const result = (await response.json());
+                return reply.send({
+                    success: true,
+                    text: result.text || "",
+                });
+            }
+            else {
+                const error = await response.text();
+                return reply.status(response.status).send({
+                    success: false,
+                    error: error,
+                });
+            }
+        }
+        catch (err) {
+            return reply.status(500).send({
+                success: false,
+                error: err instanceof Error ? err.message : "Transcription failed",
             });
         }
     });

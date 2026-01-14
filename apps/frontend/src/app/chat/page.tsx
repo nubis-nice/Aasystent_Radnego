@@ -177,6 +177,129 @@ export default function ChatPage() {
     type: "rag" | "web";
   }>({ isOpen: false, title: "", content: "", type: "rag" });
 
+  // Otwórz modal z dokumentem po ID
+  const openDocumentById = async (documentId: string, title?: string) => {
+    setDocumentModal({
+      isOpen: true,
+      title: title || "Dokument",
+      content: "Ładowanie treści...",
+      url: undefined,
+      type: "rag",
+    });
+
+    try {
+      const token = localStorage.getItem("supabase_access_token");
+      const response = await fetch(`/api/documents/${documentId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setDocumentModal({
+          isOpen: true,
+          title: data.title || title || "Dokument",
+          content: data.content || "Brak treści",
+          url: data.sourceUrl,
+          type: "rag",
+        });
+      } else {
+        setDocumentModal((prev) => ({
+          ...prev,
+          content: "Nie udało się załadować dokumentu.",
+        }));
+      }
+    } catch (e) {
+      console.error("Error loading document:", e);
+      setDocumentModal((prev) => ({
+        ...prev,
+        content: "Błąd podczas ładowania dokumentu.",
+      }));
+    }
+  };
+
+  // Custom components dla ReactMarkdown
+  const markdownComponents = {
+    // Ulepszone tabele z responsywnym scrollem i lepszym stylem
+    table: ({ children, ...props }: React.HTMLAttributes<HTMLTableElement>) => (
+      <div className="my-4 overflow-x-auto rounded-lg border border-secondary-200 shadow-sm">
+        <table className="min-w-full divide-y divide-secondary-200" {...props}>
+          {children}
+        </table>
+      </div>
+    ),
+    thead: ({
+      children,
+      ...props
+    }: React.HTMLAttributes<HTMLTableSectionElement>) => (
+      <thead className="bg-secondary-100" {...props}>
+        {children}
+      </thead>
+    ),
+    th: ({
+      children,
+      ...props
+    }: React.ThHTMLAttributes<HTMLTableCellElement>) => (
+      <th
+        className="px-4 py-3 text-left text-xs font-semibold text-secondary-700 uppercase tracking-wider border-b border-secondary-200"
+        {...props}
+      >
+        {children}
+      </th>
+    ),
+    td: ({
+      children,
+      ...props
+    }: React.TdHTMLAttributes<HTMLTableCellElement>) => (
+      <td
+        className="px-4 py-3 text-sm text-text border-b border-secondary-100 whitespace-normal"
+        {...props}
+      >
+        {children}
+      </td>
+    ),
+    tr: ({ children, ...props }: React.HTMLAttributes<HTMLTableRowElement>) => (
+      <tr className="hover:bg-secondary-50 transition-colors" {...props}>
+        {children}
+      </tr>
+    ),
+    // Linki - sprawdź czy to link do dokumentu i otwórz w modalu
+    a: ({
+      href,
+      children,
+      ...props
+    }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
+      // Sprawdź czy to link do dokumentu (pattern: /documents/UUID lub doc:UUID)
+      const docMatch = href?.match(/(?:\/documents\/|doc:)([a-f0-9-]{36})/i);
+
+      if (docMatch) {
+        const documentId = docMatch[1];
+        return (
+          <button
+            onClick={() => openDocumentById(documentId, String(children))}
+            className="inline-flex items-center gap-1 text-primary-600 hover:text-primary-800 underline underline-offset-2 font-medium cursor-pointer"
+            title="Otwórz dokument"
+          >
+            <FileText className="h-3 w-3" />
+            {children}
+          </button>
+        );
+      }
+
+      // Zwykły link zewnętrzny
+      return (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-primary-600 hover:text-primary-800 underline underline-offset-2"
+          {...props}
+        >
+          {children}
+          <ExternalLink className="inline h-3 w-3 ml-1" />
+        </a>
+      );
+    },
+  };
+
   // Otwórz modal z dokumentem
   const openDocumentModal = async (citation: Citation) => {
     setDocumentModal({
@@ -216,7 +339,11 @@ export default function ChatPage() {
     const suggestions: NextStepSuggestion[] = [];
     const contentLower = content.toLowerCase();
 
-    // Wykryj kontekst i zaproponuj odpowiednie kroki
+    // ═══════════════════════════════════════════════════════════════════════
+    // ZADANIA RADNEGO - sugestie kontekstowe
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Uchwały i sesje
     if (
       contentLower.includes("uchwał") ||
       contentLower.includes("sesj") ||
@@ -232,10 +359,13 @@ export default function ChatPage() {
       });
     }
 
+    // Budżet i finanse
     if (
       contentLower.includes("budżet") ||
       contentLower.includes("wydatk") ||
-      contentLower.includes("finans")
+      contentLower.includes("finans") ||
+      contentLower.includes("przychod") ||
+      contentLower.includes("dochod")
     ) {
       suggestions.push({
         id: "budget-control",
@@ -247,6 +377,7 @@ export default function ChatPage() {
       });
     }
 
+    // Dokumenty i raporty
     if (
       contentLower.includes("dokument") ||
       contentLower.includes("protokół") ||
@@ -262,24 +393,114 @@ export default function ChatPage() {
       });
     }
 
-    // Zawsze dodaj opcje uniwersalne
-    suggestions.push({
-      id: "deep-search",
-      label: "Pogłębione wyszukiwanie",
-      icon: "🔍",
-      prompt:
-        "Przeprowadź pogłębione wyszukiwanie w dostępnych dokumentach i bazach danych. Znajdź wszystkie powiązane informacje i źródła.",
-      category: "search",
-    });
+    // Interpelacje i zapytania
+    if (
+      contentLower.includes("interpelacj") ||
+      contentLower.includes("zapytani") ||
+      contentLower.includes("wnios") ||
+      contentLower.includes("mieszkańc")
+    ) {
+      suggestions.push({
+        id: "interpellation",
+        label: "Przygotuj interpelację",
+        icon: "✍️",
+        prompt:
+          "Przygotuj projekt interpelacji lub zapytania radnego w tej sprawie. Sformułuj pytania do organu wykonawczego i uzasadnienie.",
+        category: "legal",
+      });
+    }
 
-    suggestions.push({
-      id: "action-plan",
-      label: "Plan działania",
-      icon: "📋",
-      prompt:
-        "Na podstawie powyższych informacji przygotuj konkretny plan działania z listą kroków do wykonania, terminami i odpowiedzialnymi osobami.",
-      category: "action",
-    });
+    // Inwestycje i projekty
+    if (
+      contentLower.includes("inwestycj") ||
+      contentLower.includes("projekt") ||
+      contentLower.includes("realizacj") ||
+      contentLower.includes("przetarg")
+    ) {
+      suggestions.push({
+        id: "investment-review",
+        label: "Przegląd realizacji inwestycji",
+        icon: "🏗️",
+        prompt:
+          "Przeanalizuj stan realizacji inwestycji: harmonogram, wydatki, zgodność z umową, potencjalne opóźnienia i ryzyka.",
+        category: "financial",
+      });
+    }
+
+    // Komisje
+    if (
+      contentLower.includes("komisj") ||
+      contentLower.includes("posiedzeni")
+    ) {
+      suggestions.push({
+        id: "commission-summary",
+        label: "Podsumowanie prac komisji",
+        icon: "🏛️",
+        prompt:
+          "Przygotuj podsumowanie prac komisji: omówione tematy, podjęte decyzje, wnioski i rekomendacje dla Rady.",
+        category: "report",
+      });
+    }
+
+    // Mieszkańcy i sprawy społeczne
+    if (
+      contentLower.includes("mieszkańc") ||
+      contentLower.includes("społeczn") ||
+      contentLower.includes("petycj") ||
+      contentLower.includes("skarg")
+    ) {
+      suggestions.push({
+        id: "citizen-response",
+        label: "Odpowiedź dla mieszkańca",
+        icon: "👥",
+        prompt:
+          "Przygotuj projekt odpowiedzi na sprawę zgłoszoną przez mieszkańca. Uwzględnij podstawę prawną i możliwe rozwiązania.",
+        category: "action",
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // UNIWERSALNE ZADANIA RADNEGO (zawsze dostępne)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Jeśli mało sugestii kontekstowych, dodaj uniwersalne
+    if (suggestions.length < 3) {
+      suggestions.push({
+        id: "deep-search",
+        label: "Pogłębione wyszukiwanie",
+        icon: "🔍",
+        prompt:
+          "Przeprowadź pogłębione wyszukiwanie w dostępnych dokumentach i bazach danych. Znajdź wszystkie powiązane informacje i źródła.",
+        category: "search",
+      });
+
+      suggestions.push({
+        id: "action-plan",
+        label: "Plan działania radnego",
+        icon: "📋",
+        prompt:
+          "Na podstawie powyższych informacji przygotuj konkretny plan działania radnego: kroki do wykonania, terminy, osoby odpowiedzialne i sposób monitorowania.",
+        category: "action",
+      });
+
+      suggestions.push({
+        id: "session-speech",
+        label: "Wystąpienie na sesji",
+        icon: "🎤",
+        prompt:
+          "Przygotuj projekt wystąpienia radnego na sesji Rady w tej sprawie. Uwzględnij argumenty, dane i propozycje rozwiązań.",
+        category: "report",
+      });
+
+      suggestions.push({
+        id: "legal-basis",
+        label: "Podstawa prawna",
+        icon: "📜",
+        prompt:
+          "Wskaż podstawę prawną w tej sprawie: właściwe ustawy, rozporządzenia, uchwały i kompetencje organów gminy.",
+        category: "legal",
+      });
+    }
 
     return suggestions.slice(0, 4); // Max 4 sugestie
   };
@@ -890,7 +1111,10 @@ export default function ChatPage() {
                         prose-table:border-collapse prose-th:bg-secondary-100 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:border prose-td:border-secondary-200
                         prose-hr:border-secondary-200 prose-hr:my-6"
                       >
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={markdownComponents}
+                        >
                           {msg.content}
                         </ReactMarkdown>
                       </div>

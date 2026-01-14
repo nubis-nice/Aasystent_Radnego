@@ -4,7 +4,7 @@
  * Secondary provider for research-focused search and fact-checking
  */
 import { BaseResearchProvider } from "./base-provider.js";
-import type { ResearchResult, SearchOptions } from "@shared/types/deep-research";
+import type { ResearchResult, SearchOptions } from "@aasystent-radnego/shared";
 export declare class TavilyProvider extends BaseResearchProvider {
     search(query: string, options?: SearchOptions): Promise<ResearchResult[]>;
     protected transformResults(data: unknown): ResearchResult[];

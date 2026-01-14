@@ -20,7 +20,8 @@ export type ProviderType =
   | "other"
   | "exa"
   | "perplexity"
-  | "tavily";
+  | "tavily"
+  | "brave";
 
 export type AuthMethod = "bearer" | "api-key" | "oauth" | "custom";
 

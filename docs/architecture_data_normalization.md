@@ -6,12 +6,10 @@
 
 **Rozwiązanie:** Normalizuj dane **podczas zapisu do RAG**, nie podczas wyszukiwania.
 
-```
-❌ STARE PODEJŚCIE:
-Chaotyczne źródła → RAG (chaos) → Skomplikowane wyszukiwanie (regex, wzorce)
-
-✅ NOWE PODEJŚCIE:
-Chaotyczne źródła → LLM Normalizacja → RAG (uporządkowane) → Proste wyszukiwanie
+```mermaid
+graph TD
+    A[Chaotyczne źródła] -->|LLM Normalizacja| B(RAG - Uporządkowane)
+    B -->|Proste wyszukiwanie| C[Wyniki]
 ```
 
 ---
@@ -26,6 +24,9 @@ Każdy dokument w RAG ma **jednolity format metadanych**, niezależnie od źród
 interface NormalizedDocumentMetadata {
   // Typ dokumentu (znormalizowany)
   documentType: "resolution" | "protocol" | "transcription" | "session_materials" | ...
+
+  // Poziom hierarchii (1-5, gdzie 1 = najważniejszy)
+  hierarchyLevel: 1 | 2 | 3 | 4 | 5;
 
   // Powiązanie z sesją (ZAWSZE liczba arabska)
   sessionInfo?: {
@@ -84,7 +85,7 @@ await normalizer.normalize({
 
 **LLM Prompt (uproszczony):**
 
-```
+```text
 Wyodrębnij metadane z dokumentu:
 
 Tytuł: "Sesja Nr XXIII | Urząd Miejski..."
@@ -167,7 +168,7 @@ const { data } = await supabase
 
 ### ✅ Odporność na Różnice Źródłowe
 
-```
+```text
 "Sesja Nr XXIII"           → sessionNumber: 23
 "XIV Sesja Rady"           → sessionNumber: 14
 "45 posiedzenie"           → sessionNumber: 45
@@ -180,7 +181,7 @@ Wszystkie normalizowane do **jednego formatu**.
 
 LLM rozumie kontekst:
 
-```
+```text
 "Protokół z sesji"         → documentType: "protocol"
 "Uchwała budżetowa"        → documentType: "resolution", topics: ["budżet"]
 "Transmisja na żywo"       → documentType: "video"

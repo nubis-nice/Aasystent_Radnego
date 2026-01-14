@@ -1,3 +1,4 @@
+import type { AudioAnalysis } from "./audio-analyzer.js";
 export interface DownloadResult {
     success: boolean;
     audioPath?: string;
@@ -34,16 +35,29 @@ export interface TranscriptionWithAnalysis {
         videoTitle: string;
         videoUrl: string;
     };
+    audioAnalysis?: AudioAnalysis;
     error?: string;
 }
 export declare class YouTubeDownloader {
-    private openai;
+    private sttClient;
+    private llmClient;
     private tempDir;
+    private userId;
+    private sttModel;
+    private llmModel;
     constructor();
+    /**
+     * Normalizuj nazwę modelu STT dla faster-whisper-server
+     * Mapuje różne formaty nazw na prawidłowe nazwy modeli
+     */
+    private normalizeSTTModel;
+    /**
+     * Inicjalizacja z konfiguracją użytkownika przez AIClientFactory
+     */
     initializeWithUserConfig(userId: string): Promise<void>;
     downloadAudio(videoUrl: string): Promise<DownloadResult>;
     private runYtDlp;
-    transcribeAndAnalyze(audioPath: string, videoId: string, videoTitle: string, videoUrl: string): Promise<TranscriptionWithAnalysis>;
+    transcribeAndAnalyze(audioPath: string, videoId: string, videoTitle: string, videoUrl: string, enablePreprocessing?: boolean): Promise<TranscriptionWithAnalysis>;
     private correctTranscript;
     private analyzeTranscript;
     private formatTranscriptMarkdown;

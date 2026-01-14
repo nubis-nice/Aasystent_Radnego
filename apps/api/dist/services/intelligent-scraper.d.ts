@@ -30,6 +30,7 @@ export interface IntelligentScrapingConfig {
     councilLocation: string;
     focusAreas: string[];
     incrementalMode: boolean;
+    maxPagesParallel?: number;
 }
 export interface IntelligentScrapeResult {
     success: boolean;
@@ -49,11 +50,16 @@ export declare class IntelligentScraper {
     private visitedUrls;
     private siteMap;
     private errors;
-    private openai;
+    private llmClient;
+    private embeddingsClient;
+    private llmModel;
     private userId;
     private sourceId;
     constructor(baseUrl: string, userId: string, sourceId: string, customConfig?: Partial<IntelligentScrapingConfig>);
     private normalizeUrl;
+    /**
+     * Initialize AI clients via AIClientFactory
+     */
     private initializeOpenAI;
     generateSiteMap(): Promise<SiteMapNode[]>;
     private extractLinks;
@@ -63,6 +69,7 @@ export declare class IntelligentScraper {
     private generateContentHash;
     analyzeContentWithLLM(url: string, title: string, content: string): Promise<LLMAnalysisResult | null>;
     checkIfContentChanged(url: string, newHash: string): Promise<boolean>;
+    private scrapeYouTubeChannel;
     scrape(): Promise<IntelligentScrapeResult>;
     private extractMainContent;
     private cleanText;
@@ -80,4 +87,21 @@ export declare class IntelligentScraper {
     private processPDFAttachments;
 }
 export declare function intelligentScrapeDataSource(sourceId: string, userId: string, customConfig?: Partial<IntelligentScrapingConfig>): Promise<IntelligentScrapeResult>;
+/**
+ * Przetwarza linki z wyników DeepResearch do RAG
+ * Pobiera treść z zatwierdzonych przez AI linków i zapisuje do bazy dokumentów
+ */
+export declare function processDeepResearchLinks(userId: string, links: Array<{
+    url: string;
+    title: string;
+    relevanceScore: number;
+}>, options?: {
+    minRelevanceScore?: number;
+    maxLinks?: number;
+}): Promise<{
+    success: boolean;
+    processed: number;
+    saved: number;
+    errors: string[];
+}>;
 //# sourceMappingURL=intelligent-scraper.d.ts.map

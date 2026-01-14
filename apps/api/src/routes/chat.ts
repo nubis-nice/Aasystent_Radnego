@@ -894,6 +894,14 @@ export const chatRoutes = async (fastify) => {
       });
     } catch (error) {
       if (error instanceof ZodError) {
+        console.error(
+          "[Chat] Zod validation error:",
+          JSON.stringify(error.issues, null, 2)
+        );
+        console.error(
+          "[Chat] Request body was:",
+          JSON.stringify(request.body, null, 2)
+        );
         return reply
           .status(400)
           .send({ error: "Validation error", details: error.issues });
