@@ -338,6 +338,15 @@ export default function ChatPage() {
   ): NextStepSuggestion[] => {
     const suggestions: NextStepSuggestion[] = [];
     const contentLower = content.toLowerCase();
+    const categoryTypes = new Set<string>(
+      (_categories || []).map((category) => category.type)
+    );
+
+    const addSuggestion = (suggestion: NextStepSuggestion) => {
+      if (!suggestions.some((s) => s.id === suggestion.id)) {
+        suggestions.push(suggestion);
+      }
+    };
 
     // ═══════════════════════════════════════════════════════════════════════
     // ZADANIA RADNEGO - sugestie kontekstowe
@@ -347,9 +356,10 @@ export default function ChatPage() {
     if (
       contentLower.includes("uchwał") ||
       contentLower.includes("sesj") ||
-      contentLower.includes("rada")
+      contentLower.includes("rada") ||
+      categoryTypes.has("legal")
     ) {
-      suggestions.push({
+      addSuggestion({
         id: "legal-analysis",
         label: "Analiza prawna uchwały",
         icon: "⚖️",
@@ -365,9 +375,10 @@ export default function ChatPage() {
       contentLower.includes("wydatk") ||
       contentLower.includes("finans") ||
       contentLower.includes("przychod") ||
-      contentLower.includes("dochod")
+      contentLower.includes("dochod") ||
+      categoryTypes.has("budget")
     ) {
-      suggestions.push({
+      addSuggestion({
         id: "budget-control",
         label: "Kontrola rozliczeń budżetowych",
         icon: "💰",
@@ -381,9 +392,10 @@ export default function ChatPage() {
     if (
       contentLower.includes("dokument") ||
       contentLower.includes("protokół") ||
-      contentLower.includes("raport")
+      contentLower.includes("raport") ||
+      categoryTypes.has("report")
     ) {
-      suggestions.push({
+      addSuggestion({
         id: "full-report",
         label: "Pełny raport analizy",
         icon: "📊",
@@ -398,9 +410,10 @@ export default function ChatPage() {
       contentLower.includes("interpelacj") ||
       contentLower.includes("zapytani") ||
       contentLower.includes("wnios") ||
-      contentLower.includes("mieszkańc")
+      contentLower.includes("mieszkańc") ||
+      categoryTypes.has("legal")
     ) {
-      suggestions.push({
+      addSuggestion({
         id: "interpellation",
         label: "Przygotuj interpelację",
         icon: "✍️",
@@ -415,9 +428,10 @@ export default function ChatPage() {
       contentLower.includes("inwestycj") ||
       contentLower.includes("projekt") ||
       contentLower.includes("realizacj") ||
-      contentLower.includes("przetarg")
+      contentLower.includes("przetarg") ||
+      categoryTypes.has("financial")
     ) {
-      suggestions.push({
+      addSuggestion({
         id: "investment-review",
         label: "Przegląd realizacji inwestycji",
         icon: "🏗️",
@@ -432,7 +446,7 @@ export default function ChatPage() {
       contentLower.includes("komisj") ||
       contentLower.includes("posiedzeni")
     ) {
-      suggestions.push({
+      addSuggestion({
         id: "commission-summary",
         label: "Podsumowanie prac komisji",
         icon: "🏛️",
@@ -449,7 +463,7 @@ export default function ChatPage() {
       contentLower.includes("petycj") ||
       contentLower.includes("skarg")
     ) {
-      suggestions.push({
+      addSuggestion({
         id: "citizen-response",
         label: "Odpowiedź dla mieszkańca",
         icon: "👥",
