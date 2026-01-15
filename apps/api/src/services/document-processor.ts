@@ -12,8 +12,21 @@ import {
   getVisionClient,
   getEmbeddingsClient,
   getSTTClient,
+  getLLMClient,
   getAIConfig,
 } from "../ai/index.js";
+import {
+  getVisionOptimizer,
+  EXTRACTION_PROMPTS,
+  getTextToStructuredPrompt,
+  parseDocumentStructure,
+  type DocumentStructure,
+} from "./vision-optimizer.js";
+import {
+  addVisionJob,
+  waitForVisionResult,
+  type VisionJobResult,
+} from "./vision-queue.js";
 // import { getAudioPreprocessor } from "./audio-preprocessor.js"; // Tymczasowo wyłączone
 
 const require = createRequire(import.meta.url);
@@ -100,6 +113,27 @@ export interface SaveToRAGResult {
   error?: string;
 }
 
+export interface OCROptions {
+  /** Wymuś użycie tylko Vision API (bez Tesseract) */
+  useVisionOnly?: boolean;
+  /** Próg confidence dla Tesseract (domyślnie 75%) */
+  tesseractConfidenceThreshold?: number;
+  /** Rozdzielczość dla Tesseract w DPI (domyślnie 300) */
+  tesseractDPI?: number;
+  /** Rozdzielczość dla Vision API w px (domyślnie 768) */
+  visionMaxDimension?: number;
+  /** Użyj kolejki Redis dla Vision (async, bez timeout) */
+  useVisionQueue?: boolean;
+}
+
+const DEFAULT_OCR_OPTIONS: OCROptions = {
+  useVisionOnly: false,
+  tesseractConfidenceThreshold: 75,
+  tesseractDPI: 300,
+  visionMaxDimension: 768,
+  useVisionQueue: true,
+};
+
 type SupportedMimeType =
   | "image/jpeg"
   | "image/png"
@@ -147,6 +181,7 @@ export class DocumentProcessor {
   private embeddingsClient: OpenAI | null = null;
   private embeddingModel: string = "nomic-embed-text";
   private visionModel: string = "gpt-4o";
+  private visionProvider: string = "openai"; // ollama, openai, google, etc.
   private userId: string | null = null;
 
   constructor() {}
@@ -169,6 +204,7 @@ export class DocumentProcessor {
 
     const visionConfig = await getAIConfig(userId, "vision");
     this.visionModel = visionConfig.modelName;
+    this.visionProvider = visionConfig.provider;
     console.log(
       `[DocumentProcessor] Initialized for user ${userId.substring(0, 8)}...`
     );
@@ -178,14 +214,83 @@ export class DocumentProcessor {
     console.log(`[DocumentProcessor] Embeddings: model=${this.embeddingModel}`);
   }
 
+  // ==========================================================================
+  // TWO-STAGE EXTRACTION: OCR Text → Structured JSON
+  // ==========================================================================
+
+  /**
+   * Ekstrakcja strukturalna z tekstu OCR (etap 2)
+   * Wywołuje LLM tekstowy (nie Vision!) z tekstem i zwraca JSON
+   */
+  async extractStructuredData(
+    ocrText: string
+  ): Promise<DocumentStructure | null> {
+    if (!this.userId) {
+      console.warn(
+        "[DocumentProcessor] User ID not set for structured extraction"
+      );
+      return null;
+    }
+
+    try {
+      // Użyj klienta LLM tekstowego (nie Vision!) do generowania JSON
+      const llmClient = await getLLMClient(this.userId);
+      const llmConfig = await getAIConfig(this.userId, "llm");
+
+      const prompt = getTextToStructuredPrompt();
+
+      // Skróć tekst jeśli za długi (max 4000 znaków dla kontekstu)
+      const truncatedText =
+        ocrText.length > 4000 ? ocrText.substring(0, 4000) + "..." : ocrText;
+
+      console.log(
+        `[DocumentProcessor] Extracting structured data from ${truncatedText.length} chars using ${llmConfig.modelName}`
+      );
+
+      const response = await llmClient.chat.completions.create({
+        model: llmConfig.modelName,
+        messages: [
+          { role: "system", content: prompt.system },
+          { role: "user", content: `${prompt.user}\n\n${truncatedText}` },
+        ],
+        max_tokens: 1024,
+        temperature: 0.1, // Niska temperatura dla deterministycznego JSON
+      });
+
+      const jsonResponse = response.choices[0]?.message?.content || "";
+      console.log(
+        `[DocumentProcessor] LLM response (${
+          jsonResponse.length
+        } chars): ${jsonResponse.substring(0, 200)}...`
+      );
+
+      const structured = parseDocumentStructure(jsonResponse);
+
+      if (structured) {
+        console.log(
+          `[DocumentProcessor] ✓ Extracted: typ=${structured.typ}, numer=${structured.numer}`
+        );
+      }
+
+      return structured;
+    } catch (error) {
+      console.error("[DocumentProcessor] Structured extraction failed:", error);
+      return null;
+    }
+  }
+
   /**
    * Process uploaded file and extract text
+   * @param options OCR options (tesseractConfidenceThreshold, visionMaxDimension, etc.)
    */
   async processFile(
     fileBuffer: Buffer,
     fileName: string,
-    mimeType: string
+    mimeType: string,
+    options: OCROptions = {}
   ): Promise<ProcessedDocument> {
+    // Merge with defaults
+    const ocrOptions = { ...DEFAULT_OCR_OPTIONS, ...options };
     const fileSize = fileBuffer.length;
     const maxSize = 10 * 1024 * 1024; // 10MB
 
@@ -229,7 +334,8 @@ export class DocumentProcessor {
             fileBuffer,
             fileName,
             mimeType,
-            fileSize
+            fileSize,
+            ocrOptions
           );
 
         case "application/pdf":
@@ -237,7 +343,8 @@ export class DocumentProcessor {
             fileBuffer,
             fileName,
             mimeType,
-            fileSize
+            fileSize,
+            ocrOptions
           );
 
         case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
@@ -262,8 +369,7 @@ export class DocumentProcessor {
         case "audio/x-m4a":
         case "audio/ogg":
         case "audio/webm":
-        // Video formats
-        case "video/mp4":
+        case "video/mp4": // Video formats
         case "video/webm":
         case "video/ogg":
           return await this.processAudio(
@@ -306,13 +412,14 @@ export class DocumentProcessor {
   }
 
   /**
-   * Process image using GPT-4 Vision OCR
+   * Process image using Tesseract OCR with Vision API fallback
    */
   private async processImage(
     fileBuffer: Buffer,
     fileName: string,
     mimeType: string,
-    fileSize: number
+    fileSize: number,
+    ocrOptions: OCROptions = {}
   ): Promise<ProcessedDocument> {
     if (!this.visionClient) {
       throw new Error(
@@ -357,86 +464,90 @@ export class DocumentProcessor {
       };
     }
 
-    // Normalizacja obrazu przed OCR
+    // Pobierz parametry OCR
+    const confidenceThreshold = ocrOptions.tesseractConfidenceThreshold ?? 75;
+    const visionMaxDim = ocrOptions.visionMaxDimension ?? 768;
+    const useVisionOnly = ocrOptions.useVisionOnly ?? false;
+
+    // Normalizacja obrazu przed OCR (300 DPI dla Tesseract)
     const normalizedImage = await this.normalizeImageForOCR(fileBuffer);
-    console.log(`[DocumentProcessor] Image normalized`);
+    console.log(`[DocumentProcessor] Image normalized for OCR`);
 
-    // KROK 1: Najpierw spróbuj Tesseract (darmowe, lokalne)
-    const tesseractResult = await this.processImageWithTesseract(
-      normalizedImage,
-      1 // page number
-    );
+    // Jeśli useVisionOnly - pomiń Tesseract
+    if (!useVisionOnly) {
+      // KROK 1: Najpierw spróbuj Tesseract (darmowe, lokalne)
+      const tesseractResult = await this.processImageWithTesseract(
+        normalizedImage,
+        1 // page number
+      );
 
-    console.log(
-      `[DocumentProcessor] Tesseract result: ${
-        tesseractResult.text.length
-      } chars, confidence: ${tesseractResult.confidence.toFixed(1)}%`
-    );
+      console.log(
+        `[DocumentProcessor] Tesseract result: ${
+          tesseractResult.text.length
+        } chars, confidence: ${tesseractResult.confidence.toFixed(
+          1
+        )}% (threshold: ${confidenceThreshold}%)`
+      );
 
-    // Jeśli Tesseract dał dobry wynik (confidence > 50% i tekst > 30 znaków) - użyj go
-    if (tesseractResult.confidence > 50 && tesseractResult.text.length > 30) {
-      console.log(`[DocumentProcessor] Using Tesseract result (good quality)`);
-      return {
-        success: true,
-        text: tesseractResult.text,
-        metadata: {
-          fileName,
-          fileType: "image",
-          mimeType,
-          fileSize,
-          processingMethod: "ocr",
-          confidence: tesseractResult.confidence / 100,
-          language: "pl",
-          ocrEngine: "tesseract",
-        },
-      };
+      // Jeśli Tesseract dał dobry wynik (confidence > threshold i tekst > 30 znaków) - użyj go
+      if (
+        tesseractResult.confidence >= confidenceThreshold &&
+        tesseractResult.text.length > 30
+      ) {
+        console.log(
+          `[DocumentProcessor] ✓ Using Tesseract result (confidence >= ${confidenceThreshold}%)`
+        );
+        return {
+          success: true,
+          text: tesseractResult.text,
+          metadata: {
+            fileName,
+            fileType: "image",
+            mimeType,
+            fileSize,
+            processingMethod: "ocr",
+            confidence: tesseractResult.confidence / 100,
+            language: "pl",
+            ocrEngine: "tesseract",
+          },
+        };
+      }
+
+      // KROK 2: Tesseract słaby - użyj Vision API jako fallback
+      console.log(
+        `[DocumentProcessor] Tesseract confidence too low (${tesseractResult.confidence.toFixed(
+          1
+        )}% < ${confidenceThreshold}%), using Vision API fallback`
+      );
+    } else {
+      console.log(`[DocumentProcessor] useVisionOnly=true, skipping Tesseract`);
     }
 
-    // KROK 2: Tesseract słaby - użyj Vision API jako fallback
+    // Optymalizacja obrazu dla Vision API (768px domyślnie)
+    const visionOptimizer = getVisionOptimizer(this.visionModel);
+    visionOptimizer.setConfig({ maxDimension: visionMaxDim });
+    const optimizedImage = await visionOptimizer.optimizeImage(normalizedImage);
+
     console.log(
-      `[DocumentProcessor] Tesseract confidence too low (${tesseractResult.confidence.toFixed(
-        1
-      )}%), using Vision API fallback`
+      `[DocumentProcessor] Vision optimization: ${optimizedImage.dimensions.width}x${optimizedImage.dimensions.height}, ` +
+        `${optimizedImage.compressionRatio.toFixed(1)}x compression`
     );
 
-    const base64Image = normalizedImage.toString("base64");
-    const dataUrl = `data:image/png;base64,${base64Image}`;
-
     try {
-      const response = await this.visionClient.chat.completions.create({
-        model: this.visionModel,
-        messages: [
-          {
-            role: "system",
-            content: `Jesteś ekspertem OCR. Twoim zadaniem jest dokładne odczytanie i transkrypcja CAŁEGO tekstu widocznego na obrazie.
+      // Użyj zoptymalizowanego promptu
+      const prompt = EXTRACTION_PROMPTS.ocr;
 
-Zasady:
-1. Odczytaj CAŁY tekst, zachowując oryginalną strukturę i formatowanie
-2. Zachowaj akapity, nagłówki, listy i wcięcia
-3. Jeśli tekst jest w tabelce, odtwórz strukturę używając | jako separatora
-4. Jeśli tekst jest nieczytelny, oznacz to jako [nieczytelne]
-5. Nie dodawaj własnych komentarzy ani interpretacji
-6. Odpowiedz TYLKO tekstem odczytanym z obrazu`,
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "image_url",
-                image_url: {
-                  url: dataUrl,
-                  detail: "high",
-                },
-              },
-              {
-                type: "text",
-                text: "Odczytaj cały tekst z tego obrazu. Zachowaj formatowanie i strukturę dokumentu.",
-              },
-            ],
-          },
-        ],
-        max_completion_tokens: 4096,
-      });
+      // Buduj wiadomości w zależności od providera
+      const messages = this.buildVisionMessages(
+        optimizedImage.base64,
+        prompt.user
+      );
+
+      const response = (await this.visionClient.chat.completions.create({
+        model: this.visionModel,
+        messages,
+        max_tokens: 4096,
+      } as Parameters<typeof this.visionClient.chat.completions.create>[0])) as OpenAI.Chat.ChatCompletion;
 
       const extractedText = response.choices[0]?.message?.content || "";
 
@@ -457,24 +568,7 @@ Zasady:
     } catch (visionError) {
       console.error(`[DocumentProcessor] Vision API failed:`, visionError);
 
-      // Użyj wyniku Tesseract nawet jeśli słaby
-      if (tesseractResult.text.trim()) {
-        return {
-          success: true,
-          text: tesseractResult.text,
-          metadata: {
-            fileName,
-            fileType: "image",
-            mimeType,
-            fileSize,
-            processingMethod: "ocr",
-            confidence: tesseractResult.confidence / 100,
-            language: "pl",
-            ocrEngine: "tesseract-fallback",
-          },
-        };
-      }
-
+      // Vision API failed - zwróć błąd (Tesseract już próbowany wcześniej)
       return {
         success: false,
         text: "",
@@ -492,13 +586,68 @@ Zasady:
   }
 
   /**
+   * Buduje wiadomości dla Vision API w formacie odpowiednim dla providera
+   * Ollama używa: { role: "user", content: "tekst", images: ["base64"] }
+   * OpenAI używa: { role: "user", content: [{ type: "image_url", image_url: { url: "data:..." } }] }
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private buildVisionMessages(base64Image: string, prompt: string): any[] {
+    // Użyj zoptymalizowanego, skompresowanego promptu z VisionOptimizer
+    const systemPrompt = EXTRACTION_PROMPTS.ocr.system;
+
+    // Dla Ollama używamy formatu z polem "images"
+    if (this.visionProvider === "ollama") {
+      console.log(
+        `[DocumentProcessor] Using Ollama Vision format for model ${this.visionModel}`
+      );
+      return [
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+        {
+          role: "user",
+          content: prompt,
+          images: [base64Image], // Ollama format - base64 bez prefixu data:
+        },
+      ];
+    }
+
+    // Dla OpenAI i innych używamy standardowego formatu image_url
+    const dataUrl = `data:image/png;base64,${base64Image}`;
+    return [
+      {
+        role: "system",
+        content: systemPrompt,
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "image_url",
+            image_url: {
+              url: dataUrl,
+              detail: "high",
+            },
+          },
+          {
+            type: "text",
+            text: prompt,
+          },
+        ],
+      },
+    ];
+  }
+
+  /**
    * Process PDF - try text extraction first, fallback to OCR for scanned PDFs
    */
   private async processPDF(
     fileBuffer: Buffer,
     fileName: string,
     mimeType: string,
-    fileSize: number
+    fileSize: number,
+    ocrOptions: OCROptions = {}
   ): Promise<ProcessedDocument> {
     console.log(`[DocumentProcessor] Processing PDF: ${fileName}`);
 
@@ -515,23 +664,65 @@ Zasady:
           .length / Math.max(meaningfulText.length, 1);
       const isBinaryGarbage = nonPrintableRatio > 0.3; // More than 30% non-printable = garbage
 
-      if (meaningfulText.length < 100 || isBinaryGarbage) {
+      // Check if text is mostly just page numbers (e.g., "-- 1 of 8 --")
+      const pageNumberPattern = /--\s*\d+\s+of\s+\d+\s*--/gi;
+      const pageNumberMatches = extractedText.match(pageNumberPattern) || [];
+      const isOnlyPageNumbers =
+        pageNumberMatches.length > 0 &&
+        meaningfulText.replace(/--\s*\d+\s+of\s+\d+\s*--/gi, "").trim().length <
+          50;
+
+      // Calculate characters per page
+      const charsPerPage =
+        meaningfulText.length / Math.max(pdfData.numpages, 1);
+      const hasVeryLittleTextPerPage = charsPerPage < 100; // Increased from 80 to 100
+
+      // NEW: Check for corrupted/garbled text (common patterns in broken PDF extraction)
+      const hasGarbledText = this.detectGarbledText(meaningfulText);
+
+      // NEW: Check if text lacks meaningful Polish words
+      const lacksMeaningfulWords =
+        this.lacksMeaningfulPolishWords(meaningfulText);
+
+      // NEW: Check for repeated character sequences (encoding issues)
+      const hasRepeatedPatterns = this.hasRepeatedPatterns(meaningfulText);
+
+      // Decision: use OCR if any of these conditions are true
+      const shouldUseOCR =
+        meaningfulText.length < 300 ||
+        isBinaryGarbage ||
+        isOnlyPageNumbers ||
+        hasVeryLittleTextPerPage ||
+        hasGarbledText ||
+        lacksMeaningfulWords ||
+        hasRepeatedPatterns;
+
+      if (shouldUseOCR) {
         console.log(
-          `[DocumentProcessor] PDF appears to be scanned or contains binary garbage (nonPrintable: ${(
-            nonPrintableRatio * 100
-          ).toFixed(1)}%), using OCR`
+          `[DocumentProcessor] PDF requires OCR: ` +
+            `textLength=${meaningfulText.length}, ` +
+            `charsPerPage=${charsPerPage.toFixed(1)}, ` +
+            `nonPrintable=${(nonPrintableRatio * 100).toFixed(1)}%, ` +
+            `onlyPageNumbers=${isOnlyPageNumbers}, ` +
+            `garbled=${hasGarbledText}, ` +
+            `lacksMeaningful=${lacksMeaningfulWords}, ` +
+            `repeatedPatterns=${hasRepeatedPatterns}`
         );
-        // For scanned PDFs, we need to use Vision API
-        // Convert first page to image concept - in production you'd use pdf-poppler
-        // For now, send the PDF to Vision API which can handle some PDF formats
         return await this.processPDFWithOCR(
           fileBuffer,
           fileName,
           mimeType,
           fileSize,
-          pdfData.numpages
+          pdfData.numpages,
+          ocrOptions
         );
       }
+
+      console.log(
+        `[DocumentProcessor] PDF text extraction successful: ${
+          meaningfulText.length
+        } chars, ${charsPerPage.toFixed(1)} chars/page`
+      );
 
       return {
         success: true,
@@ -555,9 +746,110 @@ Zasady:
         fileBuffer,
         fileName,
         mimeType,
-        fileSize
+        fileSize,
+        undefined,
+        ocrOptions
       );
     }
+  }
+
+  /**
+   * Detect garbled/corrupted text from broken PDF extraction
+   */
+  private detectGarbledText(text: string): boolean {
+    if (text.length < 50) return false;
+
+    // Check for Unicode replacement character sequences
+    if (/\uFFFD{2,}/.test(text)) {
+      return true;
+    }
+
+    // Check for same character repeated 10+ times
+    if (/(.)\1{10,}/.test(text)) {
+      return true;
+    }
+
+    // Check for control characters (using char codes to avoid ESLint warning)
+    let controlCharCount = 0;
+    for (let i = 0; i < Math.min(text.length, 1000); i++) {
+      const code = text.charCodeAt(i);
+      if (
+        (code >= 0 && code <= 8) ||
+        code === 11 ||
+        code === 12 ||
+        (code >= 14 && code <= 31)
+      ) {
+        controlCharCount++;
+      }
+    }
+    if (controlCharCount > 3) {
+      return true;
+    }
+
+    // Check ratio of letters vs special characters
+    const letterCount = (text.match(/[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ]/g) || [])
+      .length;
+    const specialCount = (text.match(/[^\w\s.,;:!?()\-"']/g) || []).length;
+
+    if (text.length > 100 && specialCount > letterCount * 0.5) {
+      return true; // Too many special characters
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if text lacks meaningful Polish words (likely garbled)
+   */
+  private lacksMeaningfulPolishWords(text: string): boolean {
+    if (text.length < 200) return false;
+
+    // Common Polish words that should appear in documents
+    const commonPolishWords = [
+      /\b(i|w|z|na|do|dla|od|o|się|jest|są|być|to|nie|tak|co|jak|lub|oraz|przez|po|ze|za|przy|nad|pod|przed|między|wobec|według|mimo|podczas|poprzez|wskutek|dzięki|oprócz|poza|wzdłuż|obok|naprzeciwko|względem|stosunku|sprawie|celu|ramach|zakresie|przypadku|warunkach|terminie|dniu|roku|miesiącu|tygodniu|czasie|miejscu|sposób|podstawie|zgodnie|związku)\b/gi,
+      /\b(uchwała|zarządzenie|decyzja|postanowienie|protokół|sprawozdanie|budżet|gmina|rada|burmistrz|wójt|starosta|prezydent|sekretarz|skarbnik|radny|komisja|sesja|posiedzenie|głosowanie|wniosek|projekt|załącznik|druk)\b/gi,
+    ];
+
+    let matchCount = 0;
+    for (const pattern of commonPolishWords) {
+      const matches = text.match(pattern);
+      if (matches) {
+        matchCount += matches.length;
+      }
+    }
+
+    // If text is long but has very few common words, it's likely garbled
+    const wordsPerChar = matchCount / text.length;
+    return wordsPerChar < 0.01; // Less than 1 common word per 100 characters
+  }
+
+  /**
+   * Detect repeated patterns (encoding/extraction issues)
+   */
+  private hasRepeatedPatterns(text: string): boolean {
+    if (text.length < 100) return false;
+
+    // Check for repeated 2-4 character sequences
+    const patterns = [
+      /(.{2,4})\1{5,}/g, // Same 2-4 char sequence repeated 5+ times
+      /(\s{3,})/g, // 3+ spaces in a row (count occurrences)
+    ];
+
+    for (const pattern of patterns) {
+      const matches = text.match(pattern);
+      if (matches && matches.length > 3) {
+        return true;
+      }
+    }
+
+    // Check if most "words" are very short (1-2 chars) - sign of broken extraction
+    const words = text.split(/\s+/).filter((w) => w.length > 0);
+    const shortWords = words.filter((w) => w.length <= 2);
+    if (words.length > 20 && shortWords.length > words.length * 0.7) {
+      return true; // More than 70% very short words
+    }
+
+    return false;
   }
 
   // ============================================================================
@@ -960,7 +1252,7 @@ Zasady:
   // ============================================================================
 
   /**
-   * Process scanned PDF using Tesseract.js first, GPT-4 Vision as fallback
+   * Process scanned PDF using Tesseract.js first, Vision API as fallback
    * Converts PDF pages to PNG images using Poppler, normalizes with Sharp, then OCR
    */
   private async processPDFWithOCR(
@@ -968,7 +1260,8 @@ Zasady:
     fileName: string,
     mimeType: string,
     fileSize: number,
-    pageCount?: number
+    pageCount?: number,
+    ocrOptions: OCROptions = {}
   ): Promise<ProcessedDocument> {
     console.log(`[DocumentProcessor] Processing PDF with OCR: ${fileName}`);
 
@@ -1054,7 +1347,11 @@ Zasady:
       };
     }
 
-    // KROK 2: OCR każdej strony - najpierw Tesseract, potem GPT-4 Vision jeśli słaba jakość
+    // KROK 2: OCR każdej strony - najpierw Tesseract, potem Vision API jeśli słaba jakość
+    const confidenceThreshold = ocrOptions.tesseractConfidenceThreshold ?? 75;
+    const visionMaxDim = ocrOptions.visionMaxDimension ?? 768;
+    const useVisionOnly = ocrOptions.useVisionOnly ?? false;
+
     const allTexts: string[] = [];
     const maxPagesToProcess = Math.min(pngPages.length, 10);
     let totalConfidence = 0;
@@ -1065,20 +1362,34 @@ Zasady:
       const page = pngPages[i];
       if (!page || !page.content) continue;
 
-      // Najpierw spróbuj Tesseract (darmowe, lokalne)
-      const tesseractResult = await this.processImageWithTesseract(
-        page.content,
-        page.pageNumber
-      );
-
-      // Jeśli Tesseract dał dobry wynik (confidence > 50% i tekst > 30 znaków) - użyj go
-      if (tesseractResult.confidence > 50 && tesseractResult.text.length > 30) {
-        allTexts.push(
-          `--- Strona ${page.pageNumber} ---\n${tesseractResult.text}`
+      // Jeśli nie useVisionOnly - najpierw spróbuj Tesseract
+      if (!useVisionOnly) {
+        const tesseractResult = await this.processImageWithTesseract(
+          page.content,
+          page.pageNumber
         );
-        totalConfidence += tesseractResult.confidence;
-        pagesProcessed++;
-        continue;
+
+        // Jeśli Tesseract dał dobry wynik (confidence >= threshold i tekst > 30 znaków) - użyj go
+        if (
+          tesseractResult.confidence >= confidenceThreshold &&
+          tesseractResult.text.length > 30
+        ) {
+          allTexts.push(
+            `--- Strona ${page.pageNumber} ---\n${tesseractResult.text}`
+          );
+          totalConfidence += tesseractResult.confidence;
+          pagesProcessed++;
+          continue;
+        }
+
+        // Tesseract słaby - kontynuuj do Vision API
+        console.log(
+          `[DocumentProcessor] Tesseract confidence too low (${tesseractResult.confidence.toFixed(
+            1
+          )}% < ${confidenceThreshold}%), using Vision API for page ${
+            page.pageNumber
+          }`
+        );
       }
 
       // Sprawdź czy strona jest pusta (brightness ~255 i contrast ~0)
@@ -1095,94 +1406,88 @@ Zasady:
         continue; // Pomiń pustą stronę
       }
 
-      // Fallback do Vision API dla słabych wyników Tesseract (tylko jeśli jest klient)
-      if (this.visionClient && this.visionModel) {
+      // Vision API dla słabych wyników Tesseract lub useVisionOnly
+      if (this.visionClient && this.visionModel && this.userId) {
         console.log(
-          `[DocumentProcessor] Tesseract confidence too low (${tesseractResult.confidence.toFixed(
-            1
-          )}%), using Vision API (${this.visionModel}) for page ${
-            page.pageNumber
-          }`
+          `[DocumentProcessor] Using Vision API (${this.visionModel}) for page ${page.pageNumber}`
         );
 
         try {
-          // Normalizuj obraz przed wysłaniem do Vision API
-          const normalizedImage = await this.normalizeImageForOCR(page.content);
-          const base64Image = normalizedImage.toString("base64");
-          const dataUrl = `data:image/png;base64,${base64Image}`;
+          // Optymalizuj obraz dla Vision API (768px domyślnie, konfigurowalne)
+          const visionOptimizer = getVisionOptimizer(this.visionModel);
+          visionOptimizer.setConfig({ maxDimension: visionMaxDim });
+          const optimizedImage = await visionOptimizer.optimizeImage(
+            page.content
+          );
 
-          const response = await this.visionClient.chat.completions.create({
-            model: this.visionModel,
-            messages: [
+          // Użyj VisionQueue dla async processing (bez timeout)
+          const useQueue = ocrOptions.useVisionQueue ?? true;
+
+          if (useQueue) {
+            // Async przez Redis queue - dodaj zadanie i czekaj na wynik
+            const jobId = await addVisionJob(
+              this.userId,
+              optimizedImage.base64,
+              `Odczytaj cały tekst ze strony ${page.pageNumber}. Zachowaj formatowanie.`,
               {
-                role: "system",
-                content: `Jesteś ekspertem OCR. Odczytaj CAŁY tekst z tego obrazu strony dokumentu.
+                provider: this.visionProvider,
+                model: this.visionModel,
+                pageNumber: page.pageNumber,
+                fileName,
+              }
+            );
 
-Zasady:
-1. Odczytaj CAŁY tekst, zachowując strukturę
-2. Zachowaj akapity, nagłówki, listy
-3. Dla tabel użyj formatu markdown z |
-4. Nieczytelne fragmenty oznacz jako [nieczytelne]
-5. Odpowiedz TYLKO odczytanym tekstem`,
-              },
-              {
-                role: "user",
-                content: [
-                  {
-                    type: "image_url",
-                    image_url: {
-                      url: dataUrl,
-                      detail: "high",
-                    },
-                  },
-                  {
-                    type: "text",
-                    text: `Odczytaj cały tekst ze strony ${page.pageNumber}. Zachowaj formatowanie.`,
-                  },
-                ],
-              },
-            ],
-            max_completion_tokens: 4096,
-          });
+            // Czekaj na wynik z dłuższym timeout (5 minut per strona)
+            const result: VisionJobResult = await waitForVisionResult(
+              jobId,
+              300000
+            );
 
-          const pageText = response.choices[0]?.message?.content || "";
-          if (pageText.trim()) {
-            allTexts.push(`--- Strona ${page.pageNumber} ---\n${pageText}`);
-            totalConfidence += 90; // Vision API ma wysoką jakość
-            pagesProcessed++;
+            if (result.success && result.text.trim()) {
+              allTexts.push(
+                `--- Strona ${page.pageNumber} ---\n${result.text}`
+              );
+              totalConfidence += result.confidence ?? 90;
+              pagesProcessed++;
+            } else if (result.error) {
+              console.warn(
+                `[DocumentProcessor] Vision Queue job failed for page ${page.pageNumber}: ${result.error}`
+              );
+            }
+          } else {
+            // Bezpośrednie wywołanie (może timeout)
+            const messages = this.buildVisionMessages(
+              optimizedImage.base64,
+              `Odczytaj cały tekst ze strony ${page.pageNumber}. Zachowaj formatowanie.`
+            );
+
+            const response = (await this.visionClient.chat.completions.create({
+              model: this.visionModel,
+              messages,
+              max_tokens: 4096,
+            } as Parameters<typeof this.visionClient.chat.completions.create>[0])) as OpenAI.Chat.ChatCompletion;
+
+            const pageText = response.choices[0]?.message?.content || "";
+            if (pageText.trim()) {
+              allTexts.push(`--- Strona ${page.pageNumber} ---\n${pageText}`);
+              totalConfidence += 90;
+              pagesProcessed++;
+            }
           }
         } catch (visionError) {
           console.error(
             `[DocumentProcessor] Vision API (${this.visionModel}) failed for page ${page.pageNumber}:`,
             visionError
           );
-          // Użyj wyniku Tesseract nawet jeśli słaby
-          if (tesseractResult.text.trim()) {
-            allTexts.push(
-              `--- Strona ${page.pageNumber} ---\n${tesseractResult.text}`
-            );
-            totalConfidence += tesseractResult.confidence;
-            pagesProcessed++;
-          }
+          console.warn(
+            `[DocumentProcessor] Page ${page.pageNumber} could not be processed`
+          );
         }
       } else {
-        // Brak Vision API - użyj Tesseract nawet jeśli słaby wynik
-        console.log(
-          `[DocumentProcessor] No Vision API available, using Tesseract result for page ${
-            page.pageNumber
-          } (confidence: ${tesseractResult.confidence.toFixed(1)}%)`
+        // Brak Vision API - loguj ostrzeżenie
+        console.warn(
+          `[DocumentProcessor] No Vision API available for page ${page.pageNumber}, skipping`
         );
-        if (tesseractResult.text.trim()) {
-          allTexts.push(
-            `--- Strona ${page.pageNumber} ---\n${tesseractResult.text}`
-          );
-          totalConfidence += Math.max(tesseractResult.confidence, 30); // Minimum 30% dla słabych wyników
-          pagesProcessed++;
-        } else {
-          console.warn(
-            `[DocumentProcessor] Page ${page.pageNumber} has no readable text (Tesseract returned empty)`
-          );
-        }
       }
     }
 

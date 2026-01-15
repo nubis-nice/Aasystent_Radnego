@@ -38,6 +38,13 @@
 - [x] Aktualizacja dokumentacji normalizacji danych.
 - [x] Implementacja logiki wypełniania `hierarchyLevel` w `DocumentNormalizer`.
 
+## Inteligentny Scraping (2026-01-14)
+
+- [x] Migracja na dane z AI zamiast regex w `FormattedDocumentContent`
+- [x] Usunięcie `extractDateFromTitle()` z `calendar-auto-import.ts`
+- [x] Dodanie typów `LLMAnalysisData`, `DocumentMetadata` do frontendu
+- [x] Ujednolicenie źródła danych sesji (tylko `metadata.llmAnalysis`)
+
 ---
 
 ## Frontend: konkretne zadania (2025-12-26)
@@ -236,11 +243,13 @@ Centralizacja obsługi providerów AI z podziałem na 5 niezależnych funkcji:
 ## Deep Internet Researcher ZAIMPLEMENTOWANE (2026-01-09)
 
 - [x] **Backend**: `DeepResearchService` z multi-provider orchestration
-- [x] **Providers**: Exa AI, Tavily AI, Serper (Google)
+- [x] **Providers**: Exa AI, Tavily AI, Serper (Google), **Brave Search** (2026-01-14)
 - [x] **Frontend**: `/research` - kompletny UI z historią
 - [x] **API Routes**: `/api/research`, `/api/research/history`, `/api/research/:id`
 - [x] **Typy**: `DeepResearchRequest`, `DeepResearchReport`, `ResearchResult`
 - [x] **Migracje**: `011_create_research_reports.sql`
+- [x] **Fallback providerów** - automatyczne przełączanie gdy provider zawiedzie (2026-01-14)
+- [x] **Wykrywanie odmów LLM** - fallback do oryginalnego query (2026-01-14)
 
 ## Analizy Prawne ZAIMPLEMENTOWANE (2026-01-09)
 

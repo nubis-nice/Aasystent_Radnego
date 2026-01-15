@@ -293,7 +293,8 @@ export function AIConfigurationModal({
         | "openai"
         | "local"
         | "custom";
-      const defaultModels = DEFAULT_MODELS[providerType];
+      const defaultModels =
+        DEFAULT_MODELS[providerType] || DEFAULT_MODELS.openai;
 
       const meta = editingConfig.provider_meta || {};
 
@@ -365,7 +366,7 @@ export function AIConfigurationModal({
         updated[key] = {
           ...updated[key],
           provider: globalProvider,
-          modelName: DEFAULT_MODELS[globalProvider][key]?.[0] || "",
+          modelName: DEFAULT_MODELS[globalProvider]?.[key]?.[0] || "",
         };
       }
       return updated;
@@ -485,7 +486,7 @@ export function AIConfigurationModal({
     if (dynamicModels[func]?.length > 0) {
       models = [...dynamicModels[func]];
     } else {
-      models = [...(DEFAULT_MODELS[globalProvider][func] || [])];
+      models = [...(DEFAULT_MODELS[globalProvider]?.[func] || [])];
     }
 
     // Dodaj aktualnie wybraną wartość jeśli nie jest na liście

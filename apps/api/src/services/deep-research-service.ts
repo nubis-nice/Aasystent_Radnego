@@ -4,6 +4,9 @@
  * Main service coordinating multi-provider research with AI synthesis
  */
 
+import { Buffer } from "node:buffer";
+import { randomUUID } from "node:crypto";
+import { URL } from "node:url";
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
 import type {
@@ -23,6 +26,38 @@ import {
   getDomainsForResearchType,
 } from "../config/research-providers.js";
 import { getLLMClient, getAIConfig } from "../ai/index.js";
+
+// Type definitions for Supabase queries
+interface ApiConfigRow {
+  provider: string;
+  api_key_encrypted: string;
+  is_active: boolean;
+}
+
+interface ProcessedDocumentRow {
+  id: string;
+  title: string;
+  content: string;
+  document_type: string;
+  publish_date: string | null;
+  processed_at: string | null;
+}
+
+interface ResearchReportInsert {
+  id: string;
+  user_id: string;
+  query: string;
+  research_type: string;
+  depth: string;
+  summary: string;
+  key_findings: string[];
+  results: ResearchResult[];
+  sources: { name: string; count: number; avgRelevance: number }[];
+  related_queries: string[];
+  confidence: number;
+  processing_time: number;
+  created_at: string;
+}
 
 export class DeepResearchService {
   private providers: Map<string, BaseResearchProvider>;
@@ -79,7 +114,7 @@ export class DeepResearchService {
       const apiKeys: Record<string, string> = {};
 
       // Map API keys for research providers (decode from base64)
-      for (const config of configs || []) {
+      for (const config of (configs || []) as ApiConfigRow[]) {
         apiKeys[config.provider] = Buffer.from(
           config.api_key_encrypted,
           "base64"
@@ -239,7 +274,7 @@ export class DeepResearchService {
       const processingTime = Date.now() - startTime;
 
       const report: DeepResearchReport = {
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         query: request.query,
         researchType: request.researchType,
         depth: request.depth,
@@ -276,21 +311,44 @@ export class DeepResearchService {
           {
             role: "system",
             content:
-              "Jesteś ekspertem od researchu prawnego. Rozłóż złożone pytanie prawne na 2-4 prostsze pod-pytania, które pomogą znaleźć kompletną odpowiedź. Zwróć tylko listę pytań, każde w nowej linii.",
+              "Jesteś ekspertem od researchu. Rozłóż pytanie na 2-4 prostsze pod-pytania do wyszukiwania. ZAWSZE zwracaj pytania, NIGDY nie odmawiaj. Zwróć tylko listę pytań, każde w nowej linii, bez numeracji.",
           },
           {
             role: "user",
-            content: query,
+            content: `Rozłóż to pytanie na pod-pytania: ${query}`,
           },
         ],
         temperature: 0.3,
       });
 
-      const subQueries =
-        completion.choices[0].message.content
-          ?.split("\n")
-          .map((q) => q.replace(/^[-*\d.)\s]+/, "").trim())
-          .filter((q) => q.length > 10) || [];
+      const response = completion.choices[0].message.content?.trim() || "";
+
+      // Check for refusal patterns
+      const refusalPatterns = [
+        "i'm sorry",
+        "i can't",
+        "i cannot",
+        "nie mogę",
+        "przepraszam",
+        "sorry, but",
+        "unable to",
+      ];
+
+      const isRefusal = refusalPatterns.some((pattern) =>
+        response.toLowerCase().includes(pattern)
+      );
+
+      if (isRefusal || response.length < 10) {
+        console.log(
+          "[DeepResearch] LLM refused or invalid response, using original query"
+        );
+        return [query];
+      }
+
+      const subQueries = response
+        .split("\n")
+        .map((q) => q.replace(/^[-*\d.)\s]+/, "").trim())
+        .filter((q) => q.length > 10);
 
       return subQueries.length > 0 ? subQueries : [query];
     } catch (error) {
@@ -362,7 +420,7 @@ export class DeepResearchService {
 
       if (error) throw error;
 
-      return (data || []).map((doc) => ({
+      return ((data || []) as ProcessedDocumentRow[]).map((doc) => ({
         id: `local-${doc.id}`,
         title: doc.title,
         url: `#/documents/${doc.id}`,
@@ -766,7 +824,7 @@ export class DeepResearchService {
    */
   private async saveReport(report: DeepResearchReport): Promise<void> {
     try {
-      const { error } = await this.supabase.from("research_reports").insert({
+      const insertData: ResearchReportInsert = {
         id: report.id,
         user_id: this.userId,
         query: report.query,
@@ -780,7 +838,10 @@ export class DeepResearchService {
         confidence: report.confidence,
         processing_time: report.processingTime,
         created_at: report.generatedAt,
-      });
+      };
+      const { error } = await this.supabase
+        .from("research_reports")
+        .insert(insertData as unknown as Record<string, unknown>);
 
       if (error) throw error;
     } catch (error) {
@@ -808,9 +869,13 @@ export class DeepResearchService {
   /**
    * Verify a claim using multi-source research
    */
-  async verifyClaim(claim: string): Promise<any> {
+  async verifyClaim(
+    claim: string
+  ): Promise<{ verified: boolean; evidence: ResearchResult[] }> {
     // TODO: Implement claim verification
     // This would search for supporting and contradicting evidence
-    throw new Error("Claim verification not yet implemented");
+    throw new Error(
+      `Claim verification not yet implemented for: ${claim.substring(0, 50)}`
+    );
   }
 }

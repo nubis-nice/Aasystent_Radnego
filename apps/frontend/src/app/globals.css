@@ -78,6 +78,31 @@ a {
     background-color: var(--background);
     color: var(--foreground);
   }
+
+  /* Globalne style dla pól formularzy - jaśniejsze tło */
+  input,
+  textarea,
+  select {
+    background-color: #fafbfc;
+  }
+
+  input:focus,
+  textarea:focus,
+  select:focus {
+    background-color: #ffffff;
+  }
+
+  .dark input,
+  .dark textarea,
+  .dark select {
+    background-color: #1e293b;
+  }
+
+  .dark input:focus,
+  .dark textarea:focus,
+  .dark select:focus {
+    background-color: #334155;
+  }
 }
 
 @layer utilities {

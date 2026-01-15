@@ -1,11 +1,62 @@
 /**
  * Dashboard API Routes
+ * Kalendarz, Zadania, Alerty, Statystyki
  */
 
 import type { FastifyInstance } from "fastify";
 import { createClient } from "@supabase/supabase-js";
+import { z } from "zod";
+import { batchImportExistingDocuments } from "../services/calendar-auto-import.js";
+
+// Schemas
+const CalendarEventSchema = z.object({
+  title: z.string().min(1).max(500),
+  description: z.string().optional(),
+  event_type: z
+    .enum(["session", "committee", "meeting", "deadline", "reminder", "other"])
+    .default("other"),
+  start_date: z.string(),
+  end_date: z.string().optional(),
+  all_day: z.boolean().default(false),
+  location: z.string().max(300).optional(),
+  document_id: z.string().uuid().optional(),
+  source_url: z.string().url().optional(),
+  reminder_minutes: z.array(z.number()).default([1440, 60]),
+  color: z.string().max(20).default("primary"),
+});
+
+const TaskSchema = z.object({
+  title: z.string().min(1).max(500),
+  description: z.string().optional(),
+  status: z
+    .enum(["pending", "in_progress", "completed", "cancelled"])
+    .default("pending"),
+  priority: z.enum(["critical", "high", "medium", "low"]).default("medium"),
+  due_date: z.string().optional(),
+  category: z
+    .enum([
+      "interpellation",
+      "commission",
+      "session",
+      "citizen",
+      "budget",
+      "legal",
+      "general",
+    ])
+    .default("general"),
+  document_id: z.string().uuid().optional(),
+  calendar_event_id: z.string().uuid().optional(),
+  related_url: z.string().url().optional(),
+  reminder_date: z.string().optional(),
+  tags: z.array(z.string()).default([]),
+});
 
 export async function dashboardRoutes(fastify: FastifyInstance) {
+  const getSupabase = () =>
+    createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
   // GET /api/dashboard/stats - Dashboard statistics
   fastify.get("/dashboard/stats", async (request, reply) => {
     const userId = request.headers["x-user-id"] as string;
@@ -100,6 +151,424 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         error: "Failed to fetch dashboard stats",
         message: error instanceof Error ? error.message : "Unknown error",
       });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // KALENDARZ - CRUD
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // GET /api/dashboard/calendar - Lista wydarzeń
+  fastify.get("/dashboard/calendar", async (request, reply) => {
+    const userId = request.headers["x-user-id"] as string;
+    if (!userId) return reply.code(401).send({ error: "Unauthorized" });
+
+    const query = request.query as {
+      from?: string;
+      to?: string;
+      type?: string;
+    };
+    const supabase = getSupabase();
+
+    try {
+      let dbQuery = supabase
+        .from("user_calendar_events")
+        .select("*")
+        .eq("user_id", userId)
+        .order("start_date", { ascending: true });
+
+      if (query.from) dbQuery = dbQuery.gte("start_date", query.from);
+      if (query.to) dbQuery = dbQuery.lte("start_date", query.to);
+      if (query.type) dbQuery = dbQuery.eq("event_type", query.type);
+
+      const { data, error } = await dbQuery;
+      if (error) throw error;
+
+      return reply.send({ events: data || [] });
+    } catch (error) {
+      fastify.log.error("[Calendar] Error:", error);
+      return reply.code(500).send({ error: "Failed to fetch calendar events" });
+    }
+  });
+
+  // POST /api/dashboard/calendar - Dodaj wydarzenie
+  fastify.post("/dashboard/calendar", async (request, reply) => {
+    const userId = request.headers["x-user-id"] as string;
+    if (!userId) return reply.code(401).send({ error: "Unauthorized" });
+
+    try {
+      const body = CalendarEventSchema.parse(request.body);
+      const supabase = getSupabase();
+
+      const { data, error } = await supabase
+        .from("user_calendar_events")
+        .insert({ ...body, user_id: userId })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return reply.code(201).send({ event: data });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply
+          .code(400)
+          .send({ error: "Invalid data", details: error.errors });
+      }
+      fastify.log.error("[Calendar] Create error:", error);
+      return reply.code(500).send({ error: "Failed to create event" });
+    }
+  });
+
+  // PUT /api/dashboard/calendar/:id - Aktualizuj wydarzenie
+  fastify.put<{ Params: { id: string } }>(
+    "/dashboard/calendar/:id",
+    async (request, reply) => {
+      const userId = request.headers["x-user-id"] as string;
+      if (!userId) return reply.code(401).send({ error: "Unauthorized" });
+
+      try {
+        const body = CalendarEventSchema.partial().parse(request.body);
+        const supabase = getSupabase();
+
+        const { data, error } = await supabase
+          .from("user_calendar_events")
+          .update(body)
+          .eq("id", request.params.id)
+          .eq("user_id", userId)
+          .select()
+          .single();
+
+        if (error) throw error;
+        if (!data) return reply.code(404).send({ error: "Event not found" });
+        return reply.send({ event: data });
+      } catch (error) {
+        fastify.log.error("[Calendar] Update error:", error);
+        return reply.code(500).send({ error: "Failed to update event" });
+      }
+    }
+  );
+
+  // DELETE /api/dashboard/calendar/:id - Usuń wydarzenie
+  fastify.delete<{ Params: { id: string } }>(
+    "/dashboard/calendar/:id",
+    async (request, reply) => {
+      const userId = request.headers["x-user-id"] as string;
+      if (!userId) return reply.code(401).send({ error: "Unauthorized" });
+
+      const supabase = getSupabase();
+      const { error } = await supabase
+        .from("user_calendar_events")
+        .delete()
+        .eq("id", request.params.id)
+        .eq("user_id", userId);
+
+      if (error) {
+        fastify.log.error("[Calendar] Delete error:", error);
+        return reply.code(500).send({ error: "Failed to delete event" });
+      }
+      return reply.code(204).send();
+    }
+  );
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ZADANIA - CRUD
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // GET /api/dashboard/tasks - Lista zadań
+  fastify.get("/dashboard/tasks", async (request, reply) => {
+    const userId = request.headers["x-user-id"] as string;
+    if (!userId) return reply.code(401).send({ error: "Unauthorized" });
+
+    const query = request.query as {
+      status?: string;
+      priority?: string;
+      category?: string;
+    };
+    const supabase = getSupabase();
+
+    try {
+      let dbQuery = supabase
+        .from("user_tasks")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (query.status) dbQuery = dbQuery.eq("status", query.status);
+      if (query.priority) dbQuery = dbQuery.eq("priority", query.priority);
+      if (query.category) dbQuery = dbQuery.eq("category", query.category);
+
+      const { data, error } = await dbQuery;
+      if (error) throw error;
+
+      return reply.send({ tasks: data || [] });
+    } catch (error) {
+      fastify.log.error("[Tasks] Error:", error);
+      return reply.code(500).send({ error: "Failed to fetch tasks" });
+    }
+  });
+
+  // POST /api/dashboard/tasks - Dodaj zadanie
+  fastify.post("/dashboard/tasks", async (request, reply) => {
+    const userId = request.headers["x-user-id"] as string;
+    if (!userId) return reply.code(401).send({ error: "Unauthorized" });
+
+    try {
+      const body = TaskSchema.parse(request.body);
+      const supabase = getSupabase();
+
+      const { data, error } = await supabase
+        .from("user_tasks")
+        .insert({ ...body, user_id: userId })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return reply.code(201).send({ task: data });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply
+          .code(400)
+          .send({ error: "Invalid data", details: error.errors });
+      }
+      fastify.log.error("[Tasks] Create error:", error);
+      return reply.code(500).send({ error: "Failed to create task" });
+    }
+  });
+
+  // PUT /api/dashboard/tasks/:id - Aktualizuj zadanie
+  fastify.put<{ Params: { id: string } }>(
+    "/dashboard/tasks/:id",
+    async (request, reply) => {
+      const userId = request.headers["x-user-id"] as string;
+      if (!userId) return reply.code(401).send({ error: "Unauthorized" });
+
+      try {
+        const body = TaskSchema.partial().parse(request.body);
+        const supabase = getSupabase();
+
+        // Jeśli status zmienia się na completed, ustaw completed_at
+        const updateData = { ...body } as Record<string, unknown>;
+        if (body.status === "completed") {
+          updateData.completed_at = new Date().toISOString();
+        }
+
+        const { data, error } = await supabase
+          .from("user_tasks")
+          .update(updateData)
+          .eq("id", request.params.id)
+          .eq("user_id", userId)
+          .select()
+          .single();
+
+        if (error) throw error;
+        if (!data) return reply.code(404).send({ error: "Task not found" });
+        return reply.send({ task: data });
+      } catch (error) {
+        fastify.log.error("[Tasks] Update error:", error);
+        return reply.code(500).send({ error: "Failed to update task" });
+      }
+    }
+  );
+
+  // DELETE /api/dashboard/tasks/:id - Usuń zadanie
+  fastify.delete<{ Params: { id: string } }>(
+    "/dashboard/tasks/:id",
+    async (request, reply) => {
+      const userId = request.headers["x-user-id"] as string;
+      if (!userId) return reply.code(401).send({ error: "Unauthorized" });
+
+      const supabase = getSupabase();
+      const { error } = await supabase
+        .from("user_tasks")
+        .delete()
+        .eq("id", request.params.id)
+        .eq("user_id", userId);
+
+      if (error) {
+        fastify.log.error("[Tasks] Delete error:", error);
+        return reply.code(500).send({ error: "Failed to delete task" });
+      }
+      return reply.code(204).send();
+    }
+  );
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ALERTY / POWIADOMIENIA
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // GET /api/dashboard/alerts - Lista alertów
+  fastify.get("/dashboard/alerts", async (request, reply) => {
+    const userId = request.headers["x-user-id"] as string;
+    if (!userId) return reply.code(401).send({ error: "Unauthorized" });
+
+    const query = request.query as { unread_only?: string };
+    const supabase = getSupabase();
+
+    try {
+      let dbQuery = supabase
+        .from("user_alerts")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("is_dismissed", false)
+        .order("created_at", { ascending: false })
+        .limit(20);
+
+      if (query.unread_only === "true") {
+        dbQuery = dbQuery.eq("is_read", false);
+      }
+
+      const { data, error } = await dbQuery;
+      if (error) throw error;
+
+      // Count unread
+      const { count: unreadCount } = await supabase
+        .from("user_alerts")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("is_read", false)
+        .eq("is_dismissed", false);
+
+      return reply.send({ alerts: data || [], unreadCount: unreadCount || 0 });
+    } catch (error) {
+      fastify.log.error("[Alerts] Error:", error);
+      return reply.code(500).send({ error: "Failed to fetch alerts" });
+    }
+  });
+
+  // PUT /api/dashboard/alerts/:id/read - Oznacz jako przeczytany
+  fastify.put<{ Params: { id: string } }>(
+    "/dashboard/alerts/:id/read",
+    async (request, reply) => {
+      const userId = request.headers["x-user-id"] as string;
+      if (!userId) return reply.code(401).send({ error: "Unauthorized" });
+
+      const supabase = getSupabase();
+      const { error } = await supabase
+        .from("user_alerts")
+        .update({ is_read: true, read_at: new Date().toISOString() })
+        .eq("id", request.params.id)
+        .eq("user_id", userId);
+
+      if (error) {
+        return reply.code(500).send({ error: "Failed to mark alert as read" });
+      }
+      return reply.send({ success: true });
+    }
+  );
+
+  // PUT /api/dashboard/alerts/read-all - Oznacz wszystkie jako przeczytane
+  fastify.put("/dashboard/alerts/read-all", async (request, reply) => {
+    const userId = request.headers["x-user-id"] as string;
+    if (!userId) return reply.code(401).send({ error: "Unauthorized" });
+
+    const supabase = getSupabase();
+    const { error } = await supabase
+      .from("user_alerts")
+      .update({ is_read: true, read_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .eq("is_read", false);
+
+    if (error) {
+      return reply.code(500).send({ error: "Failed to mark alerts as read" });
+    }
+    return reply.send({ success: true });
+  });
+
+  // DELETE /api/dashboard/alerts/:id - Odrzuć alert
+  fastify.delete<{ Params: { id: string } }>(
+    "/dashboard/alerts/:id",
+    async (request, reply) => {
+      const userId = request.headers["x-user-id"] as string;
+      if (!userId) return reply.code(401).send({ error: "Unauthorized" });
+
+      const supabase = getSupabase();
+      const { error } = await supabase
+        .from("user_alerts")
+        .update({ is_dismissed: true })
+        .eq("id", request.params.id)
+        .eq("user_id", userId);
+
+      if (error) {
+        return reply.code(500).send({ error: "Failed to dismiss alert" });
+      }
+      return reply.code(204).send();
+    }
+  );
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // UPCOMING EVENTS - z dokumentów
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // GET /api/dashboard/upcoming - Nadchodzące wydarzenia z dokumentów
+  fastify.get("/dashboard/upcoming", async (request, reply) => {
+    const userId = request.headers["x-user-id"] as string;
+    if (!userId) return reply.code(401).send({ error: "Unauthorized" });
+
+    const supabase = getSupabase();
+
+    try {
+      // Pobierz nadchodzące sesje i komisje z processed_documents
+      const { data: upcomingSessions } = await supabase
+        .from("processed_documents")
+        .select(
+          "id, title, document_type, session_number, normalized_publish_date, source_url"
+        )
+        .eq("user_id", userId)
+        .in("document_type", ["session_agenda", "committee_meeting"])
+        .gte("normalized_publish_date", new Date().toISOString().split("T")[0])
+        .order("normalized_publish_date", { ascending: true })
+        .limit(10);
+
+      // Pobierz zadania z terminami
+      const { data: upcomingTasks } = await supabase
+        .from("user_tasks")
+        .select("id, title, due_date, priority, category")
+        .eq("user_id", userId)
+        .in("status", ["pending", "in_progress"])
+        .not("due_date", "is", null)
+        .gte("due_date", new Date().toISOString())
+        .order("due_date", { ascending: true })
+        .limit(10);
+
+      // Pobierz wydarzenia z kalendarza
+      const { data: calendarEvents } = await supabase
+        .from("user_calendar_events")
+        .select("id, title, start_date, event_type, location")
+        .eq("user_id", userId)
+        .gte("start_date", new Date().toISOString())
+        .order("start_date", { ascending: true })
+        .limit(10);
+
+      return reply.send({
+        sessions: upcomingSessions || [],
+        tasks: upcomingTasks || [],
+        events: calendarEvents || [],
+      });
+    } catch (error) {
+      fastify.log.error("[Upcoming] Error:", error);
+      return reply.code(500).send({ error: "Failed to fetch upcoming events" });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // BATCH IMPORT - importuj istniejące dokumenty sesji/komisji do kalendarza
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // POST /api/dashboard/calendar/batch-import - Import wydarzeń z dokumentów
+  fastify.post("/dashboard/calendar/batch-import", async (request, reply) => {
+    const userId = request.headers["x-user-id"] as string;
+    if (!userId) return reply.code(401).send({ error: "Unauthorized" });
+
+    try {
+      const stats = await batchImportExistingDocuments(userId);
+      return reply.send({
+        success: true,
+        message: `Zaimportowano ${stats.imported} wydarzeń, pominięto ${stats.skipped}, błędów: ${stats.errors}`,
+        stats,
+      });
+    } catch (error) {
+      fastify.log.error("[BatchImport] Error:", error);
+      return reply.code(500).send({ error: "Failed to batch import events" });
     }
   });
 }

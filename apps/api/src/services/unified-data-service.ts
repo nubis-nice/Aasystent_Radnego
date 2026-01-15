@@ -12,6 +12,7 @@ import { ApiDataFetcher } from "./data-fetchers/api-fetcher.js";
 import { ScraperDataFetcher } from "./data-fetchers/scraper-fetcher.js";
 import { DocumentProcessor } from "./document-processor.js";
 import OpenAI from "openai";
+import { autoImportToCalendar } from "./calendar-auto-import.js";
 import type {
   DataSourceConfig,
   FetchedDocument,
@@ -281,25 +282,43 @@ export class UnifiedDataService {
 
         const keywords = this.extractKeywords(doc.title, doc.content);
 
-        const { error } = await supabase.from("processed_documents").insert({
-          user_id: this.userId,
-          document_type: documentType,
-          title: doc.title,
-          content: doc.content,
-          summary: doc.content.substring(0, 300) + "...",
-          keywords,
-          source_url: doc.url,
-          publish_date: doc.publishDate,
-          embedding,
-          processed_at: new Date().toISOString(),
-          metadata: {
-            sourceType: doc.sourceType,
-            fetchMethod: doc.fetchMethod,
-            legalClassification: doc.legalClassification,
-          },
-        });
+        const { data: insertedDoc, error } = await supabase
+          .from("processed_documents")
+          .insert({
+            user_id: this.userId,
+            document_type: documentType,
+            title: doc.title,
+            content: doc.content,
+            summary: doc.content.substring(0, 300) + "...",
+            keywords,
+            source_url: doc.url,
+            publish_date: doc.publishDate,
+            embedding,
+            processed_at: new Date().toISOString(),
+            metadata: {
+              sourceType: doc.sourceType,
+              fetchMethod: doc.fetchMethod,
+              legalClassification: doc.legalClassification,
+            },
+          })
+          .select(
+            "id, user_id, title, document_type, content, session_number, normalized_publish_date, source_url"
+          )
+          .single();
 
-        if (!error) processedCount++;
+        if (!error && insertedDoc) {
+          processedCount++;
+
+          // Auto-import do kalendarza
+          try {
+            await autoImportToCalendar(insertedDoc);
+          } catch (calendarError) {
+            console.error(
+              "[UnifiedDataService] Calendar auto-import failed:",
+              calendarError
+            );
+          }
+        }
       } catch (error) {
         console.error("[UnifiedDataService] Error processing document:", error);
       }

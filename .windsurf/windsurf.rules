@@ -565,3 +565,35 @@ Zawsze pisz w języku polskim (chyba że niemożliwe - wtedy po angielsku).
 Dodając lub naprawiając funkcje, **zawsze szukaj powiązań** i wykonuj wymagane zmiany we wszystkich zależnych miejscach aplikacji.
 
 Zapisuj swoje kroki w pliku `/docs/change_log.md`
+
+---
+
+## 11. OBSERWOWALNOŚĆ I OPERACJE (DEVOPS)
+
+### 11.1 Trace ID i logowanie
+
+- Każdy request (API, worker) musi generować `traceId` i logować decyzje narzędzi (`tool=deep_research`, `tool=rag_search`, itd.).
+- Logi mają format JSON; w dev można używać `pino-pretty`, w produkcji wysyłamy je do centralnego systemu (np. Supabase logs / Loki).
+- Błędy MUSZĄ zawierać `traceId` w odpowiedzi (`reply.code(500).send({ errorId: traceId, ... })`), aby użytkownik mógł zgłosić problem.
+
+### 11.2 Monitorowanie pipeline’u
+
+- Worker publikuje metryki jobów (czas start/stop, typ, status) do Redis/Prometheus.
+- Dashboard operacyjny powinien pokazywać: liczbę dokumentów w ingest, błędy OCR, błędy DeepResearch, kolejkę BullMQ.
+- W razie awarii jobu zapisujemy `failure_reason`, `retry_count`, `last_payload`.
+
+### 11.3 Konfiguracja środowisk
+
+- `.env` osobno dla `apps/api`, `apps/frontend`, `apps/worker`. Sekrety przechowujemy poza repo (np. Doppler, 1Password).
+- Wszystkie klucze API (OpenAI, Exa, itp.) są wersjonowane w tabeli `api_configurations` i szyfrowane (base64). Brak klucza = provider offline.
+- Supabase jest **single source of truth** – migracje SQL w `apps/api/migrations` MUSZĄ być odpalone ręcznie (Supabase SQL Editor) i opisane w `docs/change_log.md`.
+
+### 11.4 Testy i release
+
+- Minimalny zestaw testów uruchamiany przed releasem: lint, typy, smoke test API `/health`, test zapytania RAG, test DeepResearch (mock providers).
+- Deployment lokalny: `npm run dev` (uruchamia API, frontend, worker). W CI preferujemy docker-compose (`infra/docker-compose.yml`) z profilami `api`, `frontend`, `worker`.
+
+### 11.5 Alerty
+
+- Krytyczne alerty DevOps: brak dostępu do Supabase, błędy 5xx na `/api/research`, rosnąca kolejka BullMQ > 50 jobów, brak wolumenu w ingestion przez 24h.
+- Alertuje się odpowiedzialnego inżyniera + kanał #windsurf-ops.

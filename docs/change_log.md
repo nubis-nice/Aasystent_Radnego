@@ -1,5 +1,188 @@
 # Change Log
 
+## 2026-01-14 (noc) - Przywrócenie formatowania treści dokumentów
+
+### Zmiana: Rozróżnienie regex FORMATUJĄCYCH od EKSTRAKCYJNYCH
+
+**Problem:** Poprzednio usunięto wszystkie regexy, w tym te służące do wizualnego formatowania treści (kolorowanie PDF, druków, uchwał). Treść dokumentu wyświetlała się jako jeden blok tekstu bez wyróżnień.
+
+**Rozwiązanie:** Przywrócono regexy do STYLIZACJI treści, zachowując dane z AI dla nagłówka sesji.
+
+### Dwa typy regex w systemie
+
+| Typ              | Cel                                                  | Status                   |
+| ---------------- | ---------------------------------------------------- | ------------------------ |
+| **Formatujące**  | Wizualne wyróżnienie elementów (PDF, druki, uchwały) | ✅ Przywrócone           |
+| **Ekstrakcyjne** | Wyciąganie danych sesji (data, miejsce, godzina)     | ❌ Usunięte - używamy AI |
+
+### Przywrócone wzorce formatowania (`FORMATTING_PATTERNS`)
+
+```typescript
+pdfLink: /\(PDF,?\s*[\d.,]+\s*[KMG]?[bB]?\)/gi; // 📄 niebieski
+druk: /\(\s*druk[i]?\s*(?:nr|numer)?\s*[\d,\s]+\)/gi; // 📋 fioletowy
+uchwalaNumer: /Uchwała\s+Nr\s+[IVXLCDM]+\/\d+\/\d+/gi; // 📜 zielony
+projektUchwaly: /Projekt\s+uchwały:/gi; // 📝 żółty
+zalacznik: /Załącznik[i]?\s+(?:nr|numer)?\s*[\d\-,\s]+/gi; // 📎 cyan
+numberedItem: /^(\d+[a-z]?)\.\s+/gm; // Numerowane punkty
+```
+
+### Architektura po zmianach
+
+```text
+FormattedDocumentContent:
+├─ Nagłówek sesji → dane z AI (metadata.llmAnalysis, session_number)
+├─ Data/godzina → dane z AI (extractedDates, sessionInfo)
+├─ Miejsce → dane z AI (extractedEntities, sessionLocation)
+├─ Kluczowe tematy → dane z AI (keyTopics)
+└─ Treść dokumentu → regex FORMATUJĄCE (kolorowanie PDF, druków, uchwał)
+```
+
+**Status:** ✅ Ukończone
+
+---
+
+## 2026-01-14 (noc) - Migracja na Inteligentny Scraping (tylko AI)
+
+### Zmiana: Usunięcie regex parsowania na rzecz danych z AI
+
+**Problem:** Dane o sesjach (data, godzina, miejsce) wyświetlane w widoku dokumentu były parsowane przez regex z treści dokumentu, podczas gdy system już posiadał inteligentny scraper z analizą AI (LLM). Dane z regex nie zgadzały się z danymi w kalendarzu (które używały AI).
+
+**Rozwiązanie:** Ujednolicenie źródła danych - wszystkie informacje o sesjach pochodzą teraz z analizy AI (`metadata.llmAnalysis`).
+
+### Zmiany w plikach
+
+| Plik                                            | Zmiana                                                                                      |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `apps/frontend/src/lib/api/documents-list.ts`   | Dodano interfejsy `LLMAnalysisData`, `DocumentMetadata` z typami dla danych AI              |
+| `apps/frontend/src/app/documents/[id]/page.tsx` | Przepisano `FormattedDocumentContent` - używa danych z `metadata.llmAnalysis` zamiast regex |
+| `apps/api/src/services/calendar-auto-import.ts` | Usunięto funkcję `extractDateFromTitle()` (regex fallback) - data musi pochodzić z AI       |
+
+### Szczegóły zmian
+
+**1. Nowe typy w `documents-list.ts`:**
+
+```typescript
+interface LLMAnalysisData {
+  relevanceScore: number;
+  contentType: string;
+  summary: string;
+  keyTopics: string[];
+  isRelevantForCouncilor: boolean;
+  extractedDates: string[];
+  extractedEntities: string[];
+}
+
+interface DocumentMetadata {
+  llmAnalysis?: LLMAnalysisData;
+  sessionInfo?: { sessionNumber; sessionDate; sessionTime; sessionLocation };
+}
+```
+
+**2. `FormattedDocumentContent` - teraz wyświetla:**
+
+- Nagłówek sesji z numeru `session_number` (arabski → rzymski)
+- Datę i godzinę z `llmAnalysis.extractedDates` lub `sessionInfo.sessionDate`
+- Miejsce z `llmAnalysis.extractedEntities` lub `sessionInfo.sessionLocation`
+- Kluczowe tematy z `llmAnalysis.keyTopics`
+- Etykietę "Źródło: analiza AI" przy danych wyodrębnionych przez LLM
+
+**3. `calendar-auto-import.ts` - usunięty regex:**
+
+- Usunięto funkcję `extractDateFromTitle()` (~55 linii regex)
+- Usunięto fallback na `normalized_publish_date`
+- Data, godzina i miejsce MUSZĄ pochodzić z AI - brak danych = skip importu
+
+### Przepływ danych (po zmianach)
+
+```
+IntelligentScraper
+  └─ analyzeContentWithLLM() → extractedDates, extractedEntities
+     └─ saveScrapedContent() → metadata.llmAnalysis
+        └─ processToRAG() → processed_documents.metadata
+           └─ Frontend: FormattedDocumentContent (wyświetla dane AI)
+           └─ calendar-auto-import (importuje tylko z danych AI)
+```
+
+### Korzyści
+
+- **Spójność danych** - jedno źródło prawdy (AI) dla dat/miejsc sesji
+- **Lepsze wyodrębnianie** - AI rozumie kontekst, regex nie
+- **Mniej kodu** - usunięto ~350 linii regex parsowania
+- **Transparentność** - etykieta "Źródło: analiza AI" informuje użytkownika
+
+**Status:** ✅ Ukończone
+
+---
+
+## 2026-01-14 (wieczór) - Naprawa Deep Research i Brave Search
+
+### Naprawione błędy
+
+**1. HTTP 403 dla Brave Search test connection**
+
+- **Problem**: Brave API wymaga nagłówka `X-Subscription-Token` zamiast `Authorization: Bearer`
+- **Rozwiązanie**: Dodano obsługę specyficzną dla Brave w `test.ts` (linie 111-138)
+- **Pliki**: `apps/api/src/routes/test.ts`
+
+**2. Brak fallback między providerami semantic search**
+
+- **Problem**: Gdy Exa zwracał błąd 402 (brak kredytów), Brave nie był używany jako fallback
+- **Przyczyna**: Brave nie był w konfiguracji `SEARCH_DEPTH_CONFIG`
+- **Rozwiązanie**: Dodano Brave do wszystkich poziomów depth (quick, standard, deep)
+- **Pliki**: `apps/api/src/config/research-providers.ts` (linie 113-128)
+
+**3. LLM lokalny odmawia rozkładu zapytań**
+
+- **Problem**: Lokalny model zamiast rozkładać query zwracał "I'm sorry, but I can't help with that"
+- **Rozwiązanie**: Dodano wykrywanie wzorców odmowy i fallback do oryginalnego query
+- **Pliki**: `apps/api/src/services/deep-research-service.ts` (linie 271-321)
+
+**4. Błędy TypeScript w deep-research-service.ts**
+
+- Dodano importy: `Buffer`, `randomUUID`, `URL` z node:\*
+- Dodano interfejsy typów: `ApiConfigRow`, `ProcessedDocumentRow`, `ResearchReportInsert`
+- Naprawiono rzutowanie typów dla zapytań Supabase
+- **Pliki**: `apps/api/src/services/deep-research-service.ts`
+
+### Zmodyfikowane pliki
+
+| Plik                                             | Zmiana                               |
+| ------------------------------------------------ | ------------------------------------ |
+| `apps/api/src/routes/test.ts`                    | Obsługa Brave z X-Subscription-Token |
+| `apps/api/src/config/research-providers.ts`      | Brave w SEARCH_DEPTH_CONFIG          |
+| `apps/api/src/services/deep-research-service.ts` | Wykrywanie odmów LLM, typy TS        |
+
+### Nowe pliki
+
+| Plik                                                            | Opis                           |
+| --------------------------------------------------------------- | ------------------------------ |
+| `apps/api/src/services/__tests__/deep-research-service.test.ts` | Testy jednostkowe dla fallback |
+
+**Status:** ✅ Ukończone
+
+---
+
+## 2026-01-14 - Aktualizacja dokumentacji DevOps i MVP
+
+### Opis
+
+- Zaktualizowano `.windsurf/ARCHITECTURE.MD`, `.windsurf/PROJECT.md`, `.windsurf/TODO.md` oraz `.windsurf/windsurf.rules`, aby odzwierciedlały aktualny stan MVP oraz wymagania DevOps (traceId, monitorowanie, zarządzanie środowiskami).
+- Dodano nowe decyzje architektoniczne dotyczące dynamicznych providerów Deep Research, Supabase jako jedynego backendu oraz deterministycznego logowania pipelinu.
+- Rozszerzono `docs/architecture.md` o sekcję Observability & DevOps i ujednolicono listę priorytetów MVP.
+
+### Zmodyfikowane pliki
+
+- `.windsurf/ARCHITECTURE.MD` – opis monorepo, pipeline’u dokumentów, warstwy AI i zasad inwariantnych.
+- `.windsurf/DECISIONS.md` – nowe decyzje (dynamiczne providery, Supabase single source of truth, logowanie traceId).
+- `.windsurf/PROJECT.md` – misja produktu, role użytkowników, priorytety rozwoju.
+- `.windsurf/TODO.md` – aktualny stan źródeł, AI, platformy.
+- `.windsurf/windsurf.rules` – sekcja 11 o observability/operacjach.
+- `docs/architecture.md` – sekcja 9 Observability & DevOps.
+
+### Status
+
+✅ Ukończone
+
 ## 2026-01-14 - Rozszerzenie wyszukiwarki i grupowania dokumentów
 
 ### Nowe funkcjonalności

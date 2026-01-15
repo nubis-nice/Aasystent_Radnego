@@ -1083,40 +1083,156 @@ export default function ChatPage() {
                   }`}
                 >
                   <div
-                    className={`rounded-2xl px-6 py-5 text-left transition-all duration-200 ${
+                    className={`text-left transition-all duration-200 ${
                       msg.role === "user"
-                        ? "inline-block max-w-2xl bg-gradient-to-r from-primary-500 to-primary-600 text-white shadow-md"
-                        : `w-[90%] bg-gradient-to-br from-secondary-50 to-white text-text shadow-sm border border-secondary-100 ${
+                        ? "rounded-2xl px-6 py-5 inline-block max-w-2xl bg-gradient-to-r from-primary-500 to-primary-600 text-white shadow-md"
+                        : `w-full max-w-4xl ${
                             msg.expansion ? "ring-2 ring-amber-200/50" : ""
                           }`
                     }`}
                   >
-                    {/* Renderowanie Markdown dla odpowiedzi AI */}
+                    {/* Renderowanie odpowiedzi AI w stylu DocumentDetailPage */}
                     {msg.role === "assistant" ? (
-                      <div
-                        className="prose prose-base max-w-none 
-                        prose-headings:text-text prose-headings:font-bold prose-headings:tracking-tight
-                        prose-h1:text-2xl prose-h1:mb-4 prose-h1:pb-2 prose-h1:border-b prose-h1:border-secondary-200
-                        prose-h2:text-xl prose-h2:mt-6 prose-h2:mb-3 prose-h2:text-primary-700
-                        prose-h3:text-lg prose-h3:mt-4 prose-h3:mb-2 prose-h3:text-secondary-700
-                        prose-p:text-text prose-p:leading-7 prose-p:mb-4
-                        prose-ul:my-3 prose-ul:pl-1 prose-ol:my-3 prose-ol:pl-1
-                        prose-li:my-1.5 prose-li:leading-6 prose-li:marker:text-primary-500
-                        prose-strong:text-primary-700 prose-strong:font-semibold
-                        prose-em:text-secondary-600 prose-em:italic
-                        prose-code:bg-secondary-100 prose-code:text-primary-700 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:font-mono prose-code:text-sm
-                        prose-pre:bg-secondary-800 prose-pre:text-secondary-100 prose-pre:rounded-xl prose-pre:shadow-inner
-                        prose-blockquote:border-l-4 prose-blockquote:border-primary-400 prose-blockquote:bg-primary-50/50 prose-blockquote:py-1 prose-blockquote:px-4 prose-blockquote:rounded-r-lg prose-blockquote:italic
-                        prose-a:text-primary-600 prose-a:underline prose-a:underline-offset-2 hover:prose-a:text-primary-800
-                        prose-table:border-collapse prose-th:bg-secondary-100 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:border prose-td:border-secondary-200
-                        prose-hr:border-secondary-200 prose-hr:my-6"
-                      >
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          components={markdownComponents}
-                        >
-                          {msg.content}
-                        </ReactMarkdown>
+                      <div className="space-y-4">
+                        {/* Nagłówek "Analiza" - tylko dla wiadomości nie-powitalnych */}
+                        {msg.id !== "welcome" && (
+                          <div className="bg-gradient-to-r from-primary-50 to-primary-100 rounded-xl border border-primary-200 p-4">
+                            <div className="flex items-center gap-3">
+                              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center">
+                                <Sparkles className="h-5 w-5 text-white" />
+                              </div>
+                              <div>
+                                <h2 className="text-lg font-bold text-primary-800">
+                                  🔍 Analiza AI
+                                </h2>
+                                <p className="text-xs text-primary-600">
+                                  Asystent Radnego
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Treść odpowiedzi */}
+                        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
+                          <div
+                            className="prose prose-base max-w-none 
+                            prose-headings:text-slate-800 prose-headings:font-bold prose-headings:tracking-tight
+                            prose-h1:text-xl prose-h1:mb-4 prose-h1:pb-2 prose-h1:border-b prose-h1:border-slate-200
+                            prose-h2:text-lg prose-h2:mt-5 prose-h2:mb-3 prose-h2:text-slate-700
+                            prose-h3:text-base prose-h3:mt-4 prose-h3:mb-2 prose-h3:text-slate-600
+                            prose-p:text-slate-700 prose-p:leading-7 prose-p:mb-3
+                            prose-ul:my-2 prose-ul:pl-1 prose-ol:my-2 prose-ol:pl-1
+                            prose-li:my-1 prose-li:leading-6 prose-li:marker:text-primary-500 prose-li:text-slate-700
+                            prose-strong:text-slate-800 prose-strong:font-semibold
+                            prose-em:text-slate-600 prose-em:italic
+                            prose-code:bg-slate-100 prose-code:text-primary-700 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:font-mono prose-code:text-sm
+                            prose-pre:bg-slate-800 prose-pre:text-slate-100 prose-pre:rounded-xl prose-pre:shadow-inner
+                            prose-blockquote:border-l-4 prose-blockquote:border-primary-400 prose-blockquote:bg-primary-50/50 prose-blockquote:py-1 prose-blockquote:px-4 prose-blockquote:rounded-r-lg prose-blockquote:italic
+                            prose-a:text-primary-600 prose-a:underline prose-a:underline-offset-2 hover:prose-a:text-primary-800
+                            prose-table:border-collapse prose-th:bg-slate-100 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:border prose-td:border-slate-200
+                            prose-hr:border-slate-200 prose-hr:my-5"
+                          >
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm]}
+                              components={markdownComponents}
+                            >
+                              {msg.content}
+                            </ReactMarkdown>
+                          </div>
+
+                          {/* Przyciski akcji - wewnątrz karty */}
+                          {msg.id !== "welcome" && (
+                            <div className="flex items-center gap-2 mt-4 pt-3 border-t border-slate-200">
+                              <button
+                                onClick={() =>
+                                  copyToClipboard(msg.content, msg.id)
+                                }
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                                title="Kopiuj do schowka"
+                              >
+                                {copiedId === msg.id ? (
+                                  <>
+                                    <Check className="h-3.5 w-3.5 text-green-500" />
+                                    Skopiowano
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="h-3.5 w-3.5" /> Kopiuj
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                onClick={() =>
+                                  exportToMarkdown(msg.content, "odpowiedz_ai")
+                                }
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                                title="Pobierz jako Markdown"
+                              >
+                                <FileDown className="h-3.5 w-3.5" /> .md
+                              </button>
+                              <button
+                                onClick={() =>
+                                  exportToPDF(msg.content, msg.citations, {
+                                    title: "Odpowiedz_AI",
+                                  })
+                                }
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Pobierz jako PDF"
+                              >
+                                <FileDown className="h-3.5 w-3.5" /> PDF
+                              </button>
+                              <button
+                                onClick={() =>
+                                  exportToDOCX(msg.content, msg.citations, {
+                                    title: "Odpowiedz_AI",
+                                  })
+                                }
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                title="Pobierz jako DOCX"
+                              >
+                                <FileDown className="h-3.5 w-3.5" /> DOCX
+                              </button>
+                              <button
+                                onClick={() =>
+                                  exportToRTF(msg.content, msg.citations, {
+                                    title: "Odpowiedz_AI",
+                                  })
+                                }
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                                title="Pobierz jako RTF"
+                              >
+                                <FileDown className="h-3.5 w-3.5" /> RTF
+                              </button>
+
+                              {/* Przycisk rozbudowy odpowiedzi */}
+                              {!msg.expansion && !msg.isExpanding && (
+                                <button
+                                  onClick={() => {
+                                    const msgIndex = messages.findIndex(
+                                      (m) => m.id === msg.id
+                                    );
+                                    const userQuery =
+                                      msgIndex > 0
+                                        ? messages[msgIndex - 1]?.content
+                                        : msg.content;
+                                    expandWithResearch(msg.id, userQuery);
+                                  }}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-600 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors ml-auto"
+                                  title="Rozbuduj odpowiedź o podstawy prawne"
+                                >
+                                  <Zap className="h-3.5 w-3.5" /> Rozbuduj
+                                </button>
+                              )}
+                              {msg.isExpanding && (
+                                <span className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-amber-600 ml-auto">
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />{" "}
+                                  Weryfikuję...
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     ) : (
                       /* Wiadomości użytkownika - z zwijaniem dla długich i formatowaniem Markdown */
@@ -1175,97 +1291,6 @@ export default function ChatPage() {
                               </button>
                             )}
                           </>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Przyciski akcji dla odpowiedzi AI */}
-                    {msg.role === "assistant" && msg.id !== "welcome" && (
-                      <div className="flex items-center gap-2 mt-4 pt-3 border-t border-secondary-200">
-                        <button
-                          onClick={() => copyToClipboard(msg.content, msg.id)}
-                          className="flex items-center gap-1 px-2 py-1 text-xs text-text-secondary hover:text-primary-600 hover:bg-primary-50 rounded transition-colors"
-                          title="Kopiuj do schowka"
-                        >
-                          {copiedId === msg.id ? (
-                            <>
-                              <Check className="h-3 w-3 text-green-500" />{" "}
-                              Skopiowano
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="h-3 w-3" /> Kopiuj
-                            </>
-                          )}
-                        </button>
-                        <button
-                          onClick={() =>
-                            exportToMarkdown(msg.content, "odpowiedz_ai")
-                          }
-                          className="flex items-center gap-1 px-2 py-1 text-xs text-text-secondary hover:text-primary-600 hover:bg-primary-50 rounded transition-colors"
-                          title="Pobierz jako Markdown"
-                        >
-                          <FileDown className="h-3 w-3" /> .md
-                        </button>
-                        <button
-                          onClick={() =>
-                            exportToPDF(msg.content, msg.citations, {
-                              title: "Odpowiedz_AI",
-                            })
-                          }
-                          className="flex items-center gap-1 px-2 py-1 text-xs text-text-secondary hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                          title="Pobierz jako PDF"
-                        >
-                          <FileDown className="h-3 w-3" /> PDF
-                        </button>
-                        <button
-                          onClick={() =>
-                            exportToDOCX(msg.content, msg.citations, {
-                              title: "Odpowiedz_AI",
-                            })
-                          }
-                          className="flex items-center gap-1 px-2 py-1 text-xs text-text-secondary hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                          title="Pobierz jako DOCX"
-                        >
-                          <FileDown className="h-3 w-3" /> DOCX
-                        </button>
-                        <button
-                          onClick={() =>
-                            exportToRTF(msg.content, msg.citations, {
-                              title: "Odpowiedz_AI",
-                            })
-                          }
-                          className="flex items-center gap-1 px-2 py-1 text-xs text-text-secondary hover:text-purple-600 hover:bg-purple-50 rounded transition-colors"
-                          title="Pobierz jako RTF"
-                        >
-                          <FileDown className="h-3 w-3" /> RTF
-                        </button>
-
-                        {/* Przycisk rozbudowy odpowiedzi */}
-                        {!msg.expansion && !msg.isExpanding && (
-                          <button
-                            onClick={() => {
-                              // Znajdź poprzednią wiadomość użytkownika jako kontekst
-                              const msgIndex = messages.findIndex(
-                                (m) => m.id === msg.id
-                              );
-                              const userQuery =
-                                msgIndex > 0
-                                  ? messages[msgIndex - 1]?.content
-                                  : msg.content;
-                              expandWithResearch(msg.id, userQuery);
-                            }}
-                            className="flex items-center gap-1 px-2 py-1 text-xs text-text-secondary hover:text-amber-600 hover:bg-amber-50 rounded transition-colors ml-auto"
-                            title="Rozbuduj odpowiedź o podstawy prawne"
-                          >
-                            <Zap className="h-3 w-3" /> Rozbuduj
-                          </button>
-                        )}
-                        {msg.isExpanding && (
-                          <span className="flex items-center gap-1 px-2 py-1 text-xs text-amber-600 ml-auto">
-                            <Loader2 className="h-3 w-3 animate-spin" />{" "}
-                            Weryfikuję...
-                          </span>
                         )}
                       </div>
                     )}

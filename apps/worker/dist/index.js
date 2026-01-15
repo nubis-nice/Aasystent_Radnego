@@ -5,6 +5,7 @@ import { processUserJob } from "./handlers/user-jobs.js";
 import { processExtraction } from "./jobs/extraction.js";
 import { processAnalysis } from "./jobs/analysis.js";
 import { processRelations } from "./jobs/relations.js";
+import { processVision, } from "./jobs/vision.js";
 const redisHost = process.env.REDIS_HOST ?? "localhost";
 const redisPort = Number(process.env.REDIS_PORT ?? 6379);
 const connection = new Redis({
@@ -12,9 +13,14 @@ const connection = new Redis({
     port: redisPort,
     maxRetriesPerRequest: null,
 });
-// Kolejki
-export const documentQueue = new Queue("document-jobs", { connection });
-export const userQueue = new Queue("user-jobs", { connection });
+// Kolejki - rzutowanie na any z powodu niezgodności wersji ioredis/bullmq
+export const documentQueue = new Queue("document-jobs", {
+    connection: connection,
+});
+export const userQueue = new Queue("user-jobs", {
+    connection: connection,
+});
+export const visionQueue = new Queue("vision-jobs", { connection: connection });
 // Worker dla zadań dokumentów
 const documentWorker = new Worker("document-jobs", async (job) => {
     console.log(`[document-worker] Processing job ${job.name} (${job.id})`);
@@ -29,7 +35,7 @@ const documentWorker = new Worker("document-jobs", async (job) => {
             throw new Error(`Unknown job type: ${job.name}`);
     }
 }, {
-    connection,
+    connection: connection,
     concurrency: 2, // Maksymalnie 2 zadania równolegle (OpenAI rate limits)
     limiter: {
         max: 10, // Maksymalnie 10 zadań
@@ -40,7 +46,29 @@ const documentWorker = new Worker("document-jobs", async (job) => {
 const userWorker = new Worker("user-jobs", async (job) => {
     console.log(`[user-worker] Processing job ${job.name} (${job.id})`);
     return await processUserJob(job);
-}, { connection });
+}, { connection: connection });
+// Worker dla zadań Vision AI (OCR)
+const visionWorker = new Worker("vision-jobs", async (job) => {
+    console.log(`[vision-worker] Processing job ${job.id} (page=${job.data.pageNumber})`);
+    return await processVision(job);
+}, {
+    connection: connection,
+    concurrency: 2, // Max 2 równoczesne zadania Vision (rate limits)
+    limiter: {
+        max: 20, // Max 20 zadań
+        duration: 60000, // na minutę
+    },
+});
+// Event handlers dla vision worker
+visionWorker.on("completed", (job) => {
+    console.log(`[vision-worker] ✅ Completed ${job.id}`);
+});
+visionWorker.on("failed", (job, err) => {
+    console.error(`[vision-worker] ❌ Failed ${job?.id}: ${err.message}`);
+});
+visionWorker.on("progress", (job, progress) => {
+    console.log(`[vision-worker] 📊 Progress ${job.id}: ${progress}%`);
+});
 // Event handlers dla document worker
 documentWorker.on("completed", (job, result) => {
     console.log(`[document-worker] ✅ Completed ${job.name} (${job.id})`);
@@ -54,7 +82,7 @@ documentWorker.on("progress", (job, progress) => {
     console.log(`[document-worker] 📊 Progress ${job.name} (${job.id}): ${progress}%`);
 });
 // Event handlers dla user worker
-userWorker.on("completed", (job, result) => {
+userWorker.on("completed", (job) => {
     console.log(`[user-worker] ✅ Completed ${job.name} (${job.id})`);
 });
 userWorker.on("failed", (job, err) => {
@@ -66,10 +94,11 @@ process.on("SIGTERM", async () => {
     console.log("[worker] SIGTERM received, closing workers...");
     await documentWorker.close();
     await userWorker.close();
+    await visionWorker.close();
     await connection.quit();
     process.exit(0);
 });
 console.log(`[worker] 🚀 Started (redis=${redisHost}:${redisPort})`);
-console.log("[worker] 📋 Queues: document-jobs, user-jobs");
-console.log("[worker] 🔧 Jobs: extraction, analysis, relations");
+console.log("[worker] 📋 Queues: document-jobs, user-jobs, vision-jobs");
+console.log("[worker] 🔧 Jobs: extraction, analysis, relations, vision-ocr");
 //# sourceMappingURL=index.js.map

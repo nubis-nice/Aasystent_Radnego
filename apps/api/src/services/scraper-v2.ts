@@ -12,6 +12,7 @@ declare const setTimeout: typeof globalThis.setTimeout;
 import { createClient } from "@supabase/supabase-js";
 import * as cheerio from "cheerio";
 import OpenAI from "openai";
+import { autoImportToCalendar } from "./calendar-auto-import.js";
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -883,21 +884,37 @@ async function processScrapedContentV2(
       );
 
       // Zapisz przetworzony dokument
-      const { error } = await supabase.from("processed_documents").insert({
-        scraped_content_id: content.id,
-        user_id: userId,
-        document_type: documentType,
-        title: content.title || "Bez tytułu",
-        content: content.raw_content,
-        summary: content.raw_content.substring(0, 300) + "...",
-        keywords,
-        source_url: content.url,
-        embedding,
-        processed_at: new Date().toISOString(),
-      });
+      const { data: insertedDoc, error } = await supabase
+        .from("processed_documents")
+        .insert({
+          scraped_content_id: content.id,
+          user_id: userId,
+          document_type: documentType,
+          title: content.title || "Bez tytułu",
+          content: content.raw_content,
+          summary: content.raw_content.substring(0, 300) + "...",
+          keywords,
+          source_url: content.url,
+          embedding,
+          processed_at: new Date().toISOString(),
+        })
+        .select(
+          "id, user_id, title, document_type, content, session_number, normalized_publish_date, source_url"
+        )
+        .single();
 
-      if (!error) {
+      if (!error && insertedDoc) {
         processedCount++;
+
+        // Auto-import do kalendarza dla dokumentów sesji/komisji
+        try {
+          await autoImportToCalendar(insertedDoc);
+        } catch (calendarError) {
+          console.error(
+            "[Scraper] Calendar auto-import failed:",
+            calendarError
+          );
+        }
       }
     } catch (error) {
       console.error("[Scraper] Error processing content:", error);

@@ -70,6 +70,38 @@ Agent AI "Winsdurf" oparty na aktualnych, zewnętrznych źródłach prawa zamias
 - `scraping` - web scraping z selektorami CSS
 - `hybrid` - kombinacja API i scrapingu
 
+### 4.0.1. Inteligentny Scraping z AI (2026-01-14)
+
+**Zasada:** Wszystkie dane strukturalne (daty, miejsca, encje) są wyodrębniane przez AI, nie przez regex.
+
+**Przepływ danych:**
+
+```text
+IntelligentScraper.analyzeContentWithLLM()
+  └─ extractedDates, extractedEntities, keyTopics, summary
+     └─ metadata.llmAnalysis w scraped_content
+        └─ processToRAG() → processed_documents.metadata
+           ├─ Frontend: FormattedDocumentContent (wyświetla dane AI)
+           └─ calendar-auto-import (importuje tylko z danych AI)
+```
+
+**Struktura `metadata.llmAnalysis`:**
+
+- `relevanceScore` (0-100) - ocena przydatności dla radnego
+- `contentType` - typ treści (sesja/kalendarz/uchwała/protokół)
+- `summary` - krótkie podsumowanie
+- `keyTopics` - kluczowe tematy
+- `extractedDates` - daty wyodrębnione z treści
+- `extractedEntities` - encje (miejsca, osoby, komisje)
+- `isRelevantForCouncilor` - flaga przydatności
+- `recommendedAction` - scrape/skip/priority
+
+**Korzyści:**
+
+- Jedno źródło prawdy dla dat/miejsc sesji
+- Spójność między widokiem dokumentu a kalendarzem
+- AI rozumie kontekst lepiej niż regex
+
 ### 4.1. Ingest (pobieranie)
 
 - Pobiera dokumenty z zewnętrznych źródeł przez `UnifiedDataService`.
@@ -238,6 +270,14 @@ Szczegóły: `.windsurf/base_rules.md` (zasady budowania aplikacji)
 
 ---
 
+## 9. Observability & DevOps (2026-01-14)
+
+- **TraceId everywhere** – API i worker logują `traceId`, nazwę narzędzia (`tool=deep_research`, `tool=rag_search`, `tool=session_discovery`), czas trwania i status. Błędy HTTP zawsze zwracają `errorId` = `traceId`.
+- **Monitoring pipeline’u** – BullMQ publikuje metryki jobów (czas start/stop, retry, failure_reason) do Redis/Prometheus. Dashboard operacyjny śledzi: liczbę dokumentów w ingest, błędy OCR, błędy DeepResearch, rozmiar kolejek.
+- **Konfiguracja środowisk** – osobne `.env` dla `apps/api`, `apps/frontend`, `apps/worker`. Sekrety zarządzamy poza repo (Doppler/1Password). `api_configurations` przechowuje zaszyfrowane klucze providerów i deterministycznie kontroluje, którzy providerzy są aktywni.
+- **Release checklist** – lint + type-check, smoke test `/health`, test zapytania RAG, test DeepResearch (mock provider). Deployment lokalny: `npm run dev`; produkcyjny: docker-compose profile `api`, `frontend`, `worker`.
+- **Alerty operacyjne** – brak dostępu do Supabase, błędy 5xx dla `/api/research`, kolejka BullMQ > 50 jobów, brak nowych dokumentów >24h. Alerty trafiają do kanału #windsurf-ops oraz do właściciela zmiany.
+
 ## Stan implementacji (2026-01-09)
 
 ### Co działa (deployment local dev)
@@ -284,12 +324,12 @@ Szczegóły: `.windsurf/base_rules.md` (zasady budowania aplikacji)
   - `scraper-fetcher.ts` - web scraping
   - `base-fetcher.ts` - bazowa klasa
 
-- **Research Providers**:
+- **Research Providers** (z automatycznym fallback gdy provider zawiedzie):
 
-  - `exa-provider.ts` - Exa AI
-  - `tavily-provider.ts` - Tavily AI
-  - `serper-provider.ts` - Serper (Google)
-  - `brave-provider.ts` - Brave Search
+  - `exa-provider.ts` - Exa AI (priorytet 1)
+  - `brave-provider.ts` - Brave Search (priorytet 2, dobre wsparcie PL)
+  - `tavily-provider.ts` - Tavily AI (priorytet 2)
+  - `serper-provider.ts` - Serper/Google (priorytet 3)
 
 - **Worker Jobs**:
 

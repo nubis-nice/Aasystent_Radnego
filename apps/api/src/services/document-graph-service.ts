@@ -36,6 +36,7 @@ export interface RelatedDocument {
     document_type: string;
     publish_date: string | null;
     summary: string | null;
+    filename?: string;
   };
 }
 
@@ -93,7 +94,7 @@ export class DocumentGraphService {
       const docIds = data.map((r: RelatedDocument) => r.document_id);
       const { data: docs } = await supabase
         .from("documents")
-        .select("id, title, document_type, publish_date, summary")
+        .select("id, title, document_type, publish_date, summary, filename")
         .in("id", docIds);
 
       if (docs) {
@@ -105,6 +106,7 @@ export class DocumentGraphService {
               document_type: string;
               publish_date: string | null;
               summary: string | null;
+              filename?: string;
             }) => [d.id, d]
           )
         );

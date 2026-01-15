@@ -6,6 +6,35 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
 export type DocumentPriority = "critical" | "high" | "medium" | "low";
 
+/**
+ * Dane wyodrębnione przez AI (IntelligentScraper)
+ */
+export interface LLMAnalysisData {
+  relevanceScore: number;
+  contentType: string;
+  summary: string;
+  keyTopics: string[];
+  isRelevantForCouncilor: boolean;
+  extractedDates: string[];
+  extractedEntities: string[];
+}
+
+/**
+ * Metadane dokumentu z danymi AI
+ */
+export interface DocumentMetadata {
+  llmAnalysis?: LLMAnalysisData;
+  pdfLinks?: string[];
+  // Dane sesji wyodrębnione przez AI
+  sessionInfo?: {
+    sessionNumber?: number;
+    sessionDate?: string;
+    sessionTime?: string;
+    sessionLocation?: string;
+  };
+  [key: string]: unknown;
+}
+
 export interface DocumentScore {
   relevanceScore: number;
   urgencyScore: number;
@@ -31,8 +60,11 @@ export interface Document {
   publish_date: string | null;
   source_url: string | null;
   processed_at: string;
-  metadata: Record<string, unknown>;
+  metadata: DocumentMetadata;
   score?: DocumentScore;
+  // Dane sesji (wypełniane przez DocumentNormalizer)
+  session_number?: number;
+  normalized_publish_date?: string;
 }
 
 export interface GetDocumentsRequest {
@@ -225,6 +257,7 @@ export interface RelatedDocument {
     document_type: string;
     publish_date: string | null;
     summary: string | null;
+    filename?: string;
   };
 }
 

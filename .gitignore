@@ -33,3 +33,5 @@ Thumbs.db
 
 # Local data
 /data
+/apps/api/migrations
+/apps/worker/migrations

@@ -923,7 +923,8 @@ export default function ApiSettingsPage() {
                 provider: editingConfig.provider as
                   | "exa"
                   | "perplexity"
-                  | "tavily",
+                  | "tavily"
+                  | "brave",
                 name: editingConfig.name,
                 base_url: editingConfig.base_url ?? null,
                 search_endpoint: editingConfig.search_endpoint ?? null,
