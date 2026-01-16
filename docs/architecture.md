@@ -181,11 +181,13 @@ IntelligentScraper.analyzeContentWithLLM()
 - Generowanie scenopisu na bazie transkryptu (agenda -> tematy -> wypowiedzi -> wnioski/decyzje).
 - Wersje: krótkie podsumowanie oraz szczegółowy przebieg.
 
-### 4.9. UI / Chat
+### 4.9. UI / Chat / Dashboard
 
 - Lista dokumentów i analiz.
 - Q&A z cytatami.
 - Raporty okresowe.
+- **Dashboard**: nagłówek łączy tytuł sekcji z kartami statystyk (dokumenty, konwersacje, zapytania AI, aktywność tygodnia) w jednym komponencie z gradientowym tłem.
+- **Kalendarz**: widget wspiera tryby miesiąc/tydzień; widok tygodniowy ma 7 kolumn z sekcją wydarzeń całodziennych i blokami 6‑godzinnymi przewijanymi bez widocznych pasków.
 
 ## 5. Tool calling (narzędzia LLM)
 

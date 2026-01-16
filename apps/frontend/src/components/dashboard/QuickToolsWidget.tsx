@@ -159,9 +159,9 @@ export function QuickToolsWidget() {
   ];
 
   return (
-    <div className="bg-white rounded-2xl border border-border shadow-md overflow-hidden">
+    <div className="h-full flex flex-col bg-white rounded-2xl border border-border shadow-md overflow-hidden">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-border bg-gradient-to-r from-secondary-50 to-white">
+      <div className="px-6 py-4 border-b border-border bg-gradient-to-r from-secondary-50 to-white shrink-0">
         <h3 className="font-bold text-text flex items-center gap-2">
           🛠️ Szybkie narzędzia
         </h3>
@@ -171,7 +171,7 @@ export function QuickToolsWidget() {
       </div>
 
       {/* Tools Grid */}
-      <div className="p-4 grid grid-cols-2 gap-3">
+      <div className="p-4 grid grid-cols-2 gap-3 flex-1 overflow-y-auto">
         {tools.map((tool) => (
           <button
             key={tool.id}

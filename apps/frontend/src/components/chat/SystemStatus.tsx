@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { createPortal } from "react-dom";
 import {
   Database,
   Search,
@@ -65,8 +64,23 @@ export function SystemStatus({ apiError }: SystemStatusProps = {}) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
-  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
-  const buttonRef = useRef<HTMLButtonElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isExpanded) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node)
+      ) {
+        setIsExpanded(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isExpanded]);
 
   useEffect(() => {
     fetchDiagnostics();
@@ -184,18 +198,10 @@ export function SystemStatus({ apiError }: SystemStatusProps = {}) {
   };
 
   return (
-    <div className="relative">
+    <div className="relative" ref={containerRef}>
       {/* Kompaktowy wskaźnik - tylko kropka */}
       <button
-        ref={buttonRef}
         onClick={() => {
-          if (!isExpanded && buttonRef.current) {
-            const rect = buttonRef.current.getBoundingClientRect();
-            setDropdownPosition({
-              top: rect.top,
-              left: rect.right + 8,
-            });
-          }
           setIsExpanded(!isExpanded);
         }}
         className={`p-2 rounded-full transition-colors ${
@@ -212,113 +218,96 @@ export function SystemStatus({ apiError }: SystemStatusProps = {}) {
         />
       </button>
 
-      {/* Rozwinięty widok - dropdown w portalu */}
-      {isExpanded &&
-        createPortal(
-          <div
-            className="fixed w-72 space-y-2 p-3 bg-white border border-gray-200 rounded-lg shadow-xl"
-            style={{
-              top: dropdownPosition.top,
-              left: dropdownPosition.left,
-              zIndex: 99999,
-            }}
-          >
-            {/* RAG Status */}
-            <div className="flex items-start gap-2">
-              <Database className="h-4 w-4 mt-0.5 text-gray-600" />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  {getStatusIcon(diagnostics.rag.status)}
-                  <span className="text-sm font-medium text-gray-900">RAG</span>
-                </div>
-                <p className="text-xs text-gray-600 mt-0.5">
-                  {diagnostics.rag.message}
-                </p>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  {diagnostics.rag.documentsCount} dokumentów,{" "}
-                  {diagnostics.rag.embeddingsCount} z embeddingami
-                </p>
+      {/* Rozwinięty widok - dropdown w obrębie chatu */}
+      {isExpanded && (
+        <div
+          className="absolute w-72 space-y-2 p-3 bg-white border border-gray-200 rounded-lg shadow-xl z-50"
+          style={{ bottom: "110%", left: "110%" }}
+        >
+          {/* RAG Status */}
+          <div className="flex items-start gap-2">
+            <Database className="h-4 w-4 mt-0.5 text-gray-600" />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                {getStatusIcon(diagnostics.rag.status)}
+                <span className="text-sm font-medium text-gray-900">RAG</span>
               </div>
+              <p className="text-xs text-gray-600 mt-0.5">
+                {diagnostics.rag.message}
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {diagnostics.rag.documentsCount} dokumentów,{" "}
+                {diagnostics.rag.embeddingsCount} z embeddingami
+              </p>
             </div>
+          </div>
 
-            {/* Research Status */}
-            <div className="flex items-start gap-2">
-              <Search className="h-4 w-4 mt-0.5 text-gray-600" />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  {getStatusIcon(diagnostics.research.status)}
-                  <span className="text-sm font-medium text-gray-900">
-                    Research
+          {/* Research Status */}
+          <div className="flex items-start gap-2">
+            <Search className="h-4 w-4 mt-0.5 text-gray-600" />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                {getStatusIcon(diagnostics.research.status)}
+                <span className="text-sm font-medium text-gray-900">
+                  Research
+                </span>
+              </div>
+              <p className="text-xs text-gray-600 mt-0.5">
+                {diagnostics.research.message}
+              </p>
+              <div className="flex gap-2 mt-1">
+                {diagnostics.research.providers.exa && (
+                  <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded">
+                    Exa
                   </span>
-                </div>
-                <p className="text-xs text-gray-600 mt-0.5">
-                  {diagnostics.research.message}
-                </p>
-                <div className="flex gap-2 mt-1">
-                  {diagnostics.research.providers.exa && (
-                    <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded">
-                      Exa
-                    </span>
-                  )}
-                  {diagnostics.research.providers.tavily && (
-                    <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded">
-                      Tavily
-                    </span>
-                  )}
-                  {diagnostics.research.providers.serper && (
-                    <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded">
-                      Serper
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Transcription Status */}
-            <div className="flex items-start gap-2">
-              <Mic className="h-4 w-4 mt-0.5 text-gray-600" />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  {getStatusIcon(diagnostics.transcription.status)}
-                  <span className="text-sm font-medium text-gray-900">
-                    Transkrypcja
+                )}
+                {diagnostics.research.providers.tavily && (
+                  <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded">
+                    Tavily
                   </span>
-                </div>
-                <p className="text-xs text-gray-600 mt-0.5">
-                  {diagnostics.transcription.message}
-                </p>
-              </div>
-            </div>
-
-            {/* Embedding Status */}
-            <div className="flex items-start gap-2">
-              <FileText className="h-4 w-4 mt-0.5 text-gray-600" />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  {getStatusIcon(diagnostics.embedding.status)}
-                  <span className="text-sm font-medium text-gray-900">
-                    Embedding
+                )}
+                {diagnostics.research.providers.serper && (
+                  <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded">
+                    Serper
                   </span>
-                </div>
-                <p className="text-xs text-gray-600 mt-0.5">
-                  {diagnostics.embedding.message}
-                </p>
+                )}
               </div>
             </div>
-          </div>,
-          document.body
-        )}
+          </div>
 
-      {/* Overlay do zamknięcia */}
-      {isExpanded &&
-        createPortal(
-          <div
-            className="fixed inset-0"
-            style={{ zIndex: 99998 }}
-            onClick={() => setIsExpanded(false)}
-          />,
-          document.body
-        )}
+          {/* Transcription Status */}
+          <div className="flex items-start gap-2">
+            <Mic className="h-4 w-4 mt-0.5 text-gray-600" />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                {getStatusIcon(diagnostics.transcription.status)}
+                <span className="text-sm font-medium text-gray-900">
+                  Transkrypcja
+                </span>
+              </div>
+              <p className="text-xs text-gray-600 mt-0.5">
+                {diagnostics.transcription.message}
+              </p>
+            </div>
+          </div>
+
+          {/* Embedding Status */}
+          <div className="flex items-start gap-2">
+            <FileText className="h-4 w-4 mt-0.5 text-gray-600" />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                {getStatusIcon(diagnostics.embedding.status)}
+                <span className="text-sm font-medium text-gray-900">
+                  Embedding
+                </span>
+              </div>
+              <p className="text-xs text-gray-600 mt-0.5">
+                {diagnostics.embedding.message}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
