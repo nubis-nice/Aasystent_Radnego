@@ -4,9 +4,10 @@ import { existsSync, mkdirSync, unlinkSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { setTimeout } from "node:timers";
 import OpenAI from "openai";
 import { getSTTClient, getLLMClient, getAIConfig } from "../ai/index.js";
-import { getAudioPreprocessor } from "./audio-preprocessor.js";
+import { getAudioPreprocessor, type AudioPart } from "./audio-preprocessor.js";
 import type { AudioAnalysis } from "./audio-analyzer.js";
 
 export interface DownloadResult {
@@ -15,6 +16,11 @@ export interface DownloadResult {
   title?: string;
   duration?: string;
   error?: string;
+  parts?: AudioPart[];
+  splitMetadata?: {
+    totalDuration: number;
+    chunkingEnabled: boolean;
+  };
 }
 
 export interface TranscriptSegment {
@@ -175,22 +181,54 @@ export class YouTubeDownloader {
     console.log(`[YouTubeDownloader] LLM: model=${this.llmModel}`);
   }
 
-  async downloadAudio(videoUrl: string): Promise<DownloadResult> {
-    const videoId = this.extractVideoId(videoUrl);
-    if (!videoId) {
-      return { success: false, error: "Nieprawidłowy URL YouTube" };
-    }
-
-    const outputPath = join(this.tempDir, `${randomUUID()}.mp3`);
-
+  async downloadAudio(
+    videoUrl: string,
+    enableChunking: boolean = true
+  ): Promise<DownloadResult> {
     try {
-      console.log(`[YouTubeDownloader] Downloading audio from: ${videoUrl}`);
+      const videoId = this.extractVideoId(videoUrl);
+      if (!videoId) {
+        return { success: false, error: "Nieprawidłowy URL YouTube" };
+      }
 
-      // Use yt-dlp to download audio
+      const outputPath = join(this.tempDir, `audio-${randomUUID()}.mp3`);
+      console.log(`[YouTubeDownloader] Downloading audio: ${videoUrl}`);
+
       const result = await this.runYtDlp(videoUrl, outputPath);
 
       if (!result.success) {
         return result;
+      }
+
+      // MVP Audio Chunking - split by time (10 min parts)
+      if (enableChunking) {
+        console.log(`[YouTubeDownloader] Audio chunking enabled, splitting...`);
+        const preprocessor = getAudioPreprocessor();
+        const splitResult = await preprocessor.splitAudioByTime(
+          outputPath,
+          600
+        );
+
+        if (splitResult.success && splitResult.parts.length > 0) {
+          console.log(
+            `[YouTubeDownloader] Split into ${splitResult.parts.length} parts`
+          );
+          return {
+            success: true,
+            audioPath: outputPath,
+            title: result.title,
+            duration: result.duration,
+            parts: splitResult.parts,
+            splitMetadata: {
+              totalDuration: splitResult.totalDuration,
+              chunkingEnabled: true,
+            },
+          };
+        } else {
+          console.log(
+            `[YouTubeDownloader] No splitting needed (audio < 10 min)`
+          );
+        }
       }
 
       return {
@@ -206,6 +244,11 @@ export class YouTubeDownloader {
         error: error instanceof Error ? error.message : "Błąd pobierania audio",
       };
     }
+  }
+
+  private extractVideoId(url: string): string | null {
+    const match = url.match(/(?:v=|\/)([\w-]{11})(?:\?|&|$)/);
+    return match ? match[1] : null;
   }
 
   private runYtDlp(
@@ -329,6 +372,115 @@ export class YouTubeDownloader {
     });
   }
 
+  /**
+   * Transkrybuj pojedynczy plik audio (dla krótkich nagrań)
+   */
+  private async transcribeSingleFile(audioPath: string): Promise<string> {
+    if (!this.sttClient) {
+      throw new Error("STT client not initialized");
+    }
+
+    const { createReadStream } = await import("node:fs");
+    const audioStream = createReadStream(audioPath);
+
+    console.log(`[YouTubeDownloader] Using STT model: ${this.sttModel}`);
+    console.log(
+      `[YouTubeDownloader] Starting STT transcription (timeout: 10 minutes)...`
+    );
+
+    // Timeout 10 minut dla STT API
+    const sttTimeoutMs = 10 * 60 * 1000;
+    const sttStartTime = Date.now();
+
+    const transcriptionPromise = this.sttClient.audio.transcriptions.create({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      file: audioStream as any,
+      model: this.sttModel,
+      language: "pl",
+      response_format: "text",
+    });
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`STT API timeout po ${sttTimeoutMs / 1000}s`)),
+        sttTimeoutMs
+      )
+    );
+
+    try {
+      const transcription = await Promise.race([
+        transcriptionPromise,
+        timeoutPromise,
+      ]);
+      const sttDuration = ((Date.now() - sttStartTime) / 1000).toFixed(1);
+      console.log(`[YouTubeDownloader] STT completed in ${sttDuration}s`);
+      return transcription as unknown as string;
+    } catch (error) {
+      const sttDuration = ((Date.now() - sttStartTime) / 1000).toFixed(1);
+      console.error(
+        `[YouTubeDownloader] STT failed after ${sttDuration}s:`,
+        error
+      );
+      throw new Error(
+        `Błąd transkrypcji STT: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  /**
+   * Transkrybuj pojedynczy chunk audio z timeout
+   */
+  private async transcribeChunk(
+    chunkPath: string,
+    chunkIndex: number,
+    totalChunks: number
+  ): Promise<string> {
+    if (!this.sttClient) {
+      throw new Error("STT client not initialized");
+    }
+
+    const { createReadStream } = await import("node:fs");
+    const audioStream = createReadStream(chunkPath);
+
+    console.log(
+      `[YouTubeDownloader] Transcribing chunk ${chunkIndex}/${totalChunks}: ${chunkPath}`
+    );
+
+    // Timeout 5 minut per chunk (każdy chunk to max 10 min audio)
+    const chunkTimeoutMs = 5 * 60 * 1000;
+    const startTime = Date.now();
+
+    const transcriptionPromise = this.sttClient.audio.transcriptions.create({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      file: audioStream as any,
+      model: this.sttModel,
+      language: "pl",
+      response_format: "text",
+    });
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              `Chunk ${chunkIndex} timeout po ${chunkTimeoutMs / 1000}s`
+            )
+          ),
+        chunkTimeoutMs
+      )
+    );
+
+    const result = await Promise.race([transcriptionPromise, timeoutPromise]);
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(
+      `[YouTubeDownloader] Chunk ${chunkIndex}/${totalChunks} completed in ${duration}s`
+    );
+
+    return result as unknown as string;
+  }
+
   async transcribeAndAnalyze(
     audioPath: string,
     videoId: string,
@@ -380,21 +532,82 @@ export class YouTubeDownloader {
       const fileSizeMB = (audioBuffer.length / 1024 / 1024).toFixed(2);
       console.log(`[YouTubeDownloader] Audio file size: ${fileSizeMB}MB`);
 
-      // Transcribe with Whisper using fs.createReadStream
-      const { createReadStream } = await import("node:fs");
-      const audioStream = createReadStream(processedPath);
+      // Sprawdź czy audio jest długie (> 25MB lub > 30 min) - użyj chunked transcription
+      const useChunkedTranscription = audioBuffer.length > 25 * 1024 * 1024;
 
-      console.log(`[YouTubeDownloader] Using STT model: ${this.sttModel}`);
+      let rawTranscript: string;
 
-      const transcription = await this.sttClient.audio.transcriptions.create({
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        file: audioStream as any,
-        model: this.sttModel,
-        language: "pl",
-        response_format: "text",
-      });
+      if (useChunkedTranscription) {
+        console.log(
+          `[YouTubeDownloader] Large audio detected, using chunked transcription...`
+        );
+        const preprocessor = getAudioPreprocessor();
 
-      const rawTranscript = transcription as unknown as string;
+        // Podziel audio na 10-minutowe części
+        const splitResult = await preprocessor.splitAudioByTime(
+          processedPath,
+          600
+        );
+
+        if (splitResult.success && splitResult.parts.length > 0) {
+          console.log(
+            `[YouTubeDownloader] Split into ${splitResult.parts.length} chunks`
+          );
+
+          const transcripts: string[] = [];
+
+          for (let i = 0; i < splitResult.parts.length; i++) {
+            const part = splitResult.parts[i];
+            try {
+              const chunkTranscript = await this.transcribeChunk(
+                part.filePath,
+                i + 1,
+                splitResult.parts.length
+              );
+              transcripts.push(chunkTranscript);
+
+              // Cleanup chunk file
+              try {
+                unlinkSync(part.filePath);
+              } catch {
+                /* ignore */
+              }
+            } catch (chunkError) {
+              console.error(
+                `[YouTubeDownloader] Chunk ${i + 1} failed:`,
+                chunkError
+              );
+              // Kontynuuj z następnym chunkiem zamiast przerywać całość
+              transcripts.push(
+                `[Chunk ${i + 1} failed: ${
+                  chunkError instanceof Error
+                    ? chunkError.message
+                    : "Unknown error"
+                }]`
+              );
+            }
+          }
+
+          // Połącz transkrypcje wszystkich chunków
+          rawTranscript = transcripts.join("\n\n");
+          console.log(
+            `[YouTubeDownloader] All chunks transcribed, total length: ${rawTranscript.length} chars`
+          );
+        } else {
+          // Fallback do normalnej transkrypcji jeśli split się nie udał
+          console.log(
+            `[YouTubeDownloader] Split failed or not needed, using single transcription`
+          );
+          rawTranscript = await this.transcribeSingleFile(processedPath);
+        }
+      } else {
+        // Normalna transkrypcja dla krótkich plików
+        rawTranscript = await this.transcribeSingleFile(processedPath);
+      }
+
+      console.log(
+        `[YouTubeDownloader] Transcript length: ${rawTranscript.length} chars`
+      );
 
       if (!rawTranscript || rawTranscript.trim().length === 0) {
         return {
@@ -672,18 +885,5 @@ Odpowiedz TYLKO w formacie JSON:
     md += `*Dokument wygenerowany automatycznie przez Asystent Radnego*\n`;
 
     return md;
-  }
-
-  private extractVideoId(url: string): string | null {
-    const patterns = [
-      /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
-      /^([a-zA-Z0-9_-]{11})$/,
-    ];
-
-    for (const pattern of patterns) {
-      const match = url.match(pattern);
-      if (match && match[1]) return match[1];
-    }
-    return null;
   }
 }

@@ -359,6 +359,10 @@ export default function ApiSettingsPage() {
             vision_enabled: dataToSave.visionEnabled,
             stt_enabled: dataToSave.sttEnabled,
             tts_enabled: dataToSave.ttsEnabled,
+            stt_base_url: dataToSave.sttBaseUrl,
+            tts_base_url: dataToSave.ttsBaseUrl,
+            tts_provider: dataToSave.ttsProvider,
+            tts_voice: dataToSave.ttsVoice,
           },
           config_type: "ai",
         };
@@ -400,6 +404,10 @@ export default function ApiSettingsPage() {
             vision_enabled: dataToSave.visionEnabled,
             stt_enabled: dataToSave.sttEnabled,
             tts_enabled: dataToSave.ttsEnabled,
+            stt_base_url: dataToSave.sttBaseUrl,
+            tts_base_url: dataToSave.ttsBaseUrl,
+            tts_provider: dataToSave.ttsProvider,
+            tts_voice: dataToSave.ttsVoice,
           },
           is_default: configs.length === 0,
         });

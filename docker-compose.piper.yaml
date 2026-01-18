@@ -1,0 +1,54 @@
+version: "3.8"
+
+# Piper TTS - lokalny neural TTS z obsługą języka polskiego
+# Dokumentacja: https://github.com/rhasspy/piper
+
+services:
+  piper-tts:
+    container_name: aasystent-piper-tts
+    image: lscr.io/linuxserver/piper:latest
+    restart: unless-stopped
+    ports:
+      - "10200:10200" # Wyoming protocol port
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Warsaw
+      # Polski głos - Gosia (kobieta, wysoka jakość)
+      - PIPER_VOICE=pl_PL-gosia-medium
+      # Opcjonalne parametry
+      - PIPER_LENGTH=1.0 # Szybkość mowy (1.0 = normalna)
+      - PIPER_NOISE=0.667 # Wariacja głosu
+      - PIPER_NOISEW=0.333 # Wariacja słów
+      - PIPER_SPEAKER=0 # ID głosu (dla modeli wielogłosowych)
+    volumes:
+      - piper-data:/config
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:10200/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  piper-data:
+    name: aasystent-piper-data
+# ─────────────────────────────────────────────────────────────────────────
+# Dostępne polskie głosy Piper:
+# ─────────────────────────────────────────────────────────────────────────
+# pl_PL-gosia-medium     - Kobieta, wysoka jakość (REKOMENDOWANY)
+# pl_PL-darkman-medium   - Mężczyzna, średnia jakość
+# pl_PL-mc_speech-medium - Kobieta, średnia jakość
+#
+# Aby zmienić głos, zmodyfikuj PIPER_VOICE powyżej
+#
+# Uruchomienie:
+#   docker-compose -f docker-compose.piper.yaml up -d
+#
+# Test:
+#   curl http://localhost:10200/
+#
+# Użycie z Wyoming protocol (np. Home Assistant):
+#   Host: localhost
+#   Port: 10200
+# ─────────────────────────────────────────────────────────────────────────

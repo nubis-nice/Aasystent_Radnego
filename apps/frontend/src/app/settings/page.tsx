@@ -9,6 +9,7 @@ import {
   Shield,
   Key,
   Database,
+  Bot,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
@@ -84,6 +85,14 @@ export default function SettingsPage() {
       icon: Key,
       href: "/settings/api",
       color: "from-purple-500 to-indigo-600",
+    },
+    {
+      title: "Personalizacja AI",
+      description:
+        "Dostosuj zachowanie i styl odpowiedzi asystenta AI w czacie",
+      icon: Bot,
+      href: "/settings/ai-chat",
+      color: "from-violet-500 to-purple-600",
     },
     {
       title: "Źródła Danych",

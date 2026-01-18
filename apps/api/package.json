@@ -13,10 +13,12 @@
   },
   "dependencies": {
     "@aasystent-radnego/shared": "*",
+    "@andresaya/edge-tts": "^1.8.0",
     "@fastify/cors": "^11.2.0",
     "@fastify/multipart": "^9.3.0",
     "@supabase/supabase-js": "^2.90.1",
     "@types/cheerio": "^0.22.35",
+    "axios": "^1.13.2",
     "cheerio": "^1.1.2",
     "dotenv": "^16.4.5",
     "fastify": "^5.2.1",

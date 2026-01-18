@@ -470,7 +470,13 @@ Odpowiedz w formacie JSON:
         response_format: { type: "json_object" },
       });
 
-      const result = JSON.parse(response.choices[0]?.message?.content || "{}");
+      // Usuń markdown code fence jeśli model zwrócił ```json ... ```
+      let jsonContent = response.choices[0]?.message?.content || "{}";
+      jsonContent = jsonContent
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```$/i, "")
+        .trim();
+      const result = JSON.parse(jsonContent);
       return result as LLMAnalysisResult;
     } catch (error) {
       console.error(

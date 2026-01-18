@@ -16,7 +16,18 @@ import { youtubeRoutes } from "./routes/youtube.js";
 import { diagnosticsRoutes } from "./routes/diagnostics.js";
 import { apiModelsRoutes } from "./routes/api-models.js";
 import { documentGraphRoutes } from "./routes/document-graph.js";
+import { voiceRoutes } from "./routes/voice.js";
+import { gusRoutes } from "./routes/gus.js";
+import { isapRoutes } from "./routes/isap.js";
+import { euFundsRoutes } from "./routes/eu-funds.js";
+import { geoportalRoutes } from "./routes/geoportal.js";
+import { terytRoutes } from "./routes/teryt.js";
+import { krsRoutes } from "./routes/krs.js";
+import { ceidgRoutes } from "./routes/ceidg.js";
+import { gdosRoutes } from "./routes/gdos.js";
 import { authMiddleware } from "./middleware/auth.js";
+import { initializeTranscriptionRecovery } from "./services/transcription-recovery.js";
+import { initializeTranscriptionWorker } from "./services/transcription-worker.js";
 
 const port = Number(process.env.API_PORT ?? 3001);
 
@@ -33,22 +44,19 @@ const app = Fastify({
   },
 });
 
-// CORS
 app.register(cors, {
-  origin: true, // Allow all origins in development
+  origin: true,
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "x-user-id"],
 });
 
-// Multipart for file uploads
 app.register(multipart, {
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB
+    fileSize: 10 * 1024 * 1024,
   },
 });
 
-// Health check
 app.get("/health", async () => {
   return {
     status: "ok",
@@ -57,10 +65,8 @@ app.get("/health", async () => {
   };
 });
 
-// Register routes
 app.register(authRoutes, { prefix: "/api" });
 
-// Protected routes (require authentication)
 app.register(async (protectedApp) => {
   protectedApp.addHook("onRequest", authMiddleware);
   protectedApp.register(documentsRoutes, { prefix: "/api" });
@@ -72,26 +78,50 @@ app.register(async (protectedApp) => {
   protectedApp.register(youtubeRoutes, { prefix: "/api" });
   protectedApp.register(diagnosticsRoutes, { prefix: "/api" });
   protectedApp.register(documentGraphRoutes, { prefix: "/api" });
+  protectedApp.register(voiceRoutes, { prefix: "/api" });
+  protectedApp.register(gusRoutes, { prefix: "/api" });
+  protectedApp.register(isapRoutes, { prefix: "/api" });
+  protectedApp.register(euFundsRoutes, { prefix: "/api" });
+  protectedApp.register(geoportalRoutes, { prefix: "/api" });
+  protectedApp.register(terytRoutes, { prefix: "/api" });
+  protectedApp.register(krsRoutes, { prefix: "/api" });
+  protectedApp.register(ceidgRoutes, { prefix: "/api" });
+  protectedApp.register(gdosRoutes, { prefix: "/api" });
   protectedApp.register(testRoutes, { prefix: "/api" });
 });
 
-// Public routes
 app.register(testApiRoutes, { prefix: "/api" });
 app.register(apiModelsRoutes, { prefix: "/api" });
 app.register(providerRoutes, { prefix: "/api" });
 
-// Error handler
-app.setErrorHandler((error: any, request, reply) => {
-  app.log.error(error);
+app.setErrorHandler(
+  (error: Error & { statusCode?: number }, request, reply) => {
+    app.log.error(error);
+    reply.status(error.statusCode || 500).send({
+      error: error.message || "Internal Server Error",
+      statusCode: error.statusCode || 500,
+    });
+  }
+);
 
-  reply.status(error.statusCode || 500).send({
-    error: error.message || "Internal Server Error",
-    statusCode: error.statusCode || 500,
+app
+  .listen({ port, host: "0.0.0.0" })
+  .then(async () => {
+    app.log.info(`🚀 API server started on port ${port}`);
+
+    try {
+      await initializeTranscriptionWorker();
+    } catch (err) {
+      app.log.error({ err }, "Failed to initialize transcription worker");
+    }
+
+    try {
+      await initializeTranscriptionRecovery();
+    } catch (err) {
+      app.log.error({ err }, "Failed to initialize transcription recovery");
+    }
+  })
+  .catch((err: unknown) => {
+    app.log.error(err);
+    process.exit(1);
   });
-});
-
-// Start server
-app.listen({ port, host: "0.0.0.0" }).catch((err: unknown) => {
-  app.log.error(err);
-  process.exit(1);
-});

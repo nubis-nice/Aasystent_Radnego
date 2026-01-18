@@ -14,9 +14,11 @@ import {
   LogOut,
   KeyRound,
   Shield,
-  Bell,
+  Mic,
+  Square,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useVoice } from "@/contexts/VoiceContext";
+import { useState, useEffect, useRef } from "react";
 import { signOut, isAdmin } from "@/lib/supabase/auth";
 import { supabase } from "@/lib/supabase/client";
 import { getUserProfile } from "@/lib/supabase/settings";
@@ -27,6 +29,117 @@ const navigation = [
   { name: "Czat AI", href: "/chat", icon: MessageSquare },
   { name: "Ustawienia", href: "/settings", icon: Settings },
 ];
+
+function StefanVoiceButton() {
+  const {
+    state,
+    isRecording,
+    voiceMode,
+    enterStandbyMode,
+    exitStandbyMode,
+    startListening,
+    stopListening,
+    cancelListening,
+  } = useVoice();
+
+  const clickTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const clickCountRef = useRef(0);
+
+  const handleSingleClick = async () => {
+    if (state.isProcessing) return;
+
+    // Przełączanie trybu: off -> standby -> active -> off
+    if (voiceMode === "off") {
+      // Wejdź w tryb czuwania (standby)
+      await enterStandbyMode();
+    } else if (voiceMode === "standby") {
+      // Aktywuj pełne nasłuchiwanie
+      await startListening();
+    } else if (isRecording || state.isListening) {
+      // Zatrzymaj nagrywanie, wróć do standby
+      await stopListening();
+    } else {
+      // Wróć do standby
+      await enterStandbyMode();
+    }
+  };
+
+  const handleDoubleClick = () => {
+    // Podwójne kliknięcie - całkowite wyłączenie (bez transkrypcji)
+    if (isRecording || state.isListening) {
+      cancelListening();
+    }
+    exitStandbyMode();
+  };
+
+  const handleClick = () => {
+    clickCountRef.current += 1;
+
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current);
+    }
+
+    clickTimeoutRef.current = setTimeout(() => {
+      if (clickCountRef.current === 1) {
+        handleSingleClick();
+      } else if (clickCountRef.current >= 2) {
+        handleDoubleClick();
+      }
+      clickCountRef.current = 0;
+    }, 250); // 250ms na wykrycie podwójnego kliknięcia
+  };
+
+  const handleLongPress = () => {
+    // Długie przytrzymanie wyłącza całkowicie (bez transkrypcji)
+    if (isRecording || state.isListening) {
+      cancelListening();
+    }
+    exitStandbyMode();
+  };
+
+  const isStandby = voiceMode === "standby";
+  const isActive = isRecording || state.isListening;
+  const isProcessing = state.isProcessing;
+
+  // Kolory dla różnych stanów
+  const getButtonClass = () => {
+    if (isActive) return "bg-red-500 text-white animate-pulse"; // Aktywne nagrywanie
+    if (isProcessing) return "bg-amber-500 text-white"; // Przetwarzanie
+    if (isStandby) return "bg-violet-500 text-white"; // Tryb czuwania
+    return "text-violet-600 hover:bg-violet-50 hover:text-violet-700"; // Wyłączony
+  };
+
+  const getTitle = () => {
+    if (isActive) return "Mówię... (kliknij aby zatrzymać)";
+    if (isProcessing) return "Przetwarzam...";
+    if (isStandby) return `Czuwam - powiedz "Hej ${state.assistantName}"`;
+    return `Kliknij aby aktywować ${state.assistantName}`;
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        handleLongPress();
+      }}
+      disabled={isProcessing}
+      className={`relative rounded-xl p-2.5 transition-all duration-200 ${getButtonClass()}`}
+      title={getTitle()}
+    >
+      <span className="sr-only">{state.assistantName}</span>
+      {isActive ? <Square className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+      {/* Wskaźnik trybu czuwania */}
+      {isStandby && !isActive && (
+        <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-violet-300 ring-2 ring-white animate-pulse"></span>
+      )}
+      {/* Wskaźnik mówienia TTS */}
+      {state.isSpeaking && (
+        <span className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-green-500 ring-2 ring-white animate-pulse"></span>
+      )}
+    </button>
+  );
+}
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -189,11 +302,7 @@ export function Sidebar() {
               alt="Herb Gminy Drawno"
               className="w-16 h-16 object-contain"
             />
-            <button className="relative rounded-xl p-2.5 text-secondary-600 hover:bg-secondary-50 hover:text-secondary-900 transition-all duration-200">
-              <span className="sr-only">Powiadomienia</span>
-              <Bell className="h-5 w-5" />
-              <span className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-danger ring-2 ring-white"></span>
-            </button>
+            <StefanVoiceButton />
           </div>
         )}
 

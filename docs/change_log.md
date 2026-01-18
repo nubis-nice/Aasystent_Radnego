@@ -1,5 +1,433 @@
 # Change Log
 
+## 2026-01-17 - CalendarWidget: Naprawa parsowania daty
+
+### 🐛 Bugfix: Formatowanie daty i godziny w kalendarzu
+
+**Status:** ✅ Naprawione
+
+#### Problemy
+
+1. **Frontend** - `date.toISOString().slice(0, 16)` zwracało datę w UTC zamiast lokalnego czasu
+2. **Backend** - `new Date(date)` nie parsowało naturalnych wyrażeń jak "jutro", "poniedziałek"
+3. **Brak domyślnej godziny** - kliknięcie na dzień nie ustawiało godziny
+
+#### Rozwiązania
+
+1. **Frontend** (`CalendarWidget.tsx`):
+
+   - Dodano `formatDateTimeLocal()` formatującą datę w lokalnym czasie
+   - Domyślna godzina 10:00 przy kliknięciu na dzień
+   - Zaokrąglenie do 30 minut przy tworzeniu nowego wydarzenia
+
+2. **Backend** (`voice-action-service.ts`):
+   - Dodano `parseNaturalDate()` obsługującą:
+     - Relatywne daty: "dziś", "jutro", "pojutrze", "za X dni"
+     - Dni tygodnia z odmianami: "poniedziałek", "w środę", "piątek"
+     - Formaty: YYYY-MM-DD, DD.MM.YYYY, DD-MM-YYYY, DD/MM/YYYY
+   - Domyślna godzina 10:00 gdy nie podano czasu
+
+#### Testy
+
+- Plik: `apps/api/src/services/__tests__/voice-action-service.test.ts`
+- Uruchomienie: `npx tsx src/services/__tests__/voice-action-service.test.ts`
+- 17 testów: relatywne daty, dni tygodnia, formaty daty, formatDateTimeLocal
+
+---
+
+## 2026-01-16 - Stefan 2.0: Tryb czuwania i akcje głosowe
+
+### ✨ Feature: Wake word "Hej Stefan" i integracja z aplikacją
+
+**Status:** ✅ Wdrożone
+
+#### Nowe funkcje
+
+1. **Tryb czuwania (standby)** - Stefan ciągle nasłuchuje na "Hej Stefan"
+2. **Słowo wykonania** - po wydaniu polecenia, powiedz "wykonaj" aby potwierdzić
+3. **Akcje głosowe** - obsługa kalendarza, zadań, alertów, dokumentów, QuickTools
+4. **Nawigacja głosowa** - "przejdź do pulpitu", "otwórz dokumenty"
+
+#### Obsługiwane polecenia głosowe
+
+| Kategoria      | Przykłady poleceń                                          |
+| -------------- | ---------------------------------------------------------- |
+| **Kalendarz**  | "dodaj spotkanie na jutro o 10", "pokaż kalendarz"         |
+| **Zadania**    | "dodaj zadanie: przygotować raport", "co mam do zrobienia" |
+| **Alerty**     | "sprawdź alerty", "czy są powiadomienia"                   |
+| **Dokumenty**  | "znajdź uchwałę o podatkach", "szukaj protokołu"           |
+| **QuickTools** | "utwórz interpelację", "napisz pismo"                      |
+| **Nawigacja**  | "przejdź do czatu", "otwórz ustawienia"                    |
+
+#### Tryby pracy przycisku 🎤
+
+| Kolor                | Stan                                       |
+| -------------------- | ------------------------------------------ |
+| Fioletowy (outline)  | Wyłączony                                  |
+| Fioletowy (filled)   | Tryb czuwania - nasłuchuje na "Hej Stefan" |
+| Czerwony (pulsujący) | Aktywne nagrywanie                         |
+| Żółty                | Przetwarzanie                              |
+
+#### Nowe pliki
+
+- `apps/api/src/services/voice-action-service.ts` - serwis akcji głosowych
+- `apps/api/src/routes/voice.ts` - endpointy `/voice/action`, `/voice/detect-wake-word`
+
+#### Zmienione pliki
+
+- `apps/frontend/src/contexts/VoiceContext.tsx` - tryb standby, pendingAction, executeVoiceAction
+- `apps/frontend/src/components/layout/sidebar.tsx` - rozbudowany StefanVoiceButton
+
+---
+
+## 2026-01-16 - Globalny asystent głosowy Stefan
+
+### ✨ Feature: Rozmowa głosowa z każdej strony aplikacji
+
+**Status:** ✅ Wdrożone
+
+#### Zmiany
+
+1. **StefanVoiceButton w Sidebar** - przycisk 🎤 obok herbu gminy
+2. **VoiceContext/Provider** - globalny kontekst głosowy w `Layout.tsx`
+3. **Integracja z głównym chatem** - wiadomości głosowe trafiają do `/chat`
+4. **Notyfikacja** - gdy użytkownik mówi na innej stronie, wyświetla się powiadomienie z linkiem do chatu
+5. **DocumentPicker** - przycisk 📎 do załączania dokumentów z bazy wiedzy do kontekstu rozmowy
+
+#### Architektura
+
+```
+Layout.tsx
+  └── VoiceProvider (globalny kontekst)
+        ├── FloatingVoiceButton (fixed, bottom-left)
+        └── {children} (wszystkie strony)
+              └── ChatPage używa useVoice() do odbioru pendingMessage
+```
+
+#### Przepływ
+
+```
+Użytkownik na /sources → klika 🎤 → mówi
+→ Notyfikacja "Stefan czeka na odpowiedź" → klik → /chat
+→ Transkrypcja wstawiona do pola wiadomości
+→ Użytkownik wysyła → AI odpowiada → TTS
+```
+
+#### Zmienione pliki
+
+- `apps/frontend/src/contexts/VoiceContext.tsx` - nowy globalny kontekst
+- `apps/frontend/src/components/voice/FloatingVoiceButton.tsx` - nowy komponent
+- `apps/frontend/src/components/chat/DocumentPicker.tsx` - nowy komponent
+- `apps/frontend/src/app/layout.tsx` - dodanie VoiceProvider
+- `apps/frontend/src/app/chat/page.tsx` - integracja z VoiceContext, usunięcie VoiceConversationPanel
+
+---
+
+## 2026-01-16 - Naprawa scrapera PDF
+
+### 🐛 Fix: PDF zapisywane jako binarny śmieć
+
+**Status:** ✅ Naprawione
+
+#### Problem
+
+Scraper pobierał URL-e do plików PDF i zapisywał surowe dane binarne (`%PDF-1.4 %����...`) zamiast wyekstrahowanego tekstu. Brak sprawdzania Content-Type przed przetwarzaniem.
+
+#### Rozwiązanie
+
+1. **Nowa funkcja `fetchUrlContent()`** - inteligentne pobieranie URL:
+
+   - Sprawdza `Content-Type` header
+   - Wykrywa PDF po rozszerzeniu URL (`.pdf`)
+   - Dla PDF → `DocumentProcessor` (OCR/ekstrakcja tekstu)
+   - Dla HTML → `extractTextFromHtml()`
+   - Blokuje surowe dane PDF (`%PDF` w treści)
+
+2. **Integracja z `DocumentProcessor`**:
+   - PDF z warstwą tekstową → `pdf-parse` (szybkie)
+   - PDF skan → Tesseract OCR / Vision API (fallback)
+
+#### Zmienione pliki
+
+- `apps/api/src/services/scraper.ts` - wszystkie funkcje scrapujące używają `fetchUrlContent()`
+
+---
+
+## 2026-01-16 - Tryb ciągłego dialogu głosowego
+
+### ✨ Ulepszenie: Ciągły dialog bez wake word
+
+**Status:** ✅ Wdrożone
+
+#### Zmiany
+
+1. **Usunięcie wake word** - Nie trzeba mówić "Hej Stefan" - każda wypowiedź trafia bezpośrednio do AI
+2. **Ciągły dialog** - Po odpowiedzi AI mikrofon automatycznie włącza się ponownie
+3. **Komenda wyłączenia** - "Wyłącz się", "Koniec rozmowy", "Do widzenia" kończy dialog
+4. **Czyszczenie tekstu TTS:**
+   - Usuwanie URL i adresów internetowych
+   - Usuwanie tagów HTML (`<br>`, `<p>` itp.)
+   - Skracanie odpowiedzi do 1000 znaków
+   - Rozwijanie skrótów (np., m.in., ul.)
+
+#### Przepływ
+
+```text
+Klik "🎤" → Panel → Mikrofon aktywny → Użytkownik mówi
+→ VAD wykrywa ciszę → STT → AI generuje odpowiedź → TTS (oczyszczony tekst)
+→ Mikrofon ponownie aktywny → Ciągły dialog
+→ "Wyłącz się Stefan" → Koniec dialogu
+```
+
+---
+
+## 2026-01-16 - Modernizacja Voice Command System
+
+### ✨ Nowe funkcje: VAD, Auto-start, Imię z ustawień AI
+
+**Status:** ✅ Wdrożone
+
+#### Nowe pliki
+
+- `apps/frontend/src/hooks/useVAD.ts` - Voice Activity Detection hook
+- `apps/frontend/src/hooks/useAISettings.ts` - Pobieranie ustawień AI użytkownika
+
+#### Zmiany
+
+1. **Auto-start mikrofonu** - Po otwarciu panelu rozmowy głosowej mikrofon automatycznie się aktywuje
+2. **VAD (Voice Activity Detection)** - Wykrywanie ciszy i automatyczne wysyłanie do LLM
+3. **Imię asystenta z ustawień** - Wake word pobierany z `user_ai_settings.assistant_name`
+4. **Naprawy krytyczne:**
+   - `voice-intent-detector.ts` - model z konfiguracji użytkownika (nie hardcoded)
+   - `voice.ts` - cleanup temp files w `finally` block
+   - `useVoiceConversation.ts` - usunięcie podwójnego `getUserMedia`
+
+#### Przepływ
+
+```text
+Klik "🎤 Stefan" → Panel → Auto-start mikrofonu → VAD nasłuchuje
+→ Użytkownik mówi → VAD wykrywa ciszę (1.5s) → STT → LLM → TTS
+→ Mikrofon blokowany → TTS kończy → Mikrofon odblokowany → Powrót
+```
+
+---
+
+## 2026-01-16 - System rozmów głosowych z asystentem
+
+### ✨ Nowa funkcjonalność: Voice Conversation System
+
+**Status:** ✅ Wdrożone
+
+Dodano system interaktywnych rozmów głosowych z asystentem AI (domyślnie "Stefan").
+
+#### Nowe pliki
+
+- `apps/api/src/services/tts-text-processor.ts` - Inteligentne przetwarzanie tekstu dla TTS
+- `apps/frontend/src/hooks/useVoiceConversation.ts` - Hook do zarządzania rozmową głosową
+- `apps/frontend/src/components/voice/VoiceConversationPanel.tsx` - Panel UI rozmowy
+
+#### Funkcje
+
+- **Wake word detection** - Wykrywanie imienia asystenta ("Hej Stefan, ...")
+- **Blokada mikrofonu** - Automatyczna blokada podczas odpowiedzi TTS
+- **Inteligentny TTS** - Przetwarzanie tekstu przed syntezą:
+  - Pomijanie bloków kodu
+  - Konwersja emoji na tekst
+  - Formatowanie liczb i dat
+  - Rozwijanie skrótów (np. "nr" → "numer")
+- **Historia rozmowy** - Wizualna historia wiadomości
+
+#### Użycie
+
+```tsx
+<VoiceConversationPanel
+  isOpen={true}
+  onClose={() => {}}
+  assistantName="Stefan"
+/>
+```
+
+---
+
+## 2026-01-16 - Personalizacja modelu AI w czacie
+
+### ✨ Nowa funkcjonalność: Ustawienia personalizacji AI
+
+**Status:** ✅ Wdrożone
+
+Dodano stronę ustawień pozwalającą użytkownikom dostosować zachowanie asystenta AI.
+
+#### Frontend
+
+- **Strona:** `apps/frontend/src/app/settings/ai-chat/page.tsx`
+- **Karta w ustawieniach:** Nowa ikona Bot z gradientem violet-purple
+
+#### Opcje personalizacji
+
+- **Imię asystenta:** nazwa dla voice commands (wake word), np. "Aria", "Radek"
+- **Styl odpowiedzi:** formalny, swobodny, zwięzły, szczegółowy
+- **Osobowość asystenta:** opis tekstowy zachowania AI
+- **Specjalne instrukcje:** dodatkowe wytyczne (np. cytuj źródła prawne)
+- **Kreatywność (temperatura):** suwak 0-1
+- **Używaj emoji:** toggle on/off
+
+#### Integracja z Voice Commands
+
+- **Plik:** `apps/api/src/services/voice-intent-detector.ts`
+- **Funkcje:** `loadAssistantName()`, `stripWakeWord()`, `isWakeWordDetected()`
+- **Działanie:** Użytkownik może powiedzieć "Hej Aria, znajdź uchwałę..." - imię jest usuwane przed przetwarzaniem komendy
+
+#### Baza danych
+
+- **Migracja:** `docs/supabase_migrations/035_create_user_ai_settings.sql`
+- **Tabela:** `user_ai_settings` z RLS policies
+- **Kolumny:** assistant_name, response_style, personality, special_instructions, temperature, max_tokens, include_emoji, language
+
+---
+
+## 2026-01-16 - Integracja API ISAP i Funduszy Europejskich
+
+### ✨ Nowa funkcjonalność: Źródła danych API
+
+**Status:** ✅ Wdrożone
+
+Dodano integrację z oficjalnymi źródłami danych poprzez API:
+
+#### ISAP - Internetowy System Aktów Prawnych (Sejm RP)
+
+- **Serwis:** `apps/api/src/services/isap-api-service.ts`
+- **Routes:** `apps/api/src/routes/isap.ts`
+- **API:** `https://api.sejm.gov.pl/eli`
+- **Funkcje:** wyszukiwanie ustaw, rozporządzeń, pobieranie tekstów aktów
+- **Orkiestrator:** narzędzie `isap_legal`
+
+#### Fundusze Europejskie
+
+- **Serwis:** `apps/api/src/services/eu-funds-service.ts`
+- **Routes:** `apps/api/src/routes/eu-funds.ts`
+- **Źródła:** Portal FE, Mapa Dotacji UE, Baza Konkurencyjności
+- **Funkcje:** konkursy, nabory, projekty, możliwości dofinansowania
+- **Orkiestrator:** narzędzie `eu_funds`
+
+#### Integracja z AI Orchestratorem
+
+- Dodano typy narzędzi: `isap_legal`, `eu_funds`
+- Triggery dla automatycznego wykrywania intencji
+- Synteza odpowiedzi z danymi z nowych źródeł
+
+#### Migracje SQL
+
+- `026_add_isap_data_source.sql` - źródło ISAP
+- `027_add_eu_funds_data_source.sql` - źródło Funduszy UE
+
+#### Frontend
+
+- Karty źródeł ISAP i EU Funds w DataSourcesPage
+- Badge "API" dla źródeł z integracją API
+
+---
+
+## 2026-01-16 - Wdrożenie systemu Voice Command Processor
+
+### ✨ Nowa funkcjonalność: Obsługa głosowa aplikacji (STT)
+
+**Status:** ✅ Wdrożone (podstawowa funkcjonalność)
+
+System umożliwia sterowanie aplikacją za pomocą komend głosowych. Użytkownik może używać mikrofonu do nawigacji, wyszukiwania, zadawania pytań AI i kontroli aplikacji.
+
+#### Frontend - Komponenty głosowe (`apps/frontend/src/components/voice/`)
+
+- **VoiceButton** - Przycisk PTT (Push-to-Talk) z wizualizacją stanów
+- **VoiceRecorder** - Pełny interfejs nagrywania z kontrolkami (start/stop/pause)
+- **AudioVisualizer** - Wizualizacja poziomu audio (canvas waveform)
+- **VoiceCommandProcessor** - Procesor komend z historią
+- **VoiceSettings** - Panel ustawień głosowych
+- **ContinuousListeningToggle** - Toggle dla trybu ciągłego nasłuchiwania
+
+#### Frontend - Hooks (`apps/frontend/src/hooks/`)
+
+- **useVoiceRecorder** - Obsługa MediaRecorder API i AudioContext
+- **useVoiceCommands** - Przetwarzanie: audio → transkrypcja → komenda
+- **useContinuousListening** - Tryb ciągłego nasłuchiwania z VAD
+
+#### Backend - Services (`apps/api/src/services/`)
+
+- **voice-command-service.ts** - Główny serwis obsługi komend głosowych
+- **voice-intent-detector.ts** - Detekcja intencji za pomocą LLM (GPT-4o-mini)
+
+#### Backend - API Routes (`apps/api/src/routes/voice.ts`)
+
+- `POST /api/voice/transcribe` - Transkrypcja audio (OpenAI Whisper/faster-whisper)
+- `POST /api/voice/command` - Przetwarzanie komendy i detekcja intencji
+- `GET /api/voice/settings` - Pobranie ustawień głosowych użytkownika
+- `PUT /api/voice/settings` - Aktualizacja ustawień
+- `POST /api/voice/synthesize` - Synteza mowy (TTS, Edge TTS)
+- `GET /api/voice/history` - Historia komend głosowych
+
+#### Baza danych - Migracja `024_create_voice_commands_schema.sql`
+
+**Nowe tabele:**
+
+- `voice_commands` - Historia wszystkich komend głosowych użytkownika
+- `voice_macros` - Niestandardowe makra głosowe zdefiniowane przez użytkownika
+- `user_settings.voice_preferences` - Ustawienia głosowe (JSONB)
+
+**Funkcje pomocnicze:**
+
+- `get_voice_command_stats(user_id, days)` - Statystyki komend
+- `cleanup_old_voice_commands(days)` - Czyszczenie historii
+- `seed_default_voice_macros(user_id)` - Seeding przykładowych makr
+
+#### Integracja z AIToolOrchestrator
+
+Rozszerzono `ai-tool-orchestrator.ts` o nowe typy narzędzi:
+
+- `voice_control` - Kontrola aplikacji głosem (głośność, pauza, stop)
+- `app_navigation` - Nawigacja po aplikacji
+
+#### Typy komend głosowych
+
+1. **Navigation** - "otwórz dokumenty", "pokaż dashboard"
+2. **Search** - "znajdź uchwałę nr 123", "wyszukaj budżet"
+3. **Chat** - "zapytaj o budżet", "wyjaśnij uchwałę"
+4. **Control** - "zatrzymaj", "pauza", "głośniej", "ciszej"
+
+#### Tryby pracy
+
+- **Push-to-Talk (PTT)** - Kliknij i mów, klawisz Space jako skrót
+- **Continuous Listening** - Automatyczne wykrywanie mowy z wake word
+
+#### Bezpieczeństwo
+
+- Autoryzacja Bearer token na wszystkich endpointach
+- RLS (Row Level Security) na tabelach voice\_\*
+- Rate limiting: 60 komend/godzinę/użytkownik
+- Validation: max 10MB audio, max 5 minut nagrania
+- Audit trail: logowanie wszystkich komend
+
+#### Integracja z czatem
+
+VoiceButton został dodany do interfejsu czatu (`apps/frontend/src/app/chat/page.tsx`) obok przycisku wysyłania wiadomości.
+
+#### Dokumentacja
+
+- **Nowy plik:** `docs/voice_command_system.md` - Pełna dokumentacja systemu
+- Architektura, przykłady użycia, API reference, security, roadmap
+
+#### Koszty operacyjne (szacunkowe)
+
+- OpenAI Whisper STT: ~$3-5/mies (30min/dzień)
+- Edge TTS: $0 (darmowy)
+- Storage: ~$0.50/mies
+- **RAZEM:** ~$3.5-5.5/mies/użytkownik
+
+#### Roadmap dalszego rozwoju
+
+- [ ] FAZA 5: Komendy kontekstowe, makra użytkownika
+- [ ] FAZA 6: Optymalizacja (caching, batching, accessibility)
+
+---
+
 ## 2026-01-14 (noc) - Przywrócenie formatowania treści dokumentów
 
 ### Zmiana: Rozróżnienie regex FORMATUJĄCYCH od EKSTRAKCYJNYCH

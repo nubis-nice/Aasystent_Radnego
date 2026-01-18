@@ -227,7 +227,7 @@ export class AIConfigResolver {
       ((legacy.provider_meta as Record<string, unknown>)
         ?.stt_base_url as string) ||
       (provider === "local" || provider === "ollama"
-        ? "http://localhost:8000/v1"
+        ? "http://localhost:8001/v1"
         : baseUrl);
 
     return {

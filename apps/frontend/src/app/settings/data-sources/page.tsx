@@ -18,7 +18,6 @@ import {
   AlertCircle,
   Pencil,
   X,
-  Search,
 } from "lucide-react";
 import {
   getDataSources,
@@ -33,6 +32,7 @@ import {
   type DataSourcesStats,
   type ProcessedDocument,
 } from "@/lib/api/data-sources";
+import { saveGUSApiKey } from "@/lib/api/gus";
 import { useToast } from "@/lib/notifications/toast";
 import { useDataCounts } from "@/lib/hooks/useDataCounts";
 
@@ -45,9 +45,8 @@ export default function DataSourcesPage() {
   const [documents, setDocuments] = useState<ProcessedDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showGusApiKeyDialog, setShowGusApiKeyDialog] = useState(false);
   const toast = useToast();
-
-  // Liczniki w czasie rzeczywistym
   const { counts, refresh: refreshCounts } = useDataCounts({
     refreshInterval: 15000,
   });
@@ -100,16 +99,13 @@ export default function DataSourcesPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-text-primary">Źródła Danych</h1>
         <p className="text-text-secondary mt-1">
-          Zarządzaj źródłami danych dla Asystenta AI - strony gminy, BIP,
-          portale prawne
+          Zarządzaj źródłami danych dla Asystenta AI
         </p>
       </div>
 
-      {/* Tabs */}
       <div className="border-b border-border">
         <nav className="flex gap-6">
           <button
@@ -148,10 +144,11 @@ export default function DataSourcesPage() {
         </nav>
       </div>
 
-      {/* Content */}
       {activeTab === "sources" && (
         <SourcesTab
           sources={sources}
+          showGusApiKeyDialog={showGusApiKeyDialog}
+          setShowGusApiKeyDialog={setShowGusApiKeyDialog}
           onRefresh={() => {
             loadData();
             refreshCounts();
@@ -168,50 +165,24 @@ export default function DataSourcesPage() {
           }}
           onScrape={async (id) => {
             const source = sources.find((s) => s.id === id);
-            const sourceName = source?.name || "Źródło";
-
             try {
-              // Informacja o rozpoczęciu scrapingu
               toast.info(
                 "Rozpoczęto scraping",
-                `Pobieranie danych ze źródła: ${sourceName}. To może potrwać 30-60 sekund...`
+                `Pobieranie danych ze źródła: ${source?.name}`
               );
-
-              // Wywołaj scraping
               const result = await triggerScraping(id);
-
-              // Sukces - pokaż szczegóły
               if (result.status === "success" || result.status === "ok") {
                 toast.success(
-                  "Scraping zakończony pomyślnie",
-                  `Źródło: ${sourceName}. ${
-                    result.message || "Dane zostały pobrane i przetworzone."
-                  }`
-                );
-              } else {
-                toast.warning(
-                  "Scraping zakończony z ostrzeżeniami",
-                  `Źródło: ${sourceName}. ${
-                    result.message || "Sprawdź logi dla szczegółów."
-                  }`
+                  "Scraping zakończony",
+                  result.message || "Dane pobrane"
                 );
               }
-
-              // Odśwież dane po 2 sekundach aby pokazać nowy status
-              setTimeout(() => {
-                loadData();
-              }, 2000);
+              setTimeout(() => loadData(), 2000);
             } catch (error) {
-              // Błąd - pokaż szczegóły
-              const errorMessage =
-                error instanceof Error ? error.message : "Nieznany błąd";
-
               toast.error(
                 "Błąd scrapingu",
-                `Źródło: ${sourceName}. ${errorMessage}. Sprawdź czy migracja 013 została uruchomiona w Supabase.`
+                error instanceof Error ? error.message : "Nieznany błąd"
               );
-
-              console.error("Scraping error:", error);
             }
           }}
           onAdd={async (data) => {
@@ -230,6 +201,8 @@ export default function DataSourcesPage() {
 
 function SourcesTab({
   sources,
+  showGusApiKeyDialog,
+  setShowGusApiKeyDialog,
   onRefresh,
   onToggle,
   onDelete,
@@ -237,6 +210,8 @@ function SourcesTab({
   onAdd,
 }: {
   sources: DataSource[];
+  showGusApiKeyDialog: boolean;
+  setShowGusApiKeyDialog: (show: boolean) => void;
   onRefresh: () => void;
   onToggle: (id: string, isActive: boolean) => void;
   onDelete: (id: string) => void;
@@ -252,54 +227,9 @@ function SourcesTab({
     name: "",
     base_url: "",
     source_type: "scraper_bip",
-    fetch_method: "scraping" as "api" | "scraping" | "hybrid",
+    fetch_method: "scraping" as const,
   });
   const [adding, setAdding] = useState(false);
-  const [refreshingAll, setRefreshingAll] = useState(false);
-  const [refreshProgress, setRefreshProgress] = useState({
-    current: 0,
-    total: 0,
-  });
-  const [maxDocumentAgeDays, setMaxDocumentAgeDays] = useState(365); // Domyślnie 1 rok
-  const toast = useToast();
-
-  // Funkcja do odświeżania wszystkich źródeł w kolejce
-  const handleRefreshAll = async () => {
-    const activeSources = sources.filter((s) => s.is_active);
-    if (activeSources.length === 0) {
-      toast.warning("Brak aktywnych źródeł do odświeżenia");
-      return;
-    }
-
-    setRefreshingAll(true);
-    setRefreshProgress({ current: 0, total: activeSources.length });
-
-    let successCount = 0;
-    let errorCount = 0;
-
-    for (let i = 0; i < activeSources.length; i++) {
-      const source = activeSources[i];
-      setRefreshProgress({ current: i + 1, total: activeSources.length });
-
-      try {
-        await onScrape(source.id);
-        successCount++;
-      } catch {
-        errorCount++;
-      }
-    }
-
-    setRefreshingAll(false);
-    setRefreshProgress({ current: 0, total: 0 });
-
-    if (errorCount === 0) {
-      toast.success(`Odświeżono ${successCount} źródeł`);
-    } else {
-      toast.warning(`Odświeżono ${successCount} źródeł, ${errorCount} błędów`);
-    }
-
-    onRefresh();
-  };
 
   const handleAdd = async () => {
     if (!newSource.name || !newSource.base_url) return;
@@ -311,7 +241,7 @@ function SourcesTab({
         name: "",
         base_url: "",
         source_type: "bip",
-        fetch_method: "hybrid",
+        fetch_method: "scraping",
       });
     } finally {
       setAdding(false);
@@ -326,13 +256,11 @@ function SourcesTab({
     const hours = Math.floor(diff / (1000 * 60 * 60));
     if (hours < 1) return "Przed chwilą";
     if (hours < 24) return `${hours}h temu`;
-    const days = Math.floor(hours / 24);
-    return `${days}d temu`;
+    return `${Math.floor(hours / 24)}d temu`;
   };
 
   return (
     <div className="space-y-4">
-      {/* Add Source Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-background-primary border border-border rounded-xl p-6 w-full max-w-md">
@@ -346,8 +274,8 @@ function SourcesTab({
                   onChange={(e) =>
                     setNewSource({ ...newSource, name: e.target.value })
                   }
-                  placeholder="np. BIP Gminy Drawno"
-                  className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  placeholder="np. BIP Gminy"
+                  className="w-full px-3 py-2 border border-border rounded-lg"
                 />
               </div>
               <div>
@@ -358,8 +286,8 @@ function SourcesTab({
                   onChange={(e) =>
                     setNewSource({ ...newSource, base_url: e.target.value })
                   }
-                  placeholder="https://bip.drawno.pl"
-                  className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  placeholder="https://..."
+                  className="w-full px-3 py-2 border border-border rounded-lg"
                 />
               </div>
               <div>
@@ -371,54 +299,15 @@ function SourcesTab({
                   onChange={(e) =>
                     setNewSource({ ...newSource, source_type: e.target.value })
                   }
-                  className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="w-full px-3 py-2 border border-border rounded-lg"
                 >
-                  <optgroup label="Źródła prawne (API/Scraping)">
-                    <option value="api_isap">ISAP - Akty prawne</option>
-                    <option value="api_wsa_nsa">WSA/NSA - Orzecznictwo</option>
-                    <option value="api_rio">RIO - Nadzór finansowy</option>
-                    <option value="scraper_dziennik">Dziennik Urzędowy</option>
-                  </optgroup>
-                  <optgroup label="Źródła samorządowe (Scraping)">
-                    <option value="scraper_bip">
-                      BIP - Biuletyn Informacji Publicznej
-                    </option>
-                    <option value="municipality">Strona gminy</option>
-                    <option value="councilor">Portal radnego</option>
-                  </optgroup>
-                  <optgroup label="Multimedia">
-                    <option value="youtube">
-                      YouTube - Transkrypcje wideo
-                    </option>
-                  </optgroup>
-                  <optgroup label="Inne">
-                    <option value="statistics">Statystyki (GUS)</option>
-                    <option value="scraper_custom">
-                      Niestandardowe źródło
-                    </option>
-                  </optgroup>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">
-                  Metoda pobierania
-                </label>
-                <select
-                  value={newSource.fetch_method}
-                  onChange={(e) =>
-                    setNewSource({
-                      ...newSource,
-                      fetch_method: e.target.value as
-                        | "api"
-                        | "scraping"
-                        | "hybrid",
-                    })
-                  }
-                  className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-                >
-                  <option value="scraping">Scraping (Web)</option>
-                  <option value="api">API (REST/JSON)</option>
-                  <option value="hybrid">Hybrydowa (API + Scraping)</option>
+                  <option value="scraper_bip">BIP</option>
+                  <option value="municipality">Gmina</option>
+                  <option value="legal">Prawne</option>
+                  <option value="councilor">Radny</option>
+                  <option value="youtube">YouTube</option>
+                  <option value="statistics">Statystyki</option>
+                  <option value="funding">Dotacje UE</option>
                 </select>
               </div>
             </div>
@@ -434,70 +323,28 @@ function SourcesTab({
                 disabled={adding || !newSource.name || !newSource.base_url}
                 className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50 flex items-center gap-2"
               >
-                {adding && <Loader2 className="h-4 w-4 animate-spin" />}
-                Dodaj
+                {adding && <Loader2 className="h-4 w-4 animate-spin" />}Dodaj
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Actions */}
-      <div className="flex justify-between items-center flex-wrap gap-4">
-        <div className="flex gap-2">
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors flex items-center gap-2"
-          >
-            <Plus className="h-4 w-4" />
-            Dodaj źródło
-          </button>
-          <button
-            onClick={handleRefreshAll}
-            disabled={refreshingAll}
-            className="px-4 py-2 border border-border rounded-lg hover:bg-background-secondary transition-colors flex items-center gap-2 disabled:opacity-50"
-          >
-            {refreshingAll ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                {refreshProgress.current}/{refreshProgress.total}
-              </>
-            ) : (
-              <>
-                <RefreshCw className="h-4 w-4" />
-                Odśwież wszystkie
-              </>
-            )}
-          </button>
-        </div>
-
-        {/* Ustawienie limitu wieku dokumentów */}
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-text-secondary whitespace-nowrap">
-            Pobieraj dokumenty z ostatnich:
-          </label>
-          <select
-            value={maxDocumentAgeDays}
-            onChange={(e) => setMaxDocumentAgeDays(Number(e.target.value))}
-            className="px-3 py-2 border border-border rounded-lg bg-background-primary text-sm"
-          >
-            <option value={30}>30 dni</option>
-            <option value={90}>3 miesiące</option>
-            <option value={180}>6 miesięcy</option>
-            <option value={365}>1 rok</option>
-            <option value={730}>2 lata</option>
-            <option value={0}>Wszystkie</option>
-          </select>
-        </div>
+      <div className="flex justify-between items-center">
+        <button
+          onClick={() => setShowAddModal(true)}
+          className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 flex items-center gap-2"
+        >
+          <Plus className="h-4 w-4" />
+          Dodaj źródło
+        </button>
       </div>
 
-      {/* Sources List */}
       <div className="grid gap-4">
         {sources.length === 0 ? (
           <div className="text-center py-12 text-text-secondary">
             <Database className="h-12 w-12 mx-auto mb-3 opacity-50" />
             <p>Brak skonfigurowanych źródeł danych</p>
-            <p className="text-sm mt-1">Dodaj pierwsze źródło aby rozpocząć</p>
           </div>
         ) : (
           sources.map((source) => (
@@ -533,7 +380,6 @@ function SourcesTab({
         )}
       </div>
 
-      {/* Predefined Sources */}
       <div className="mt-8">
         <h3 className="text-lg font-semibold mb-4">
           Dostępne źródła do dodania
@@ -541,39 +387,91 @@ function SourcesTab({
         <div className="grid md:grid-cols-2 gap-4">
           <PredefinedSourceCard
             name="Portal Samorządowy"
-            description="Informacje, szkolenia i narzędzia dla samorządowców"
+            description="Informacje dla samorządowców"
             category="Dla radnych"
             url="https://www.portalsamorzadowy.pl"
             sourceType="councilor"
             onAdd={onAdd}
           />
+          <GUSSourceCard
+            onAdd={onAdd}
+            showApiKeyDialog={showGusApiKeyDialog}
+            setShowApiKeyDialog={setShowGusApiKeyDialog}
+          />
           <PredefinedSourceCard
-            name="GUS - Bank Danych Lokalnych"
-            description="Dane demograficzne, ekonomiczne, społeczne"
-            category="Statystyki"
-            url="https://bdl.stat.gov.pl"
+            name="ISAP - Dziennik Ustaw i Monitor Polski"
+            description="Oficjalne akty prawne RP z API Sejmu"
+            category="Prawo"
+            url="https://isap.sejm.gov.pl"
+            sourceType="legal"
+            onAdd={onAdd}
+            badge="API"
+          />
+          <PredefinedSourceCard
+            name="Fundusze Europejskie"
+            description="Nabory, konkursy i projekty UE"
+            category="Dotacje UE"
+            url="https://www.funduszeeuropejskie.gov.pl"
+            sourceType="funding"
+            onAdd={onAdd}
+            badge="API"
+          />
+          <PredefinedSourceCard
+            name="Geoportal - Dane Przestrzenne"
+            description="Działki, MPZP, granice administracyjne"
+            category="Mapy"
+            url="https://geoportal.gov.pl"
+            sourceType="spatial"
+            onAdd={onAdd}
+            badge="API"
+          />
+          <PredefinedSourceCard
+            name="TERYT - Jednostki Terytorialne"
+            description="Gminy, powiaty, województwa - rejestr GUS"
+            category="Rejestry"
+            url="https://api-teryt.stat.gov.pl"
             sourceType="statistics"
             onAdd={onAdd}
+            badge="API"
+          />
+          <PredefinedSourceCard
+            name="KRS - Krajowy Rejestr Sądowy"
+            description="Spółki, stowarzyszenia, fundacje"
+            category="Rejestry"
+            url="https://api-krs.ms.gov.pl"
+            sourceType="statistics"
+            onAdd={onAdd}
+            badge="API"
+          />
+          <PredefinedSourceCard
+            name="CEIDG - Działalność Gospodarcza"
+            description="Jednoosobowa działalność gospodarcza"
+            category="Rejestry"
+            url="https://dane.biznes.gov.pl"
+            sourceType="statistics"
+            onAdd={onAdd}
+            badge="API"
+          />
+          <PredefinedSourceCard
+            name="GDOŚ - Dane Środowiskowe"
+            description="Obszary chronione, Natura 2000"
+            category="Środowisko"
+            url="https://sdi.gdos.gov.pl"
+            sourceType="statistics"
+            onAdd={onAdd}
+            badge="API"
           />
           <PredefinedSourceCard
             name="Monitor Polski"
-            description="Dziennik urzędowy RP - akty wykonawcze"
+            description="Dziennik urzędowy RP"
             category="Prawo"
             url="https://monitorpolski.gov.pl"
             sourceType="legal"
             onAdd={onAdd}
           />
           <PredefinedSourceCard
-            name="Związek Gmin Wiejskich RP"
-            description="Aktualności i stanowiska ZGW RP"
-            category="Dla radnych"
-            url="https://zgwrp.pl"
-            sourceType="councilor"
-            onAdd={onAdd}
-          />
-          <PredefinedSourceCard
             name="YouTube - Sesje Rady"
-            description="Transkrypcje z nagrań sesji rady miejskiej i innych materiałów wideo"
+            description="Transkrypcje z nagrań sesji"
             category="Multimedia"
             url="https://www.youtube.com"
             sourceType="youtube"
@@ -619,38 +517,16 @@ function SourceCard({
     base_url: string;
     source_type: string;
     schedule_cron: string;
-    youtube_method?: "scraping" | "api";
-    youtube_api_key?: string;
   }) => Promise<void>;
 }) {
   const [scraping, setScraping] = useState(false);
-  const [searching, setSearching] = useState(false);
-  const [scrapeResult, setScrapeResult] = useState<{
-    success: boolean;
-    message: string;
-  } | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [showSearchModal, setShowSearchModal] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<{
-    documents: Array<{
-      id: string;
-      title: string;
-      excerpt: string;
-      relevanceScore: number;
-      url: string;
-    }>;
-    totalFound: number;
-  } | null>(null);
   const [editData, setEditData] = useState({
-    name: name,
+    name,
     base_url: url,
     source_type: type,
     schedule_cron: frequency === "daily" ? "0 6 * * *" : "0 6 * * 0",
-    youtube_method: "scraping" as "scraping" | "api",
-    youtube_api_key: "",
   });
-  const isYouTubeSource = type === "youtube" || url.includes("youtube.com");
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -667,67 +543,24 @@ function SourceCard({
   const handleScrape = async () => {
     if (!onScrape) return;
     setScraping(true);
-    setScrapeResult(null);
     try {
       await onScrape();
-      // Scraping działa asynchronicznie w tle
-      setScrapeResult({
-        success: true,
-        message: "Scraping uruchomiony w tle!",
-      });
-    } catch (e) {
-      setScrapeResult({
-        success: false,
-        message: e instanceof Error ? e.message : "Błąd scrapingu",
-      });
     } finally {
       setScraping(false);
-      setTimeout(() => setScrapeResult(null), 5000);
     }
   };
 
-  const handleSemanticSearch = async () => {
-    if (!searchQuery.trim()) return;
-    setSearching(true);
-    setSearchResults(null);
-    try {
-      const token = localStorage.getItem("supabase_access_token");
-      const response = await fetch(`/api/data-sources/${id}/semantic-search`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          query: searchQuery,
-          maxResults: 15,
-          minRelevance: 0.3,
-          deepCrawl: false,
-          enableIntelligentScraping: true, // Włącz inteligentny scraping gdy brak wyników
-          minResultsBeforeScraping: 3,
-        }),
-      });
-      const data = await response.json();
-      if (data.success) {
-        setSearchResults({
-          documents: data.documents || [],
-          totalFound: data.totalFound || 0,
-        });
-      }
-    } catch (e) {
-      console.error("Semantic search error:", e);
-    } finally {
-      setSearching(false);
-    }
-  };
-
-  const typeColors = {
+  const typeColors: Record<string, string> = {
     municipality: "bg-blue-100 text-blue-700",
     bip: "bg-purple-100 text-purple-700",
     legal: "bg-green-100 text-green-700",
+    spatial: "bg-emerald-100 text-emerald-700",
+    registry: "bg-indigo-100 text-indigo-700",
+    environmental: "bg-lime-100 text-lime-700",
     councilor: "bg-orange-100 text-orange-700",
     statistics: "bg-pink-100 text-pink-700",
     youtube: "bg-red-100 text-red-700",
+    funding: "bg-cyan-100 text-cyan-700",
   };
 
   const statusIcons = {
@@ -738,12 +571,11 @@ function SourceCard({
 
   return (
     <>
-      {/* Edit Modal */}
       {showEditModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-background-primary border border-border rounded-xl p-6 w-full max-w-md">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">Edytuj źródło danych</h2>
+              <h2 className="text-xl font-bold">Edytuj źródło</h2>
               <button
                 onClick={() => setShowEditModal(false)}
                 className="p-1 hover:bg-background-secondary rounded"
@@ -760,7 +592,7 @@ function SourceCard({
                   onChange={(e) =>
                     setEditData({ ...editData, name: e.target.value })
                   }
-                  className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="w-full px-3 py-2 border border-border rounded-lg"
                 />
               </div>
               <div>
@@ -771,117 +603,9 @@ function SourceCard({
                   onChange={(e) =>
                     setEditData({ ...editData, base_url: e.target.value })
                   }
-                  className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="w-full px-3 py-2 border border-border rounded-lg"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">
-                  Typ źródła
-                </label>
-                <select
-                  value={editData.source_type}
-                  onChange={(e) =>
-                    setEditData({ ...editData, source_type: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-                >
-                  <option value="bip">BIP</option>
-                  <option value="municipality">Gmina</option>
-                  <option value="legal">Prawne</option>
-                  <option value="councilor">Radny</option>
-                  <option value="statistics">Statystyki</option>
-                  <option value="youtube">YouTube</option>
-                  <option value="custom">Inne</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">
-                  Częstotliwość
-                </label>
-                <select
-                  value={editData.schedule_cron}
-                  onChange={(e) =>
-                    setEditData({ ...editData, schedule_cron: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-                >
-                  <option value="0 6 * * *">Codziennie</option>
-                  <option value="0 6 * * 0">Co tydzień</option>
-                  <option value="0 6 1 * *">Co miesiąc</option>
-                </select>
-              </div>
-
-              {/* YouTube Options */}
-              {isYouTubeSource && (
-                <div className="border-t border-border pt-4 mt-4">
-                  <h3 className="font-medium text-sm mb-3 flex items-center gap-2">
-                    <Play className="h-4 w-4 text-red-500" />
-                    Ustawienia YouTube
-                  </h3>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-sm font-medium mb-1">
-                        Metoda pobierania
-                      </label>
-                      <select
-                        value={editData.youtube_method}
-                        onChange={(e) =>
-                          setEditData({
-                            ...editData,
-                            youtube_method: e.target.value as
-                              | "scraping"
-                              | "api",
-                          })
-                        }
-                        className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      >
-                        <option value="scraping">
-                          Scraping (bez klucza API)
-                        </option>
-                        <option value="api">
-                          YouTube Data API (wymaga klucza)
-                        </option>
-                      </select>
-                      <p className="text-xs text-text-secondary mt-1">
-                        {editData.youtube_method === "scraping"
-                          ? "Scraping może być blokowany przez YouTube. API jest bardziej niezawodne."
-                          : "YouTube Data API wymaga klucza z Google Cloud Console."}
-                      </p>
-                    </div>
-
-                    {editData.youtube_method === "api" && (
-                      <div>
-                        <label className="block text-sm font-medium mb-1">
-                          Klucz API YouTube
-                        </label>
-                        <input
-                          type="password"
-                          value={editData.youtube_api_key}
-                          onChange={(e) =>
-                            setEditData({
-                              ...editData,
-                              youtube_api_key: e.target.value,
-                            })
-                          }
-                          placeholder="AIza..."
-                          className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 font-mono text-sm"
-                        />
-                        <p className="text-xs text-text-secondary mt-1">
-                          Pobierz klucz z{" "}
-                          <a
-                            href="https://console.cloud.google.com/apis/credentials"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-primary-500 hover:underline"
-                          >
-                            Google Cloud Console
-                          </a>
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
             <div className="flex justify-end gap-2 mt-6">
               <button
@@ -892,119 +616,11 @@ function SourceCard({
               </button>
               <button
                 onClick={handleSave}
-                disabled={saving || !editData.name || !editData.base_url}
+                disabled={saving}
                 className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50 flex items-center gap-2"
               >
-                {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-                Zapisz
+                {saving && <Loader2 className="h-4 w-4 animate-spin" />}Zapisz
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Semantic Search Modal */}
-      {showSearchModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-background-primary border border-border rounded-xl p-6 w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                <Search className="h-5 w-5 text-primary-500" />
-                Semantic Search w &quot;{name}&quot;
-              </h2>
-              <button
-                onClick={() => {
-                  setShowSearchModal(false);
-                  setSearchResults(null);
-                  setSearchQuery("");
-                }}
-                className="p-1 hover:bg-background-secondary rounded"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="flex gap-2 mb-4">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSemanticSearch()}
-                placeholder="Wpisz zapytanie, np. 'uchwały dotyczące budżetu'"
-                className="flex-1 px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-              />
-              <button
-                onClick={handleSemanticSearch}
-                disabled={searching || !searchQuery.trim()}
-                className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50 flex items-center gap-2"
-              >
-                {searching ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Search className="h-4 w-4" />
-                )}
-                Szukaj
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto">
-              {searchResults && (
-                <div className="space-y-3">
-                  <p className="text-sm text-text-secondary">
-                    Znaleziono {searchResults.totalFound} dokumentów
-                  </p>
-                  {searchResults.documents.map((doc) => (
-                    <div
-                      key={doc.id}
-                      className="border border-border rounded-lg p-3 hover:border-primary-300 transition-colors"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <h4 className="font-medium text-text-primary">
-                            {doc.title}
-                          </h4>
-                          <p className="text-sm text-text-secondary mt-1 line-clamp-2">
-                            {doc.excerpt}
-                          </p>
-                          {doc.url && (
-                            <a
-                              href={doc.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-primary-500 hover:underline mt-1 inline-flex items-center gap-1"
-                            >
-                              {doc.url.slice(0, 50)}...
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
-                          )}
-                        </div>
-                        <span className="text-xs bg-primary-100 text-primary-700 px-2 py-1 rounded-full ml-2">
-                          {Math.round(doc.relevanceScore * 100)}%
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                  {searchResults.documents.length === 0 && (
-                    <p className="text-center text-text-secondary py-8">
-                      Brak wyników dla tego zapytania
-                    </p>
-                  )}
-                </div>
-              )}
-              {!searchResults && !searching && (
-                <p className="text-center text-text-secondary py-8">
-                  Wpisz zapytanie i kliknij &quot;Szukaj&quot; aby znaleźć
-                  dokumenty
-                </p>
-              )}
-              {searching && (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-primary-500" />
-                  <span className="ml-2 text-text-secondary">
-                    Wyszukiwanie...
-                  </span>
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -1017,7 +633,7 @@ function SourceCard({
               <h3 className="font-semibold text-text-primary">{name}</h3>
               <span
                 className={`px-2 py-1 rounded-md text-xs font-medium ${
-                  typeColors[type as keyof typeof typeColors]
+                  typeColors[type] || "bg-gray-100 text-gray-700"
                 }`}
               >
                 {type}
@@ -1052,70 +668,45 @@ function SourceCard({
               </div>
             </div>
           </div>
-          <div className="flex flex-col gap-2 ml-4">
-            <div className="flex gap-2">
-              <button
-                onClick={handleScrape}
-                disabled={scraping}
-                className="px-3 py-2 rounded-lg bg-primary-500 text-white hover:bg-primary-600 transition-colors flex items-center gap-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Uruchom scraping"
-              >
-                {scraping ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" />
-                )}
-                {scraping ? "Scrapuję..." : "Scrapuj"}
-              </button>
-              <button
-                onClick={() => setShowSearchModal(true)}
-                className="px-3 py-2 rounded-lg bg-accent-500 text-white hover:bg-accent-600 transition-colors flex items-center gap-2 text-sm font-medium"
-                title="Semantic Search - wyszukaj dokumenty"
-              >
-                <Search className="h-4 w-4" />
-                Szukaj
-              </button>
-              <button
-                onClick={() => setShowEditModal(true)}
-                className="p-2 rounded-lg bg-background-secondary text-text-secondary hover:bg-background-tertiary transition-colors"
-                title="Edytuj"
-              >
-                <Pencil className="h-4 w-4" />
-              </button>
-              <button
-                onClick={onToggle}
-                className={`p-2 rounded-lg transition-colors ${
-                  enabled
-                    ? "bg-success/10 text-success hover:bg-success/20"
-                    : "bg-background-secondary text-text-secondary hover:bg-background-tertiary"
-                }`}
-                title={enabled ? "Wyłącz automatyczne" : "Włącz automatyczne"}
-              >
-                {enabled ? (
-                  <Pause className="h-4 w-4" />
-                ) : (
-                  <Play className="h-4 w-4" />
-                )}
-              </button>
-              <button
-                onClick={onDelete}
-                className="p-2 rounded-lg bg-danger/10 text-danger hover:bg-danger/20 transition-colors"
-                title="Usuń"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </div>
-            {scrapeResult && (
-              <div
-                className={`text-xs px-2 py-1 rounded ${
-                  scrapeResult.success
-                    ? "bg-success/10 text-success"
-                    : "bg-danger/10 text-danger"
-                }`}
-              >
-                {scrapeResult.message}
-              </div>
-            )}
+          <div className="flex gap-2 ml-4">
+            <button
+              onClick={handleScrape}
+              disabled={scraping}
+              className="px-3 py-2 rounded-lg bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 flex items-center gap-2 text-sm"
+            >
+              {scraping ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              {scraping ? "..." : "Scrapuj"}
+            </button>
+            <button
+              onClick={() => setShowEditModal(true)}
+              className="p-2 rounded-lg bg-background-secondary text-text-secondary hover:bg-background-tertiary"
+            >
+              <Pencil className="h-4 w-4" />
+            </button>
+            <button
+              onClick={onToggle}
+              className={`p-2 rounded-lg transition-colors ${
+                enabled
+                  ? "bg-success/10 text-success hover:bg-success/20"
+                  : "bg-background-secondary text-text-secondary hover:bg-background-tertiary"
+              }`}
+            >
+              {enabled ? (
+                <Pause className="h-4 w-4" />
+              ) : (
+                <Play className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              onClick={onDelete}
+              className="p-2 rounded-lg bg-danger/10 text-danger hover:bg-danger/20"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
           </div>
         </div>
       </div>
@@ -1130,12 +721,14 @@ function PredefinedSourceCard({
   url,
   sourceType,
   onAdd,
+  badge,
 }: {
   name: string;
   description: string;
   category: string;
   url: string;
   sourceType: string;
+  badge?: string;
   onAdd: (data: {
     name: string;
     base_url: string;
@@ -1143,7 +736,6 @@ function PredefinedSourceCard({
   }) => Promise<void>;
 }) {
   const [adding, setAdding] = useState(false);
-
   const handleAdd = async () => {
     setAdding(true);
     try {
@@ -1162,19 +754,170 @@ function PredefinedSourceCard({
             <span className="px-2 py-0.5 bg-background-secondary text-text-secondary text-xs rounded">
               {category}
             </span>
+            {badge && (
+              <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded font-medium">
+                {badge}
+              </span>
+            )}
           </div>
           <p className="text-sm text-text-secondary">{description}</p>
         </div>
         <button
           onClick={handleAdd}
           disabled={adding}
-          className="ml-4 px-3 py-1.5 bg-primary-500 text-white text-sm rounded-lg hover:bg-primary-600 transition-colors disabled:opacity-50 flex items-center gap-1"
+          className="ml-4 px-3 py-1.5 bg-primary-500 text-white text-sm rounded-lg hover:bg-primary-600 disabled:opacity-50 flex items-center gap-1"
         >
-          {adding && <Loader2 className="h-3 w-3 animate-spin" />}
-          Dodaj
+          {adding && <Loader2 className="h-3 w-3 animate-spin" />}Dodaj
         </button>
       </div>
     </div>
+  );
+}
+
+function GUSSourceCard({
+  onAdd,
+  showApiKeyDialog,
+  setShowApiKeyDialog,
+}: {
+  onAdd: (data: {
+    name: string;
+    base_url: string;
+    source_type: string;
+  }) => Promise<void>;
+  showApiKeyDialog: boolean;
+  setShowApiKeyDialog: (show: boolean) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [savingKey, setSavingKey] = useState(false);
+  const toast = useToast();
+
+  const handleAdd = async () => {
+    setAdding(true);
+    try {
+      await onAdd({
+        name: "GUS - Bank Danych Lokalnych",
+        base_url: "https://bdl.stat.gov.pl",
+        source_type: "statistics",
+      });
+      toast.success("Dodano źródło GUS", "Teraz dodaj swój klucz API");
+      setShowApiKeyDialog(true);
+    } catch (error) {
+      toast.error(
+        "Błąd",
+        error instanceof Error ? error.message : "Nie udało się dodać źródła"
+      );
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleSaveApiKey = async () => {
+    if (!apiKey.trim()) {
+      toast.warning("Podaj klucz API");
+      return;
+    }
+    setSavingKey(true);
+    try {
+      await saveGUSApiKey(apiKey);
+      toast.success("Klucz API zapisany", "Możesz teraz korzystać z API GUS");
+      setShowApiKeyDialog(false);
+      setApiKey("");
+    } catch (error) {
+      toast.error(
+        "Błąd zapisu",
+        error instanceof Error ? error.message : "Nie udało się zapisać klucza"
+      );
+    } finally {
+      setSavingKey(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="border border-border rounded-lg p-4 hover:border-primary-200 transition-colors">
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-1">
+              <h4 className="font-medium text-text-primary">
+                GUS - Bank Danych Lokalnych
+              </h4>
+              <span className="px-2 py-0.5 bg-background-secondary text-text-secondary text-xs rounded">
+                Statystyki
+              </span>
+            </div>
+            <p className="text-sm text-text-secondary">
+              Dane demograficzne, ekonomiczne, społeczne
+            </p>
+          </div>
+          <button
+            onClick={handleAdd}
+            disabled={adding}
+            className="ml-4 px-3 py-1.5 bg-primary-500 text-white text-sm rounded-lg hover:bg-primary-600 disabled:opacity-50 flex items-center gap-1"
+          >
+            {adding && <Loader2 className="h-3 w-3 animate-spin" />}Dodaj
+          </button>
+        </div>
+      </div>
+
+      {showApiKeyDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-background-primary border border-border rounded-xl p-6 w-full max-w-md">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold">Klucz API GUS</h2>
+              <button
+                onClick={() => setShowApiKeyDialog(false)}
+                className="p-1 hover:bg-background-secondary rounded"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <p className="text-sm text-text-secondary">
+                Aby korzystać z API GUS, potrzebujesz klucza API. Zarejestruj
+                się na{" "}
+                <a
+                  href="https://api.stat.gov.pl/Home/BdlApi"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary-500 hover:underline"
+                >
+                  api.stat.gov.pl
+                </a>
+              </p>
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Klucz API GUS
+                </label>
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="Wklej swój klucz API..."
+                  className="w-full px-3 py-2 border border-border rounded-lg font-mono text-sm"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-6">
+              <button
+                onClick={() => setShowApiKeyDialog(false)}
+                className="px-4 py-2 border border-border rounded-lg hover:bg-background-secondary"
+              >
+                Pomiń
+              </button>
+              <button
+                onClick={handleSaveApiKey}
+                disabled={savingKey || !apiKey.trim()}
+                className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50 flex items-center gap-2"
+              >
+                {savingKey && <Loader2 className="h-4 w-4 animate-spin" />}
+                Zapisz klucz
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -1185,76 +928,9 @@ function DocumentsTab({
   documents: ProcessedDocument[];
   setDocuments: React.Dispatch<React.SetStateAction<ProcessedDocument[]>>;
 }) {
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
-  const [showEmptyDocs, setShowEmptyDocs] = useState(false);
-  const [emptyDocuments, setEmptyDocuments] = useState<
-    Array<ProcessedDocument & { reason: string }>
-  >([]);
-  const [loadingEmpty, setLoadingEmpty] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState("");
   const toast = useToast();
-
-  const loadEmptyDocuments = async () => {
-    setLoadingEmpty(true);
-    try {
-      const { getEmptyDocuments } = await import("@/lib/api/data-sources");
-      const result = await getEmptyDocuments();
-      setEmptyDocuments(result.documents);
-      setShowEmptyDocs(true);
-    } catch (e) {
-      toast.error(
-        "Błąd",
-        e instanceof Error
-          ? e.message
-          : "Nie udało się pobrać pustych dokumentów"
-      );
-    } finally {
-      setLoadingEmpty(false);
-    }
-  };
-
-  const handleDeleteSelected = async () => {
-    if (selectedIds.size === 0) return;
-    setDeleting(true);
-    try {
-      const { deleteDocumentsBulk } = await import("@/lib/api/data-sources");
-      const result = await deleteDocumentsBulk(Array.from(selectedIds));
-      toast.success("Usunięto dokumenty", result.message);
-      setDocuments((prev) => prev.filter((d) => !selectedIds.has(d.id)));
-      setSelectedIds(new Set());
-      setShowDeleteConfirm(false);
-    } catch (e) {
-      toast.error(
-        "Błąd usuwania",
-        e instanceof Error ? e.message : "Nie udało się usunąć dokumentów"
-      );
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const handleDeleteAll = async () => {
-    setDeleting(true);
-    try {
-      const { deleteAllDocuments } = await import("@/lib/api/data-sources");
-      const result = await deleteAllDocuments();
-      toast.success("Usunięto wszystkie dokumenty", result.message);
-      setDocuments([]);
-      setSelectedIds(new Set());
-      setShowDeleteAllConfirm(false);
-    } catch (e) {
-      toast.error(
-        "Błąd usuwania",
-        e instanceof Error ? e.message : "Nie udało się usunąć dokumentów"
-      );
-    } finally {
-      setDeleting(false);
-    }
-  };
 
   const handleDeleteSingle = async (id: string, title: string) => {
     if (!confirm(`Czy na pewno chcesz usunąć dokument "${title}"?`)) return;
@@ -1271,24 +947,6 @@ function DocumentsTab({
     }
   };
 
-  const toggleSelect = (id: string) => {
-    const newSet = new Set(selectedIds);
-    if (newSet.has(id)) {
-      newSet.delete(id);
-    } else {
-      newSet.add(id);
-    }
-    setSelectedIds(newSet);
-  };
-
-  const selectAll = () => {
-    if (selectedIds.size === filteredDocs.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(filteredDocs.map((d) => d.id)));
-    }
-  };
-
   const filteredDocs = documents.filter((doc) => {
     const matchesSearch =
       !searchTerm || doc.title.toLowerCase().includes(searchTerm.toLowerCase());
@@ -1298,207 +956,30 @@ function DocumentsTab({
 
   return (
     <div className="space-y-4">
-      {/* Delete Confirmation Modal */}
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-background-primary border border-border rounded-xl p-6 w-full max-w-md">
-            <div className="flex items-center gap-3 mb-4">
-              <AlertCircle className="h-8 w-8 text-danger" />
-              <h2 className="text-xl font-bold">Potwierdź usunięcie</h2>
-            </div>
-            <p className="text-text-secondary mb-6">
-              Czy na pewno chcesz usunąć <strong>{selectedIds.size}</strong>{" "}
-              dokumentów z bazy RAG?
-              <br />
-              <span className="text-sm text-danger">
-                Ta operacja jest nieodwracalna.
-              </span>
-            </p>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setShowDeleteConfirm(false)}
-                className="px-4 py-2 border border-border rounded-lg hover:bg-background-secondary"
-                disabled={deleting}
-              >
-                Nie, anuluj
-              </button>
-              <button
-                onClick={handleDeleteSelected}
-                disabled={deleting}
-                className="px-4 py-2 bg-danger text-white rounded-lg hover:bg-red-700 flex items-center gap-2"
-              >
-                {deleting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Trash2 className="h-4 w-4" />
-                )}
-                Tak, usuń
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete All Confirmation Modal */}
-      {showDeleteAllConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-background-primary border border-border rounded-xl p-6 w-full max-w-md">
-            <div className="flex items-center gap-3 mb-4">
-              <AlertCircle className="h-8 w-8 text-danger" />
-              <h2 className="text-xl font-bold">Usuń WSZYSTKIE dokumenty</h2>
-            </div>
-            <p className="text-text-secondary mb-6">
-              Czy na pewno chcesz usunąć{" "}
-              <strong>WSZYSTKIE {documents.length}</strong> dokumentów z bazy
-              RAG?
-              <br />
-              <span className="text-sm text-danger font-bold">
-                ⚠️ Ta operacja jest nieodwracalna!
-              </span>
-            </p>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setShowDeleteAllConfirm(false)}
-                className="px-4 py-2 border border-border rounded-lg hover:bg-background-secondary"
-                disabled={deleting}
-              >
-                Nie, anuluj
-              </button>
-              <button
-                onClick={handleDeleteAll}
-                disabled={deleting}
-                className="px-4 py-2 bg-danger text-white rounded-lg hover:bg-red-700 flex items-center gap-2"
-              >
-                {deleting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Trash2 className="h-4 w-4" />
-                )}
-                Tak, usuń wszystkie
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Empty Documents Modal */}
-      {showEmptyDocs && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-background-primary border border-border rounded-xl p-6 w-full max-w-2xl max-h-[80vh] overflow-auto">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                <AlertCircle className="h-5 w-5 text-warning" />
-                Dokumenty bez treści ({emptyDocuments.length})
-              </h2>
-              <button
-                onClick={() => setShowEmptyDocs(false)}
-                className="p-1 hover:bg-background-secondary rounded"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <p className="text-sm text-text-secondary mb-4">
-              Poniższe dokumenty mają nagłówek ale brak treści (błędy OCR,
-              Vision API lub scrapingu).
-            </p>
-            {emptyDocuments.length === 0 ? (
-              <p className="text-center py-8 text-text-secondary">
-                Brak dokumentów bez treści
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {emptyDocuments.map((doc) => (
-                  <EmptyDocumentRow
-                    key={doc.id}
-                    doc={doc}
-                    onDelete={() => handleDeleteSingle(doc.id, doc.title)}
-                    onRepair={async () => {
-                      try {
-                        const { repairDocument } = await import(
-                          "@/lib/api/data-sources"
-                        );
-                        const result = await repairDocument(doc.id);
-                        if (result.success) {
-                          toast.success("Naprawiono", result.message);
-                          setEmptyDocuments((prev) =>
-                            prev.filter((d) => d.id !== doc.id)
-                          );
-                        } else {
-                          toast.error(
-                            "Nie udało się naprawić",
-                            result.error || "Nieznany błąd"
-                          );
-                        }
-                      } catch (e) {
-                        toast.error(
-                          "Błąd naprawy",
-                          e instanceof Error ? e.message : "Nieznany błąd"
-                        );
-                      }
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Toolbar */}
       <div className="flex flex-wrap gap-4 items-center">
         <input
           type="text"
           placeholder="Szukaj dokumentów..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          className="flex-1 min-w-[200px] px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+          className="flex-1 min-w-[200px] px-4 py-2 border border-border rounded-lg"
         />
         <select
           value={filterType}
           onChange={(e) => setFilterType(e.target.value)}
-          className="px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+          className="px-4 py-2 border border-border rounded-lg"
         >
           <option value="">Wszystkie typy</option>
           <option value="resolution">Uchwały</option>
           <option value="protocol">Protokoły</option>
           <option value="news">Aktualności</option>
-          <option value="legal_act">Akty prawne</option>
         </select>
-        <button
-          onClick={loadEmptyDocuments}
-          disabled={loadingEmpty}
-          className="px-3 py-2 border border-warning text-warning rounded-lg hover:bg-yellow-50 flex items-center gap-2"
-        >
-          {loadingEmpty ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <AlertCircle className="h-4 w-4" />
-          )}
-          Puste dokumenty
-        </button>
-        {selectedIds.size > 0 && (
-          <button
-            onClick={() => setShowDeleteConfirm(true)}
-            className="px-3 py-2 bg-danger text-white rounded-lg hover:bg-red-700 flex items-center gap-2"
-          >
-            <Trash2 className="h-4 w-4" />
-            Usuń zaznaczone ({selectedIds.size})
-          </button>
-        )}
-        <button
-          onClick={() => setShowDeleteAllConfirm(true)}
-          className="px-3 py-2 border border-danger text-danger rounded-lg hover:bg-red-50 flex items-center gap-2"
-        >
-          <Trash2 className="h-4 w-4" />
-          Usuń wszystkie w bazie
-        </button>
       </div>
 
       {documents.length === 0 ? (
         <div className="text-center py-12 text-text-secondary">
           <FileText className="h-12 w-12 mx-auto mb-3 opacity-50" />
           <p>Brak pobranych dokumentów</p>
-          <p className="text-sm mt-1">Dodaj źródła danych i uruchom scraping</p>
           <button
             onClick={async () => {
               try {
@@ -1515,63 +996,36 @@ function DocumentsTab({
           </button>
         </div>
       ) : (
-        <>
-          {/* Select All */}
-          <div className="flex items-center gap-2 text-sm text-text-secondary">
-            <input
-              type="checkbox"
-              checked={
-                selectedIds.size === filteredDocs.length &&
-                filteredDocs.length > 0
-              }
-              onChange={selectAll}
-              className="rounded border-border"
-            />
-            <span>Zaznacz wszystkie ({filteredDocs.length})</span>
-          </div>
-
-          <div className="space-y-2">
-            {filteredDocs.map((doc) => (
-              <div
-                key={doc.id}
-                className={`border rounded-lg p-4 flex items-start gap-3 ${
-                  selectedIds.has(doc.id)
-                    ? "border-primary-500 bg-primary-50"
-                    : "border-border"
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedIds.has(doc.id)}
-                  onChange={() => toggleSelect(doc.id)}
-                  className="mt-1 rounded border-border"
-                />
-                <div className="flex-1">
-                  <h4 className="font-medium">{doc.title}</h4>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className="text-xs px-2 py-0.5 bg-background-secondary rounded">
-                      {doc.document_type}
-                    </span>
-                    <span className="text-xs text-text-secondary">
-                      {doc.content ? (
-                        `${doc.content.length} znaków`
-                      ) : (
-                        <span className="text-warning">Brak treści</span>
-                      )}
-                    </span>
-                  </div>
+        <div className="space-y-2">
+          {filteredDocs.map((doc) => (
+            <div
+              key={doc.id}
+              className="border border-border rounded-lg p-4 flex items-start gap-3"
+            >
+              <div className="flex-1">
+                <h4 className="font-medium">{doc.title}</h4>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-xs px-2 py-0.5 bg-background-secondary rounded">
+                    {doc.document_type}
+                  </span>
+                  <span className="text-xs text-text-secondary">
+                    {doc.content ? (
+                      `${doc.content.length} znaków`
+                    ) : (
+                      <span className="text-warning">Brak treści</span>
+                    )}
+                  </span>
                 </div>
-                <button
-                  onClick={() => handleDeleteSingle(doc.id, doc.title)}
-                  className="p-2 text-text-secondary hover:text-danger hover:bg-red-50 rounded"
-                  title="Usuń dokument"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
               </div>
-            ))}
-          </div>
-        </>
+              <button
+                onClick={() => handleDeleteSingle(doc.id, doc.title)}
+                className="p-2 text-text-secondary hover:text-danger hover:bg-red-50 rounded"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -1618,10 +1072,10 @@ function StatsTab({ stats }: { stats: DataSourcesStats | null }) {
             {Object.entries(docsByType).map(([type, count]) => (
               <DocumentTypeBar
                 key={type}
-                label={getDocumentTypeLabel(type)}
+                label={type}
                 count={count as number}
                 total={totalDocs}
-                color={getDocumentTypeColor(type)}
+                color="bg-primary-500"
               />
             ))}
           </div>
@@ -1638,32 +1092,7 @@ function formatRelativeTime(dateStr: string): string {
   const hours = Math.floor(diff / (1000 * 60 * 60));
   if (hours < 1) return "Przed chwilą";
   if (hours < 24) return `${hours}h temu`;
-  const days = Math.floor(hours / 24);
-  return `${days}d temu`;
-}
-
-function getDocumentTypeLabel(type: string): string {
-  const labels: Record<string, string> = {
-    resolution: "Uchwały",
-    protocol: "Protokoły",
-    news: "Aktualności",
-    legal_act: "Akty prawne",
-    announcement: "Ogłoszenia",
-    article: "Artykuły",
-  };
-  return labels[type] || type;
-}
-
-function getDocumentTypeColor(type: string): string {
-  const colors: Record<string, string> = {
-    resolution: "bg-purple-500",
-    protocol: "bg-green-500",
-    news: "bg-blue-500",
-    legal_act: "bg-red-500",
-    announcement: "bg-orange-500",
-    article: "bg-cyan-500",
-  };
-  return colors[type] || "bg-gray-500";
+  return `${Math.floor(hours / 24)}d temu`;
 }
 
 function StatCard({
@@ -1703,7 +1132,6 @@ function DocumentTypeBar({
   color: string;
 }) {
   const percentage = (count / total) * 100;
-
   return (
     <div>
       <div className="flex justify-between text-sm mb-1">
@@ -1715,69 +1143,6 @@ function DocumentTypeBar({
           className={`h-full ${color}`}
           style={{ width: `${percentage}%` }}
         />
-      </div>
-    </div>
-  );
-}
-
-function EmptyDocumentRow({
-  doc,
-  onDelete,
-  onRepair,
-}: {
-  doc: ProcessedDocument & { reason: string };
-  onDelete: () => void;
-  onRepair: () => Promise<void>;
-}) {
-  const [repairing, setRepairing] = useState(false);
-
-  const handleRepair = async () => {
-    setRepairing(true);
-    try {
-      await onRepair();
-    } finally {
-      setRepairing(false);
-    }
-  };
-
-  return (
-    <div className="border border-border rounded-lg p-3 flex justify-between items-center">
-      <div className="flex-1">
-        <h4 className="font-medium text-sm">{doc.title}</h4>
-        <p className="text-xs text-warning">{doc.reason}</p>
-        {doc.source_url && (
-          <a
-            href={doc.source_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-primary-500 hover:underline flex items-center gap-1"
-          >
-            <ExternalLink className="h-3 w-3" /> Źródło
-          </a>
-        )}
-      </div>
-      <div className="flex items-center gap-2">
-        {doc.source_url && (
-          <button
-            onClick={handleRepair}
-            disabled={repairing}
-            className="p-2 text-primary-500 hover:bg-primary-50 rounded flex items-center gap-1"
-            title="Napraw dokument (pobierz ponownie)"
-          >
-            {repairing ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-          </button>
-        )}
-        <button
-          onClick={onDelete}
-          className="p-2 text-danger hover:bg-red-50 rounded"
-          title="Usuń dokument"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
       </div>
     </div>
   );

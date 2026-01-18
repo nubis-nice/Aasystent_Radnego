@@ -9,16 +9,18 @@ import {
   Database,
   Eye,
   Mic,
+  ChevronRight,
+  Settings2,
   MicOff,
   Volume2,
   Check,
   AlertCircle,
   Loader2,
-  Settings2,
   Sparkles,
   Radio,
   Square,
   TestTube,
+  Download,
 } from "lucide-react";
 import { ProviderType } from "@aasystent-radnego/shared";
 import { AIConnectionTester } from "./AIConnectionTester";
@@ -54,6 +56,10 @@ interface AIConfigurationModalProps {
       vision_enabled?: boolean;
       stt_enabled?: boolean;
       tts_enabled?: boolean;
+      stt_base_url?: string;
+      tts_base_url?: string;
+      tts_provider?: "speaches" | "edge-tts";
+      tts_voice?: string;
     } | null;
   } | null;
 }
@@ -74,6 +80,12 @@ export interface AIConfigFormData {
   visionEnabled?: boolean;
   sttEnabled?: boolean;
   ttsEnabled?: boolean;
+  // Dedykowane URL dla STT i TTS
+  sttBaseUrl?: string;
+  ttsBaseUrl?: string;
+  // TTS provider (speaches lub edge-tts)
+  ttsProvider?: "speaches" | "edge-tts";
+  ttsVoice?: string;
 }
 
 const AI_FUNCTIONS: {
@@ -193,7 +205,12 @@ const DEFAULT_MODELS: Record<string, Record<AIFunctionType, string[]>> = {
       "Systran/faster-whisper-small",
       "deepdml/faster-whisper-large-v3-turbo-ct2",
     ],
-    tts: ["piper"],
+    tts: [
+      "speaches-ai/Kokoro-82M-v1.0-ONNX",
+      // Edge TTS - polskie głosy
+      "edge-tts:pl-PL-ZofiaNeural",
+      "edge-tts:pl-PL-MarekNeural",
+    ],
   },
   custom: {
     llm: [],
@@ -265,13 +282,18 @@ export function AIConfigurationModal({
     {}
   );
 
-  // Faster-Whisper dedykowane ustawienia
-  const [sttBaseUrl, setSttBaseUrl] = useState("http://localhost:8000/v1");
+  // STT/TTS dedykowane ustawienia
+  const [sttBaseUrl, setSttBaseUrl] = useState("http://localhost:8001/v1");
   const [sttServerStatus, setSttServerStatus] = useState<
     "unknown" | "online" | "offline" | "checking"
   >("unknown");
 
-  // Test mikrofonu
+  const [ttsBaseUrl, setTtsBaseUrl] = useState("http://localhost:8001/v1");
+  const [ttsServerStatus, setTtsServerStatus] = useState<
+    "unknown" | "online" | "offline" | "checking"
+  >("unknown");
+
+  // Test mikrofonu (STT)
   const [micTestState, setMicTestState] = useState<
     "idle" | "recording" | "transcribing" | "done" | "error"
   >("idle");
@@ -279,6 +301,34 @@ export function AIConfigurationModal({
   const [micTestError, setMicTestError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+
+  // Pobieranie modelu STT
+  const [downloadingSttModel, setDownloadingSttModel] = useState(false);
+  const [sttDownloadSuccess, setSttDownloadSuccess] = useState<string | null>(
+    null
+  );
+
+  // Test TTS
+  const [ttsTestState, setTtsTestState] = useState<
+    "idle" | "generating" | "playing" | "done" | "error"
+  >("idle");
+  const [ttsTestText, setTtsTestText] = useState(
+    "Witaj, to jest test syntezy mowy."
+  );
+  const [ttsTestError, setTtsTestError] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Pobieranie modelu TTS
+  const [downloadingTtsModel, setDownloadingTtsModel] = useState(false);
+  const [ttsDownloadSuccess, setTtsDownloadSuccess] = useState<string | null>(
+    null
+  );
+
+  // TTS Provider (speaches lub edge-tts)
+  const [ttsProvider, setTtsProvider] = useState<"speaches" | "edge-tts">(
+    "edge-tts"
+  );
+  const [ttsVoice, setTtsVoice] = useState("pl-PL-ZofiaNeural");
 
   // Inicjalizacja z editingConfig
   useEffect(() => {
@@ -296,20 +346,28 @@ export function AIConfigurationModal({
       const defaultModels =
         DEFAULT_MODELS[providerType] || DEFAULT_MODELS.openai;
 
-      const meta = editingConfig.provider_meta || {};
+      const providerMeta = editingConfig.provider_meta || {};
+
+      // Wczytaj dedykowane URL dla STT i TTS
+      if (providerMeta.stt_base_url) {
+        setSttBaseUrl(providerMeta.stt_base_url);
+      }
+      if (providerMeta.tts_base_url) {
+        setTtsBaseUrl(providerMeta.tts_base_url);
+      }
 
       setFunctionConfigs((prev) => ({
         ...prev,
         llm: {
           ...prev.llm,
-          enabled: meta.llm_enabled !== false, // domyślnie włączone
+          enabled: providerMeta.llm_enabled !== false, // domyślnie włączone
           provider: providerType,
           modelName:
             editingConfig.model_name || defaultModels?.llm?.[0] || "gpt-4o",
         },
         embeddings: {
           ...prev.embeddings,
-          enabled: meta.embeddings_enabled !== false, // domyślnie włączone
+          enabled: providerMeta.embeddings_enabled !== false, // domyślnie włączone
           provider: providerType,
           modelName:
             editingConfig.embedding_model ||
@@ -318,14 +376,14 @@ export function AIConfigurationModal({
         },
         vision: {
           ...prev.vision,
-          enabled: meta.vision_enabled === true, // domyślnie wyłączone
+          enabled: providerMeta.vision_enabled === true, // domyślnie wyłączone
           provider: providerType,
           modelName:
             editingConfig.vision_model || defaultModels?.vision?.[0] || "",
         },
         stt: {
           ...prev.stt,
-          enabled: meta.stt_enabled === true, // domyślnie wyłączone
+          enabled: providerMeta.stt_enabled === true, // domyślnie wyłączone
           provider: providerType,
           modelName:
             editingConfig.transcription_model ||
@@ -334,11 +392,19 @@ export function AIConfigurationModal({
         },
         tts: {
           ...prev.tts,
-          enabled: meta.tts_enabled === true, // domyślnie wyłączone
+          enabled: providerMeta.tts_enabled === true, // domyślnie wyłączone
           provider: providerType,
           modelName: editingConfig.tts_model || defaultModels?.tts?.[0] || "",
         },
       }));
+
+      // Wczytaj TTS provider i voice
+      if (providerMeta.tts_provider) {
+        setTtsProvider(providerMeta.tts_provider);
+      }
+      if (providerMeta.tts_voice) {
+        setTtsVoice(providerMeta.tts_voice);
+      }
     } else {
       // Reset do domyślnych wartości
       setConfigName("");
@@ -458,6 +524,12 @@ export function AIConfigurationModal({
         visionEnabled: functionConfigs.vision.enabled,
         sttEnabled: functionConfigs.stt.enabled,
         ttsEnabled: functionConfigs.tts.enabled,
+        // Dedykowane URL dla STT i TTS
+        sttBaseUrl: sttBaseUrl,
+        ttsBaseUrl: ttsBaseUrl,
+        // TTS provider i voice
+        ttsProvider: ttsProvider,
+        ttsVoice: ttsVoice,
       };
 
       await onSave(formData);
@@ -486,7 +558,14 @@ export function AIConfigurationModal({
     if (dynamicModels[func]?.length > 0) {
       models = [...dynamicModels[func]];
     } else {
-      models = [...(DEFAULT_MODELS[globalProvider]?.[func] || [])];
+      // Dla STT/TTS: użyj zawsze local models gdy są dedykowane URL
+      if (func === "stt" && sttBaseUrl.includes("localhost")) {
+        models = [...(DEFAULT_MODELS.local.stt || [])];
+      } else if (func === "tts" && ttsBaseUrl.includes("localhost")) {
+        models = [...(DEFAULT_MODELS.local.tts || [])];
+      } else {
+        models = [...(DEFAULT_MODELS[globalProvider]?.[func] || [])];
+      }
     }
 
     // Dodaj aktualnie wybraną wartość jeśli nie jest na liście
@@ -517,6 +596,12 @@ export function AIConfigurationModal({
           // Zaktualizuj listę modeli STT
           if (data.models?.length > 0) {
             setDynamicModels((prev) => ({ ...prev, stt: data.models }));
+          } else {
+            // Brak modeli - użyj domyślnych
+            setDynamicModels((prev) => ({
+              ...prev,
+              stt: DEFAULT_MODELS.local.stt,
+            }));
           }
         } else {
           setSttServerStatus("offline");
@@ -528,6 +613,225 @@ export function AIConfigurationModal({
       setSttServerStatus("offline");
     }
   }, [sttBaseUrl, API_URL]);
+
+  // Pobieranie modelu STT (przez proxy API - omija CORS)
+  const downloadSttModel = async (modelId: string) => {
+    setDownloadingSttModel(true);
+    setSttDownloadSuccess(null);
+    setMicTestError(null);
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/stt/download-model?baseUrl=${encodeURIComponent(
+          sttBaseUrl
+        )}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ modelId }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        setSttDownloadSuccess(`Model '${modelId}' został pomyślnie pobrany!`);
+        // Odśwież listę modeli
+        setTimeout(() => {
+          checkSttServer();
+        }, 1000);
+      } else {
+        let errorMsg = result.error || "Błąd pobierania modelu";
+        try {
+          const parsed = JSON.parse(result.error);
+          errorMsg = parsed.detail || parsed.message || result.error;
+        } catch {
+          // Użyj oryginalnego błędu
+        }
+        setMicTestError(`Błąd pobierania modelu: ${errorMsg}`);
+      }
+    } catch (err) {
+      setMicTestError(
+        err instanceof Error ? err.message : "Błąd pobierania modelu"
+      );
+    } finally {
+      setDownloadingSttModel(false);
+    }
+  };
+
+  // Test serwera TTS
+  const checkTtsServer = useCallback(async () => {
+    setTtsServerStatus("checking");
+    try {
+      const response = await fetch(
+        `${API_URL}/api/tts/status?baseUrl=${encodeURIComponent(ttsBaseUrl)}`,
+        {
+          method: "GET",
+        }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        if (data.status === "online") {
+          setTtsServerStatus("online");
+          // Zaktualizuj listę modeli TTS
+          if (data.models?.length > 0) {
+            setDynamicModels((prev) => ({ ...prev, tts: data.models }));
+          } else {
+            // Brak modeli - użyj domyślnych
+            setDynamicModels((prev) => ({
+              ...prev,
+              tts: DEFAULT_MODELS.local.tts,
+            }));
+          }
+        } else {
+          setTtsServerStatus("offline");
+        }
+      } else {
+        setTtsServerStatus("offline");
+      }
+    } catch {
+      setTtsServerStatus("offline");
+    }
+  }, [ttsBaseUrl, API_URL]);
+
+  // Test syntezy mowy
+  const startTtsTest = async () => {
+    if (!ttsTestText.trim()) {
+      setTtsTestError("Wprowadź tekst do syntezy");
+      return;
+    }
+
+    setTtsTestState("generating");
+    setTtsTestError(null);
+
+    try {
+      let response: Response;
+
+      if (ttsProvider === "edge-tts") {
+        // Użyj Edge TTS (polski)
+        response = await fetch(`${API_URL}/api/edge-tts/synthesize`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: ttsTestText,
+            voice: ttsVoice || "pl-PL-ZofiaNeural",
+          }),
+        });
+      } else {
+        // Użyj Speaches TTS
+        const model =
+          functionConfigs.tts.modelName || "speaches-ai/Kokoro-82M-v1.0-ONNX";
+        response = await fetch(
+          `${API_URL}/api/tts/test?baseUrl=${encodeURIComponent(
+            ttsBaseUrl
+          )}&model=${encodeURIComponent(model)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: ttsTestText }),
+          }
+        );
+      }
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success && result.audio) {
+          // Utwórz audio element i odtwórz
+          const audio = new Audio(result.audio);
+          audioRef.current = audio;
+          setTtsTestState("playing");
+
+          audio.onended = () => {
+            setTtsTestState("done");
+          };
+
+          audio.onerror = () => {
+            setTtsTestError("Błąd odtwarzania audio");
+            setTtsTestState("error");
+          };
+
+          await audio.play();
+        } else {
+          setTtsTestError(result.error || "Błąd syntezy mowy");
+          setTtsTestState("error");
+        }
+      } else {
+        const errorText = await response.text();
+        let errorMsg = "Błąd syntezy mowy";
+        try {
+          const errorData = JSON.parse(errorText);
+          if (errorData.error) {
+            try {
+              const nested = JSON.parse(errorData.error);
+              errorMsg = nested.detail || nested.message || errorData.error;
+            } catch {
+              errorMsg = errorData.error;
+            }
+          }
+        } catch {
+          errorMsg = errorText;
+        }
+        setTtsTestError(errorMsg);
+        setTtsTestState("error");
+      }
+    } catch (err) {
+      setTtsTestError(err instanceof Error ? err.message : "Błąd syntezy mowy");
+      setTtsTestState("error");
+    }
+  };
+
+  const stopTtsTest = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+      setTtsTestState("idle");
+    }
+  };
+
+  // Pobieranie modelu TTS (przez proxy API - omija CORS)
+  const downloadTtsModel = async (modelId: string) => {
+    setDownloadingTtsModel(true);
+    setTtsDownloadSuccess(null);
+    setTtsTestError(null);
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/tts/download-model?baseUrl=${encodeURIComponent(
+          ttsBaseUrl
+        )}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ modelId }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        setTtsDownloadSuccess(`Model '${modelId}' został pomyślnie pobrany!`);
+        // Odśwież listę modeli
+        setTimeout(() => {
+          checkTtsServer();
+        }, 1000);
+      } else {
+        let errorMsg = result.error || "Błąd pobierania modelu";
+        try {
+          const parsed = JSON.parse(result.error);
+          errorMsg = parsed.detail || parsed.message || result.error;
+        } catch {
+          // Użyj oryginalnego błędu
+        }
+        setTtsTestError(`Błąd pobierania modelu: ${errorMsg}`);
+      }
+    } catch (err) {
+      setTtsTestError(
+        err instanceof Error ? err.message : "Błąd pobierania modelu"
+      );
+    } finally {
+      setDownloadingTtsModel(false);
+    }
+  };
 
   // Test mikrofonu z transkrypcją (przez proxy API)
   const startMicTest = async () => {
@@ -589,8 +893,23 @@ export function AIConfigurationModal({
               setMicTestState("error");
             }
           } else {
-            const error = await response.text();
-            setMicTestError(`Błąd serwera: ${error}`);
+            const errorText = await response.text();
+            let errorMsg = "Błąd transkrypcji";
+            try {
+              const errorData = JSON.parse(errorText);
+              if (errorData.error) {
+                // Parse nested JSON if present
+                try {
+                  const nested = JSON.parse(errorData.error);
+                  errorMsg = nested.detail || nested.message || errorData.error;
+                } catch {
+                  errorMsg = errorData.error;
+                }
+              }
+            } catch {
+              errorMsg = errorText;
+            }
+            setMicTestError(errorMsg);
             setMicTestState("error");
           }
         } catch (err) {
@@ -633,6 +952,17 @@ export function AIConfigurationModal({
       checkSttServer();
     }
   }, [activeTab, functionConfigs.stt.enabled, sttServerStatus, checkSttServer]);
+
+  // Sprawdź serwer TTS przy włączeniu zakładki
+  useEffect(() => {
+    if (
+      activeTab === "tts" &&
+      functionConfigs.tts.enabled &&
+      ttsServerStatus === "unknown"
+    ) {
+      checkTtsServer();
+    }
+  }, [activeTab, functionConfigs.tts.enabled, ttsServerStatus, checkTtsServer]);
 
   if (!isOpen) return null;
 
@@ -1056,9 +1386,310 @@ export function AIConfigurationModal({
 
                         {micTestError && (
                           <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-                            <div className="flex items-center gap-2 text-red-700">
+                            <div className="flex items-center gap-2 text-red-700 mb-2">
                               <MicOff className="h-4 w-4" />
                               <span>{micTestError}</span>
+                            </div>
+                            {/* Przycisk pobierania modelu jeśli nie zainstalowany */}
+                            {micTestError.includes("not installed locally") &&
+                              functionConfigs.stt.modelName && (
+                                <button
+                                  onClick={() =>
+                                    downloadSttModel(
+                                      functionConfigs.stt.modelName
+                                    )
+                                  }
+                                  disabled={downloadingSttModel}
+                                  className="mt-2 px-3 py-1.5 bg-orange-600 text-white text-sm rounded-lg hover:bg-orange-700 disabled:opacity-50 transition-colors flex items-center gap-2"
+                                >
+                                  {downloadingSttModel ? (
+                                    <>
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                      Pobieranie modelu...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Download className="h-4 w-4" />
+                                      Pobierz model{" "}
+                                      {functionConfigs.stt.modelName}
+                                    </>
+                                  )}
+                                </button>
+                              )}
+                          </div>
+                        )}
+
+                        {/* Success message po pobraniu */}
+                        {sttDownloadSuccess && (
+                          <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                            <div className="flex items-center gap-2 text-green-700">
+                              <Check className="h-4 w-4" />
+                              <span>{sttDownloadSuccess}</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Sekcja TTS Testing - tylko dla TTS */}
+                  {activeTab === "tts" && (
+                    <div className="mt-6 pt-6 border-t border-slate-200">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Volume2 className="h-5 w-5 text-pink-600" />
+                        <h4 className="font-semibold text-slate-900">
+                          Serwer Text-to-Speech
+                        </h4>
+                      </div>
+
+                      {/* Base URL dla TTS */}
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                          URL serwera syntezy mowy
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={ttsBaseUrl}
+                            onChange={(e) => setTtsBaseUrl(e.target.value)}
+                            placeholder="http://localhost:8001/v1"
+                            className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-all"
+                            disabled={saving}
+                          />
+                          <button
+                            onClick={checkTtsServer}
+                            disabled={ttsServerStatus === "checking"}
+                            className="px-3 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+                            title="Sprawdź połączenie"
+                          >
+                            {ttsServerStatus === "checking" ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <TestTube className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
+
+                        {/* Status serwera */}
+                        <div className="mt-2 flex items-center gap-2">
+                          {ttsServerStatus === "online" && (
+                            <span className="flex items-center gap-1.5 text-sm text-green-600">
+                              <Check className="h-4 w-4" />
+                              Serwer online
+                            </span>
+                          )}
+                          {ttsServerStatus === "offline" && (
+                            <span className="flex items-center gap-1.5 text-sm text-red-600">
+                              <AlertCircle className="h-4 w-4" />
+                              Serwer niedostępny - uruchom Docker
+                            </span>
+                          )}
+                          {ttsServerStatus === "checking" && (
+                            <span className="flex items-center gap-1.5 text-sm text-slate-500">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Sprawdzanie...
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Wybór providera TTS */}
+                      <div className="bg-gradient-to-br from-violet-50 to-pink-50 rounded-xl p-4 border border-violet-200">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Radio className="h-5 w-5 text-violet-600" />
+                          <h5 className="font-medium text-slate-900">
+                            Provider TTS
+                          </h5>
+                        </div>
+
+                        <div className="space-y-3">
+                          {/* Provider select */}
+                          <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                              Wybierz provider
+                            </label>
+                            <select
+                              value={ttsProvider}
+                              onChange={(e) =>
+                                setTtsProvider(
+                                  e.target.value as "speaches" | "edge-tts"
+                                )
+                              }
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all"
+                              disabled={saving}
+                            >
+                              <option value="edge-tts">
+                                🇵🇱 Edge TTS (Polski, darmowy)
+                              </option>
+                              <option value="speaches">
+                                🌐 Speaches/Kokoro (Angielski)
+                              </option>
+                            </select>
+                          </div>
+
+                          {/* Voice select dla Edge TTS */}
+                          {ttsProvider === "edge-tts" && (
+                            <div>
+                              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                                Głos polski
+                              </label>
+                              <select
+                                value={ttsVoice}
+                                onChange={(e) => setTtsVoice(e.target.value)}
+                                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all"
+                                disabled={saving}
+                              >
+                                <option value="pl-PL-ZofiaNeural">
+                                  👩 Zofia (Kobieta) ⭐
+                                </option>
+                                <option value="pl-PL-MarekNeural">
+                                  👨 Marek (Mężczyzna)
+                                </option>
+                              </select>
+                              <p className="text-xs text-slate-500 mt-1">
+                                Edge TTS - darmowy, wymaga internetu, doskonała
+                                jakość polskiego
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Info dla Speaches */}
+                          {ttsProvider === "speaches" && (
+                            <p className="text-xs text-amber-600 bg-amber-50 p-2 rounded">
+                              ⚠️ Kokoro TTS nie obsługuje polskiego. Użyj Edge
+                              TTS dla polskiego.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Test syntezy mowy */}
+                      <div className="bg-gradient-to-br from-pink-50 to-purple-50 rounded-xl p-4 border border-pink-200">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Volume2 className="h-5 w-5 text-pink-600" />
+                          <h5 className="font-medium text-slate-900">
+                            Test syntezy mowy{" "}
+                            {ttsProvider === "edge-tts"
+                              ? "(Edge TTS)"
+                              : "(Speaches)"}
+                          </h5>
+                        </div>
+
+                        <p className="text-sm text-slate-600 mb-3">
+                          {ttsProvider === "edge-tts"
+                            ? `Głos: ${
+                                ttsVoice === "pl-PL-ZofiaNeural"
+                                  ? "Zofia"
+                                  : "Marek"
+                              } (polski)`
+                            : "Wprowadź tekst, aby przetestować syntezę mowy."}
+                        </p>
+
+                        {/* Text input */}
+                        <div className="mb-3">
+                          <textarea
+                            value={ttsTestText}
+                            onChange={(e) => setTtsTestText(e.target.value)}
+                            placeholder="Wpisz tekst do syntezy..."
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-all resize-none"
+                            rows={3}
+                            disabled={
+                              ttsTestState === "generating" ||
+                              ttsTestState === "playing"
+                            }
+                          />
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          {(ttsTestState === "idle" ||
+                            ttsTestState === "done" ||
+                            ttsTestState === "error") && (
+                            <button
+                              onClick={startTtsTest}
+                              disabled={
+                                ttsServerStatus !== "online" ||
+                                !ttsTestText.trim()
+                              }
+                              className="px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 disabled:opacity-50 transition-colors flex items-center gap-2"
+                            >
+                              <Volume2 className="h-4 w-4" />
+                              Generuj i odtwórz
+                            </button>
+                          )}
+
+                          {ttsTestState === "playing" && (
+                            <button
+                              onClick={stopTtsTest}
+                              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
+                            >
+                              <Square className="h-4 w-4" />
+                              Zatrzymaj
+                            </button>
+                          )}
+
+                          {ttsTestState === "generating" && (
+                            <div className="flex items-center gap-2 text-pink-600">
+                              <Loader2 className="h-5 w-5 animate-spin" />
+                              <span>Generuję audio...</span>
+                            </div>
+                          )}
+
+                          {ttsTestState === "playing" && (
+                            <div className="flex items-center gap-2 text-green-600">
+                              <Volume2 className="h-5 w-5 animate-pulse" />
+                              <span>Odtwarzanie...</span>
+                            </div>
+                          )}
+
+                          {ttsTestState === "done" && (
+                            <span className="flex items-center gap-2 text-green-600">
+                              <Check className="h-5 w-5" />
+                              Gotowe
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Error */}
+                        {ttsTestError && (
+                          <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                            <div className="text-sm text-red-700 mb-2">
+                              {ttsTestError}
+                            </div>
+                            {/* Przycisk pobierania modelu jeśli nie zainstalowany */}
+                            {ttsTestError.includes("not installed") &&
+                              functionConfigs.tts.modelName && (
+                                <button
+                                  onClick={() =>
+                                    downloadTtsModel(
+                                      functionConfigs.tts.modelName
+                                    )
+                                  }
+                                  disabled={downloadingTtsModel}
+                                  className="mt-2 px-3 py-1.5 bg-pink-600 text-white text-sm rounded-lg hover:bg-pink-700 disabled:opacity-50 transition-colors flex items-center gap-2"
+                                >
+                                  {downloadingTtsModel ? (
+                                    <>
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                      Pobieranie modelu (może trwać 2-5 min)...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Download className="h-4 w-4" />
+                                      Pobierz model{" "}
+                                      {functionConfigs.tts.modelName}
+                                    </>
+                                  )}
+                                </button>
+                              )}
+                          </div>
+                        )}
+
+                        {/* Success message po pobraniu */}
+                        {ttsDownloadSuccess && (
+                          <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                            <div className="flex items-center gap-2 text-green-700 text-sm">
+                              <Check className="h-4 w-4" />
+                              <span>{ttsDownloadSuccess}</span>
                             </div>
                           </div>
                         )}

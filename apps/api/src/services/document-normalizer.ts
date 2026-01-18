@@ -266,7 +266,13 @@ ODPOWIEDŹ (TYLKO JSON, bez dodatkowego tekstu):`;
         temperature: 0.1, // Niska temperatura dla deterministycznych wyników
       });
 
-      const result = JSON.parse(response.choices[0]?.message?.content || "{}");
+      // Usuń markdown code fence jeśli model zwrócił ```json ... ```
+      let jsonContent = response.choices[0]?.message?.content || "{}";
+      jsonContent = jsonContent
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```$/i, "")
+        .trim();
+      const result = JSON.parse(jsonContent);
 
       // Mapuj wynik LLM na nasz schemat
       return {

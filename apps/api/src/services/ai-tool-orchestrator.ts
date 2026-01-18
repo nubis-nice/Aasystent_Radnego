@@ -1,17 +1,5 @@
 /**
  * AI Tool Orchestrator - Inteligentna orchestracja narzędzi AI
- *
- * System rozpoznaje intencje użytkownika i automatycznie wybiera oraz
- * uruchamia odpowiednie narzędzia do realizacji zadania.
- *
- * Dostępne narzędzia:
- * 1. DeepResearchService - głębokie wyszukiwanie w internecie
- * 2. LegalSearchAPI - wyszukiwanie w dokumentach prawnych (RAG)
- * 3. LegalReasoningEngine - analiza prawna z wykrywaniem ryzyk
- * 4. DocumentQueryService - wykrywanie i wyszukiwanie dokumentów
- * 5. SessionDiscoveryService - wyszukiwanie materiałów z sesji rady
- * 6. DocumentProcessor - przetwarzanie dokumentów PDF/HTML
- * 7. IntelligentScraper - zaawansowany scraping stron
  */
 
 import OpenAI from "openai";
@@ -21,22 +9,48 @@ import { LegalReasoningEngine } from "./legal-reasoning-engine.js";
 import { DocumentQueryService } from "./document-query-service.js";
 import { SessionDiscoveryService } from "./session-discovery-service.js";
 import { YouTubeSessionService } from "./youtube-session-service.js";
+import { GUSApiService } from "./gus-api-service.js";
+import { ISAPApiService } from "./isap-api-service.js";
+import { EUFundsService } from "./eu-funds-service.js";
+import { GeoportalService } from "./geoportal-service.js";
+import { TerytService } from "./teryt-service.js";
+import { KrsService } from "./krs-service.js";
+import { CeidgService } from "./ceidg-service.js";
+import { GdosService } from "./gdos-service.js";
+import { VoiceActionService } from "./voice-action-service.js";
 import { getLLMClient, getAIConfig } from "../ai/index.js";
 
-// ============================================================================
-// TYPES
-// ============================================================================
-
 export type ToolType =
-  | "deep_research" // Głębokie wyszukiwanie w internecie
-  | "rag_search" // Wyszukiwanie w lokalnej bazie dokumentów
-  | "legal_analysis" // Analiza prawna
-  | "session_search" // Wyszukiwanie materiałów z sesji
-  | "person_search" // Wyszukiwanie informacji o osobach
-  | "document_fetch" // Pobranie konkretnego dokumentu
-  | "budget_analysis" // Analiza budżetowa
-  | "youtube_search" // Wyszukiwanie nagrań sesji na YouTube
-  | "simple_answer"; // Prosta odpowiedź bez narzędzi
+  | "deep_research"
+  | "rag_search"
+  | "legal_analysis"
+  | "session_search"
+  | "person_search"
+  | "document_fetch"
+  | "budget_analysis"
+  | "youtube_search"
+  | "gus_statistics"
+  | "isap_legal"
+  | "eu_funds"
+  | "geoportal_spatial"
+  | "teryt_registry"
+  | "krs_registry"
+  | "ceidg_registry"
+  | "gdos_environmental"
+  | "voice_control"
+  | "app_navigation"
+  | "calendar_add"
+  | "calendar_list"
+  | "calendar_edit"
+  | "calendar_delete"
+  | "task_add"
+  | "task_list"
+  | "task_complete"
+  | "task_delete"
+  | "alert_check"
+  | "quick_tool"
+  | "app_navigate"
+  | "simple_answer";
 
 export interface DetectedIntent {
   primaryIntent: ToolType;
@@ -71,84 +85,97 @@ export interface OrchestratorResult {
   warnings: string[];
 }
 
-// ============================================================================
-// INTENT DETECTION PROMPT
-// ============================================================================
+const INTENT_DETECTION_PROMPT = `Jesteś ekspertem od analizy intencji użytkownika. Wybierz JEDNO narzędzie jako primaryIntent.
 
-const INTENT_DETECTION_PROMPT = `Jesteś ekspertem od analizy intencji użytkownika w kontekście pracy radnego miejskiego/gminnego.
+# NARZĘDZIA I KIEDY ICH UŻYWAĆ:
 
-Twoje zadanie: Przeanalizuj pytanie użytkownika i określ jakie narzędzia są potrzebne do udzielenia pełnej odpowiedzi.
+## REJESTRY PUBLICZNE (priorytet gdy wymienione wprost):
+- **geoportal_spatial** → działka, parcela, MPZP, mapa, współrzędne, nieruchomość, plan zagospodarowania
+- **teryt_registry** → TERYT, kod terytorialny, jednostka administracyjna, lista gmin/powiatów
+- **krs_registry** → KRS, spółka, stowarzyszenie, fundacja, rejestr sądowy, podmiot prawny
+- **ceidg_registry** → CEIDG, NIP, REGON, działalność gospodarcza, firma jednoosobowa
+- **gdos_environmental** → GDOŚ, Natura 2000, obszar chroniony, rezerwat, park narodowy, ochrona środowiska
 
-DOSTĘPNE NARZĘDZIA (wybierz primaryIntent z tej listy):
+## DANE PUBLICZNE:
+- **gus_statistics** → GUS, statystyki, ludność, demografia, dane gminy, mieszkańcy
+- **isap_legal** → ustawa, rozporządzenie, akt prawny, dziennik ustaw, przepis prawa
+- **eu_funds** → dotacje UE, fundusze europejskie, nabory, konkursy, dofinansowanie
 
-1. **person_search** - Wyszukiwanie informacji o OSOBACH
-   → UŻYJ GDY: pytanie zawiera imię/nazwisko, dotyczy radnego, burmistrza, wójta, urzędnika
-   → Przykłady: "pobierz dane o radnym Nowak", "kto to jest Jan Kowalski", "informacje o przewodniczącym"
-   
-2. **deep_research** - Głębokie wyszukiwanie w internecie
-   → Użyj gdy: pytanie wymaga aktualnych informacji z internetu, danych zewnętrznych
-   
-3. **rag_search** - Wyszukiwanie w lokalnej bazie dokumentów
-   → Użyj gdy: pytanie dotyczy lokalnych uchwał, protokołów, dokumentów gminy (bez konkretnej osoby)
-   
-4. **legal_analysis** - Analiza prawna
-   → Użyj gdy: pytanie dotyczy zgodności z prawem, interpretacji przepisów
-   
-5. **session_search** - Wyszukiwanie materiałów z sesji rady
-   → Użyj gdy: pytanie WYRAŹNIE dotyczy konkretnej SESJI z NUMEREM (np. "sesja nr 14")
-   
-6. **document_fetch** - Pobranie konkretnego dokumentu
-   → Użyj gdy: użytkownik pyta o konkretny dokument PO NUMERZE (np. "uchwała nr 123")
-   
-7. **budget_analysis** - Analiza budżetowa
-   → Użyj gdy: pytanie dotyczy budżetu, wydatków, dochodów gminy
+## LOKALNE DOKUMENTY:
+- **session_search** → sesja rady + NUMER (np. "sesja 15", "sesja nr 8")
+- **rag_search** → uchwała, protokół, dokument lokalny (bez numeru sesji)
+- **document_fetch** → pobranie konkretnego dokumentu po numerze/referencji
+- **budget_analysis** → budżet gminy, wydatki, dochody, finanse
 
-8. **youtube_search** - Wyszukiwanie materiałów wideo na YouTube
-   → Użyj gdy: pytanie dotyczy nagrań wideo, transmisji, YouTube, materiałów audiowizualnych
-   → Przykłady: "znajdź nagranie sesji", "gdzie mogę obejrzeć obrady", "transmisja z sesji", 
-     "wideo o budżecie", "nagranie z konferencji", "film o inwestycji"
-   → Obsługuje: sesje rady, konferencje prasowe, prezentacje, materiały edukacyjne, wywiady
-   
-9. **simple_answer** - Prosta odpowiedź bez narzędzi
-   → Użyj TYLKO gdy pytanie jest bardzo proste i ogólne
+## INNE:
+- **person_search** → pytanie o KONKRETNĄ OSOBĘ z imienia/nazwiska
+- **youtube_search** → nagranie, wideo, transmisja, YouTube
+- **deep_research** → szerokie wyszukiwanie w internecie
+- **legal_analysis** → analiza prawna, interpretacja przepisów
+- **simple_answer** → proste pytanie, powitanie, bez potrzeby narzędzi
 
-WAŻNE ZASADY:
-- Jeśli pytanie zawiera IMIĘ lub NAZWISKO osoby → primaryIntent = "person_search"
-- Słowa "radny", "radnego", "radnej", "burmistrz" → person_search
-- "pobierz dane o..." + osoba → person_search + deep_research
-- Ustaw requiresDeepSearch=true dla pytań o pełne informacje o osobie
-- Wyodrębnij wszystkie encje: imiona i nazwiska do personNames
-- sessionNumbers MUSZĄ być liczbami całkowitymi (np. [14, 15]), NIE stringami!
-- Jeśli numer sesji jest w formacie rzymskim (XIV, XV) - przekonwertuj na arabski
-- Jeśli brak konkretnego numeru sesji, zostaw sessionNumbers jako pustą tablicę []
+## KALENDARZ I ZADANIA:
+- **calendar_add** → "dodaj do kalendarza", "zaplanuj spotkanie", "wpisz wydarzenie na [data]"
+- **calendar_list** → "pokaż kalendarz", "co mam zaplanowane", "jakie mam spotkania"
+- **calendar_edit** → "zmień termin", "przesuń spotkanie", "zaktualizuj wydarzenie"
+- **calendar_delete** → "usuń z kalendarza", "odwołaj spotkanie", "anuluj wydarzenie"
+- **task_add** → "dodaj zadanie", "zanotuj do zrobienia", "przypomnij mi o"
+- **task_list** → "pokaż zadania", "co mam do zrobienia", "lista zadań"
+- **task_complete** → "oznacz jako zrobione", "ukończ zadanie", "zrobione"
+- **task_delete** → "usuń zadanie", "wykreśl zadanie"
 
-PARSOWANIE NUMERÓW SESJI:
-- "sesja nr 14" → sessionNumbers: [14]
-- "sesja XIV" → sessionNumbers: [14]
-- "sesja nr XVII" → sessionNumbers: [17]
-- "ostatnia sesja" → sessionNumbers: [] (brak konkretnego numeru)
-- "sesje 10-15" → sessionNumbers: [10, 11, 12, 13, 14, 15]
+## ALERTY I NAWIGACJA:
+- **alert_check** → "sprawdź alerty", "czy są powiadomienia", "co nowego"
+- **quick_tool** → "utwórz interpelację", "napisz pismo", "generuj protokół", "analiza budżetu"
+- **app_navigate** → "przejdź do pulpitu", "otwórz dokumenty", "pokaż ustawienia", "idź do czatu"
 
-Odpowiedz TYLKO w formacie JSON (bez markdown):
+# PRZYKŁADY MAPOWANIA:
+
+Pytanie: "znajdź działkę 123/4 w Drawnie" → geoportal_spatial
+Pytanie: "sprawdź spółkę ABC sp. z o.o." → krs_registry
+Pytanie: "NIP 5261234567" → ceidg_registry
+Pytanie: "obszary Natura 2000 w gminie" → gdos_environmental
+Pytanie: "kod TERYT gminy Drawno" → teryt_registry
+Pytanie: "ile mieszkańców ma gmina" → gus_statistics
+Pytanie: "ustawa o samorządzie gminnym" → isap_legal
+Pytanie: "dotacje na OZE" → eu_funds
+Pytanie: "co było na sesji nr 15" → session_search (sessionNumbers: [15])
+Pytanie: "znajdź uchwałę o podatkach" → rag_search
+Pytanie: "kim jest Jan Kowalski" → person_search (personNames: ["Jan Kowalski"])
+Pytanie: "cześć, jak się masz" → simple_answer
+Pytanie: "dodaj spotkanie na jutro o 10" → calendar_add
+Pytanie: "co mam zaplanowane na ten tydzień" → calendar_list
+Pytanie: "dodaj zadanie przygotować raport" → task_add
+Pytanie: "pokaż moje zadania" → task_list
+
+# REGUŁY PRIORYTETÓW:
+1. Jeśli pytanie zawiera "TERYT" → teryt_registry
+2. Jeśli pytanie zawiera "KRS" lub "spółka/stowarzyszenie/fundacja" → krs_registry
+3. Jeśli pytanie zawiera "NIP"/"REGON"/"CEIDG" lub "działalność gospodarcza" → ceidg_registry
+4. Jeśli pytanie zawiera "działka"/"MPZP"/"Geoportal" → geoportal_spatial
+5. Jeśli pytanie zawiera "Natura 2000"/"GDOŚ"/"rezerwat"/"park narodowy" → gdos_environmental
+6. Jeśli pytanie zawiera "GUS"/"statystyki"/"ludność" → gus_statistics
+7. Jeśli pytanie zawiera "ustawa"/"rozporządzenie"/"ISAP" → isap_legal
+8. Jeśli pytanie zawiera "dotacje"/"fundusze europejskie"/"UE" → eu_funds
+9. Jeśli pytanie zawiera "sesja" + NUMER → session_search
+10. Jeśli pytanie zawiera imię i nazwisko osoby → person_search
+
+Odpowiedz TYLKO w formacie JSON:
 {
-  "primaryIntent": "person_search",
-  "secondaryIntents": ["deep_research", "rag_search"],
+  "primaryIntent": "tool_name",
+  "secondaryIntents": [],
   "confidence": 0.95,
   "entities": {
-    "personNames": ["Sławomir Nowak"],
+    "personNames": [],
     "documentRefs": [],
     "sessionNumbers": [],
     "dates": [],
-    "topics": ["radny", "aktywność"]
+    "topics": ["główny temat zapytania"]
   },
-  "requiresDeepSearch": true,
-  "estimatedTimeSeconds": 45,
-  "userFriendlyDescription": "Wyszukiwanie informacji o radnym Sławomirze Nowaku"
+  "requiresDeepSearch": false,
+  "estimatedTimeSeconds": 10,
+  "userFriendlyDescription": "Krótki opis co robię"
 }`;
-
-// ============================================================================
-// AI TOOL ORCHESTRATOR CLASS
-// ============================================================================
 
 export class AIToolOrchestrator {
   private userId: string;
@@ -161,17 +188,11 @@ export class AIToolOrchestrator {
 
   private async initialize(): Promise<void> {
     if (this.llmClient) return;
-
     this.llmClient = await getLLMClient(this.userId);
     const config = await getAIConfig(this.userId, "llm");
     this.model = config.modelName;
-
-    console.log(`[AIOrchestrator] Initialized: model=${this.model}`);
   }
 
-  /**
-   * Główna metoda - wykryj intencję i wykonaj odpowiednie narzędzia
-   */
   async process(
     userMessage: string,
     conversationContext?: string
@@ -179,30 +200,8 @@ export class AIToolOrchestrator {
     const startTime = Date.now();
     await this.initialize();
 
-    console.log(
-      `[AIOrchestrator] Processing: "${userMessage.substring(0, 100)}..."`
-    );
-
-    // 1. Wykryj intencję
     const intent = await this.detectIntent(userMessage, conversationContext);
-    console.log(
-      `[AIOrchestrator] Detected intent: ${intent.primaryIntent} (confidence: ${intent.confidence})`
-    );
-    console.log(
-      `[AIOrchestrator] Secondary intents: ${intent.secondaryIntents.join(
-        ", "
-      )}`
-    );
-    console.log(
-      `[AIOrchestrator] Entities: persons=${intent.entities.personNames.join(
-        ","
-      )}, topics=${intent.entities.topics.join(",")}`
-    );
-    console.log(
-      `[AIOrchestrator] RequiresDeepSearch: ${intent.requiresDeepSearch}`
-    );
 
-    // 2. Jeśli prosta odpowiedź - zwróć bez narzędzi
     if (intent.primaryIntent === "simple_answer" && intent.confidence > 0.8) {
       return {
         intent,
@@ -214,10 +213,7 @@ export class AIToolOrchestrator {
       };
     }
 
-    // 3. Wykonaj narzędzia
     const toolResults = await this.executeTools(intent, userMessage);
-
-    // 4. Syntezuj odpowiedź
     const { response, sources } = await this.synthesizeResponse(
       userMessage,
       intent,
@@ -236,9 +232,6 @@ export class AIToolOrchestrator {
     };
   }
 
-  /**
-   * Wykryj intencję użytkownika za pomocą LLM
-   */
   private async detectIntent(
     userMessage: string,
     context?: string
@@ -253,7 +246,7 @@ export class AIToolOrchestrator {
           {
             role: "user",
             content: context
-              ? `Kontekst rozmowy:\n${context}\n\nPytanie użytkownika:\n${userMessage}`
+              ? `Kontekst:\n${context}\n\nPytanie:\n${userMessage}`
               : userMessage,
           },
         ],
@@ -261,11 +254,15 @@ export class AIToolOrchestrator {
         response_format: { type: "json_object" },
       });
 
-      const result = JSON.parse(
-        completion.choices[0]?.message?.content || "{}"
-      );
+      // Usuń markdown code fence jeśli model zwrócił ```json ... ```
+      let jsonContent = completion.choices[0]?.message?.content || "{}";
+      jsonContent = jsonContent
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```$/i, "")
+        .trim();
 
-      // Walidacja i normalizacja sessionNumbers - muszą być liczbami całkowitymi
+      const result = JSON.parse(jsonContent);
+
       const rawSessionNumbers = result.entities?.sessionNumbers || [];
       const validSessionNumbers = rawSessionNumbers
         .map((n: unknown) => {
@@ -314,9 +311,6 @@ export class AIToolOrchestrator {
     }
   }
 
-  /**
-   * Wykonaj wybrane narzędzia
-   */
   private async executeTools(
     intent: DetectedIntent,
     userMessage: string
@@ -344,20 +338,14 @@ export class AIToolOrchestrator {
         });
       }
     }
-
     return results;
   }
 
-  /**
-   * Wykonaj pojedyncze narzędzie
-   */
   private async executeSingleTool(
     tool: ToolType,
     userMessage: string,
     intent: DetectedIntent
   ): Promise<unknown> {
-    console.log(`[AIOrchestrator] Executing tool: ${tool}`);
-
     switch (tool) {
       case "deep_research": {
         const service = new DeepResearchService(this.userId);
@@ -381,9 +369,8 @@ export class AIToolOrchestrator {
       case "legal_analysis": {
         const engine = new LegalReasoningEngine(this.userId);
         return await engine.analyze({
-          analysisType: "compliance",
-          context: userMessage,
-          documents: [],
+          question: userMessage,
+          analysisType: "general",
         });
       }
 
@@ -391,53 +378,30 @@ export class AIToolOrchestrator {
         const service = new SessionDiscoveryService(this.userId);
         await service.initialize();
         const sessionNumber = intent.entities.sessionNumbers[0];
-
-        // Jeśli brak konkretnego numeru sesji, fallback do RAG search
         if (!sessionNumber || sessionNumber <= 0) {
-          console.log(
-            "[AIOrchestrator] No valid session number, falling back to RAG search"
-          );
           const ragService = new LegalSearchAPI(this.userId);
           return await ragService.search({
             query: `sesja rady ${userMessage}`,
             searchMode: "hybrid",
             maxResults: 10,
-            filters: {
-              documentTypes: ["session", "protocol", "transcript"],
-            },
+            filters: { documentTypes: ["session", "protocol", "transcript"] },
           });
         }
-
-        // Sprawdź dostępność transkrypcji YouTube dla tej sesji
-        const transcriptionCheck =
-          await this.checkYouTubeTranscriptionAvailability(sessionNumber);
-
-        // Wykonaj standardowe wyszukiwanie sesji
-        const sessionResult = await service.discoverSession({
+        return await service.discoverSession({
           sessionNumber,
           requestType: "ogolne",
           originalQuery: userMessage,
         });
-
-        // Dodaj informacje o transkrypcji do wyniku
-        return {
-          ...sessionResult,
-          youtubeTranscription: transcriptionCheck,
-        };
       }
 
       case "person_search": {
-        // Kombinacja RAG + DeepResearch dla osób
         const ragService = new LegalSearchAPI(this.userId);
         const personName = intent.entities.personNames[0] || "";
-
         const ragResults = await ragService.search({
           query: `${personName} radny głosowanie aktywność`,
           searchMode: "hybrid",
           maxResults: 10,
         });
-
-        // Opcjonalnie DeepResearch
         if (intent.requiresDeepSearch) {
           const deepService = new DeepResearchService(this.userId);
           const deepResults = await deepService.research({
@@ -448,7 +412,6 @@ export class AIToolOrchestrator {
           });
           return { ragResults, deepResults };
         }
-
         return { ragResults };
       }
 
@@ -460,7 +423,6 @@ export class AIToolOrchestrator {
       }
 
       case "budget_analysis": {
-        // RAG search z fokusem na budżet
         const service = new LegalSearchAPI(this.userId);
         return await service.search({
           query: `budżet ${intent.entities.topics.join(
@@ -468,29 +430,286 @@ export class AIToolOrchestrator {
           )} ${intent.entities.dates.join(" ")}`,
           searchMode: "hybrid",
           maxResults: 15,
-          filters: {
-            documentTypes: ["budget", "resolution", "report"],
-          },
+          filters: { documentTypes: ["budget", "resolution", "report"] },
         });
       }
 
       case "youtube_search": {
-        // Wyszukiwanie nagrań sesji na YouTube z dynamicznym zapytaniem
         const youtubeService = new YouTubeSessionService();
         await youtubeService.initializeWithUserConfig(this.userId);
-
-        // Generuj dynamiczne zapytanie na podstawie kontekstu
         const searchResult = await youtubeService.searchWithContext(
           userMessage,
-          {
-            topics: intent.entities.topics,
-          }
+          { topics: intent.entities.topics }
         );
-
         return {
           videos: searchResult.sessions,
           channelName: searchResult.channelName,
           success: searchResult.success,
+        };
+      }
+
+      case "gus_statistics": {
+        const gusService = new GUSApiService();
+        const gminaName = intent.entities.topics[0] || "";
+        if (!gminaName) {
+          const subjects = await gusService.getSubjects();
+          return {
+            type: "subjects_list",
+            message: "Dostępne kategorie danych w GUS BDL:",
+            subjects: subjects.slice(0, 20),
+          };
+        }
+        const unit = await gusService.findGmina(gminaName);
+        if (!unit) {
+          return {
+            type: "not_found",
+            message: `Nie znaleziono jednostki terytorialnej: ${gminaName}`,
+            suggestion: "Spróbuj podać pełną nazwę gminy",
+          };
+        }
+        const stats = await gusService.getGminaStats(unit.id);
+        return {
+          type: "gmina_stats",
+          unit: { id: unit.id, name: unit.name, level: unit.level },
+          stats,
+          source: "GUS Bank Danych Lokalnych",
+        };
+      }
+
+      case "isap_legal": {
+        const isapService = new ISAPApiService();
+        const topic = intent.entities.topics[0] || userMessage;
+        const acts = await isapService.searchByTitle(topic, undefined, 15);
+        if (acts.length === 0) {
+          const localGovActs = await isapService.searchLocalGovernmentActs(
+            topic,
+            15
+          );
+          return {
+            type: "local_government_acts",
+            query: topic,
+            count: localGovActs.length,
+            acts: localGovActs,
+            source: "ISAP",
+          };
+        }
+        return {
+          type: "search_results",
+          query: topic,
+          count: acts.length,
+          acts,
+          source: "ISAP",
+        };
+      }
+
+      case "eu_funds": {
+        const euService = new EUFundsService();
+        const projectType = intent.entities.topics[0] || "";
+        const municipality = intent.entities.topics[1] || "";
+        const competitions = await euService.getActiveCompetitions();
+        if (projectType) {
+          const opportunities = await euService.findFundingOpportunities(
+            projectType
+          );
+          return {
+            type: "funding_opportunities",
+            projectType,
+            ...opportunities,
+            source: "Portal Funduszy Europejskich",
+          };
+        }
+        if (municipality) {
+          const projects = await euService.searchProjects({
+            municipality,
+            limit: 20,
+          });
+          const summary = await euService.getProjectsSummary(municipality);
+          return {
+            type: "municipality_projects",
+            municipality,
+            projects,
+            summary,
+            source: "Mapa Dotacji UE",
+          };
+        }
+        return {
+          type: "active_competitions",
+          count: competitions.length,
+          competitions,
+          source: "Portal Funduszy Europejskich",
+        };
+      }
+
+      case "geoportal_spatial": {
+        const geoportalService = new GeoportalService();
+        const query = intent.entities.topics[0] || userMessage;
+
+        // Sprawdź czy to współrzędne
+        const coordMatch = userMessage.match(
+          /(\d+[.,]\d+)\s*[,;\s]\s*(\d+[.,]\d+)/
+        );
+        if (coordMatch) {
+          const lat = parseFloat(coordMatch[1].replace(",", "."));
+          const lon = parseFloat(coordMatch[2].replace(",", "."));
+          const parcel = await geoportalService.getParcelByCoordinates(
+            lat,
+            lon
+          );
+          const plans = await geoportalService.getSpatialPlanInfo(lat, lon);
+          return {
+            type: "location_info",
+            coordinates: { lat, lon },
+            parcel,
+            spatialPlans: plans,
+            links: parcel
+              ? {
+                  geoportal: geoportalService.getGeoportalLink(parcel.id),
+                  orthophoto: geoportalService.getOrthophotoUrl(lat, lon),
+                }
+              : null,
+            source: "Geoportal.gov.pl",
+          };
+        }
+
+        // Wyszukaj po nazwie/adresie
+        const results = await geoportalService.search({
+          query,
+          address: query,
+          municipality: query,
+        });
+        return {
+          type: "search_results",
+          query,
+          parcels: results.parcels,
+          addresses: results.addresses,
+          municipalities: results.units,
+          source: "Geoportal.gov.pl",
+        };
+      }
+
+      case "teryt_registry": {
+        const terytService = new TerytService();
+        const query = intent.entities.topics[0] || userMessage;
+        const results = await terytService.search({ query });
+        return {
+          type: "teryt_search",
+          query,
+          units: results.units,
+          streets: results.streets,
+          source: "TERYT GUS",
+        };
+      }
+
+      case "krs_registry": {
+        const krsService = new KrsService();
+        const query = intent.entities.topics[0] || "";
+        const nipMatch = userMessage.match(/\b\d{10}\b/);
+        const krsMatch = userMessage.match(/\b\d{10}\b|KRS\s*(\d+)/i);
+
+        if (nipMatch) {
+          const entity = await krsService.getByNip(nipMatch[0]);
+          return {
+            type: "krs_entity",
+            entity,
+            searchType: "nip",
+            source: "KRS",
+          };
+        }
+        if (krsMatch) {
+          const entity = await krsService.getByKrs(krsMatch[1] || krsMatch[0]);
+          return {
+            type: "krs_entity",
+            entity,
+            searchType: "krs",
+            source: "KRS",
+          };
+        }
+        const results = await krsService.search({ name: query });
+        return {
+          type: "krs_search",
+          query,
+          entities: results.entities,
+          totalCount: results.totalCount,
+          source: "KRS",
+        };
+      }
+
+      case "ceidg_registry": {
+        const ceidgService = new CeidgService();
+        const query = intent.entities.topics[0] || "";
+        const nipMatch = userMessage.match(/\b\d{10}\b/);
+
+        if (nipMatch) {
+          const entry = await ceidgService.getByNip(nipMatch[0]);
+          return {
+            type: "ceidg_entry",
+            entry,
+            source: "CEIDG",
+          };
+        }
+        const results = await ceidgService.search({ name: query });
+        return {
+          type: "ceidg_search",
+          query,
+          entries: results.entries,
+          totalCount: results.totalCount,
+          source: "CEIDG",
+        };
+      }
+
+      case "gdos_environmental": {
+        const gdosService = new GdosService();
+        const coordMatch = userMessage.match(
+          /(\d+[.,]\d+)\s*[,;\s]\s*(\d+[.,]\d+)/
+        );
+
+        if (coordMatch) {
+          const lat = parseFloat(coordMatch[1].replace(",", "."));
+          const lon = parseFloat(coordMatch[2].replace(",", "."));
+          const data = await gdosService.getEnvironmentalDataAtLocation(
+            lat,
+            lon
+          );
+          return {
+            type: "environmental_data",
+            location: { lat, lon },
+            isInProtectedArea: data.isInProtectedArea,
+            protectedAreas: data.protectedAreas,
+            natura2000Sites: data.natura2000Sites,
+            restrictions: data.restrictions,
+            source: "GDOŚ",
+          };
+        }
+        const query = intent.entities.topics[0] || userMessage;
+        const areas = await gdosService.searchProtectedAreas({ name: query });
+        return {
+          type: "protected_areas_search",
+          query,
+          areas,
+          source: "GDOŚ",
+        };
+      }
+
+      case "calendar_add":
+      case "calendar_list":
+      case "calendar_edit":
+      case "calendar_delete":
+      case "task_add":
+      case "task_list":
+      case "task_complete":
+      case "task_delete":
+      case "alert_check":
+      case "quick_tool":
+      case "app_navigate": {
+        const voiceService = new VoiceActionService(this.userId);
+        const result = await voiceService.processVoiceCommand(userMessage);
+        return {
+          type: tool,
+          success: result.success,
+          message: result.message,
+          data: result.data,
+          uiAction: result.uiAction,
+          navigationTarget: result.navigationTarget,
         };
       }
 
@@ -500,9 +719,6 @@ export class AIToolOrchestrator {
     }
   }
 
-  /**
-   * Syntezuj odpowiedź na podstawie wyników narzędzi
-   */
   private async synthesizeResponse(
     userMessage: string,
     intent: DetectedIntent,
@@ -514,72 +730,18 @@ export class AIToolOrchestrator {
     if (!this.llmClient) throw new Error("LLM client not initialized");
 
     const successfulResults = toolResults.filter((r) => r.success && r.data);
-
     if (successfulResults.length === 0) {
       return {
-        response:
-          "Przepraszam, nie udało się znaleźć odpowiednich informacji. Spróbuj przeformułować pytanie.",
+        response: "Przepraszam, nie udało się znaleźć odpowiednich informacji.",
         sources: [],
       };
     }
 
-    // Zbierz źródła
     const sources: Array<{ title: string; url?: string; type: string }> = [];
     let contextForSynthesis = "";
 
     for (const result of successfulResults) {
       const data = result.data as Record<string, unknown>;
-
-      // Obsługa informacji o transkrypcji YouTube dla sesji
-      if (result.tool === "session_search" && data?.youtubeTranscription) {
-        const transcription = data.youtubeTranscription as {
-          available: boolean;
-          status: "pending" | "completed" | "not_found";
-          videoUrl?: string;
-          videoTitle?: string;
-          transcriptionDocumentId?: string;
-          message: string;
-        };
-
-        if (transcription.status === "pending" && transcription.videoUrl) {
-          // Dodaj interaktywną informację o dostępności transkrypcji
-          contextForSynthesis += `\n\n📹 INFORMACJA O NAGRANIU YOUTUBE:\n`;
-          contextForSynthesis += `${transcription.message}\n`;
-          contextForSynthesis += `Tytuł: ${transcription.videoTitle}\n`;
-          contextForSynthesis += `Link: ${transcription.videoUrl}\n\n`;
-          contextForSynthesis += `⚠️ WAŻNE: Transkrypcja tego nagrania nie została jeszcze wykonana.\n`;
-          contextForSynthesis += `Użytkownik może:\n`;
-          contextForSynthesis += `1. Zlecić automatyczną transkrypcję nagrania (zajmie kilka minut)\n`;
-          contextForSynthesis += `2. Obejrzeć nagranie bezpośrednio na YouTube\n`;
-          contextForSynthesis += `3. Kontynuować analizę bez transkrypcji\n\n`;
-        } else if (
-          transcription.status === "completed" &&
-          transcription.transcriptionDocumentId
-        ) {
-          // Transkrypcja jest dostępna - dołącz jej treść do kontekstu
-          contextForSynthesis += `\n\n✅ TRANSKRYPCJA SESJI Z YOUTUBE:\n`;
-          contextForSynthesis += `${transcription.message}\n`;
-          contextForSynthesis += `Tytuł: ${transcription.videoTitle}\n`;
-          contextForSynthesis += `Link: ${transcription.videoUrl}\n\n`;
-
-          if (transcription.transcriptionContent) {
-            // Dołącz pełną treść transkrypcji (z limitem 8000 znaków)
-            contextForSynthesis += `TREŚĆ TRANSKRYPCJI:\n`;
-            contextForSynthesis += transcription.transcriptionContent.substring(
-              0,
-              8000
-            );
-            contextForSynthesis += `\n\n`;
-
-            // Dodaj do źródeł
-            sources.push({
-              title: `Transkrypcja: ${transcription.videoTitle}`,
-              url: transcription.videoUrl,
-              type: "transkrypcja YouTube",
-            });
-          }
-        }
-      }
 
       if (result.tool === "deep_research" && data?.results) {
         const results = data.results as Array<{
@@ -610,98 +772,144 @@ export class AIToolOrchestrator {
         }
       }
 
-      if (result.tool === "person_search") {
-        const personData = data as {
-          ragResults?: unknown[];
-          deepResults?: { results?: unknown[] };
-        };
-        if (personData.ragResults) {
-          for (const doc of (
-            personData.ragResults as Array<{ title: string; content: string }>
-          ).slice(0, 3)) {
-            sources.push({ title: doc.title, type: "dokument lokalny" });
-            contextForSynthesis += `\n[Dokument: ${
-              doc.title
-            }]\n${doc.content?.substring(0, 800)}\n`;
-          }
-        }
-        if (personData.deepResults?.results) {
-          for (const r of (
-            personData.deepResults.results as Array<{
-              title: string;
-              url: string;
-              content: string;
-            }>
-          ).slice(0, 3)) {
-            sources.push({ title: r.title, url: r.url, type: "internet" });
-            contextForSynthesis += `\n[Źródło: ${
-              r.title
-            }]\n${r.content?.substring(0, 800)}\n`;
-          }
-        }
-      }
-
-      // Obsługa wyników YouTube
       if (result.tool === "youtube_search") {
         const youtubeData = data as {
-          videos?: Array<{
-            id: string;
-            title: string;
-            url: string;
-            publishedAt?: string;
-            duration?: string;
-            description?: string;
-          }>;
+          videos?: Array<{ title: string; url: string }>;
           channelName?: string;
-          success?: boolean;
         };
-
         if (youtubeData.videos && youtubeData.videos.length > 0) {
-          contextForSynthesis += `\n\n📺 WYNIKI WYSZUKIWANIA YOUTUBE (${
-            youtubeData.channelName || "YouTube"
-          }):\n`;
-          contextForSynthesis += `Znaleziono ${youtubeData.videos.length} nagrań wideo:\n\n`;
-
+          contextForSynthesis += `\n📺 WYNIKI YOUTUBE:\n`;
           for (const video of youtubeData.videos.slice(0, 10)) {
             sources.push({
               title: video.title,
               url: video.url,
               type: "YouTube",
             });
-            contextForSynthesis += `- **${video.title}**\n`;
-            contextForSynthesis += `  URL: ${video.url}\n`;
-            if (video.publishedAt)
-              contextForSynthesis += `  Data: ${video.publishedAt}\n`;
-            if (video.duration)
-              contextForSynthesis += `  Czas trwania: ${video.duration}\n`;
-            if (video.description)
-              contextForSynthesis += `  Opis: ${video.description.substring(
-                0,
-                200
-              )}\n`;
-            contextForSynthesis += `\n`;
+            contextForSynthesis += `- ${video.title}\n  URL: ${video.url}\n`;
           }
-        } else {
-          contextForSynthesis += `\n\n📺 YOUTUBE: Nie znaleziono nagrań dla tego zapytania.\n`;
-          contextForSynthesis += `Możesz spróbować wyszukać ręcznie na YouTube lub sprawdzić kanał gminy/miasta.\n`;
+        }
+      }
+
+      if (result.tool === "gus_statistics") {
+        const gusData = data as {
+          type?: string;
+          unit?: { name: string };
+          stats?: {
+            variables?: Array<{
+              name: string;
+              value: number;
+              unit: string;
+              year: number;
+            }>;
+          };
+        };
+        if (gusData.type === "gmina_stats" && gusData.unit && gusData.stats) {
+          contextForSynthesis += `\n📊 STATYSTYKI GUS - ${gusData.unit.name}:\n`;
+          sources.push({
+            title: `GUS BDL: ${gusData.unit.name}`,
+            url: "https://bdl.stat.gov.pl",
+            type: "GUS",
+          });
+          if (gusData.stats.variables) {
+            for (const v of gusData.stats.variables) {
+              contextForSynthesis += `- ${v.name}: ${v.value.toLocaleString(
+                "pl-PL"
+              )} ${v.unit} (${v.year})\n`;
+            }
+          }
+        }
+      }
+
+      if (result.tool === "isap_legal") {
+        const isapData = data as {
+          acts?: Array<{
+            ELI: string;
+            title: string;
+            displayAddress: string;
+            status: string;
+            promulgation: string;
+            type: string;
+          }>;
+          count?: number;
+        };
+        if (isapData.acts && isapData.acts.length > 0) {
+          contextForSynthesis += `\n⚖️ AKTY PRAWNE Z ISAP (${isapData.count} wyników):\n`;
+          for (const act of isapData.acts.slice(0, 10)) {
+            sources.push({
+              title: act.title.substring(0, 80),
+              url: `https://isap.sejm.gov.pl/isap.nsf/DocDetails.xsp?id=${act.ELI}`,
+              type: "ISAP",
+            });
+            contextForSynthesis += `- ${act.displayAddress} (${
+              act.type
+            })\n  ${act.title.substring(0, 150)}...\n  Status: ${act.status}\n`;
+          }
+        }
+      }
+
+      if (result.tool === "eu_funds") {
+        const euData = data as {
+          type?: string;
+          competitions?: Array<{
+            title: string;
+            program: string;
+            budget: number;
+            endDate: string;
+            url: string;
+          }>;
+        };
+        if (euData.type === "active_competitions" && euData.competitions) {
+          contextForSynthesis += `\n🇪🇺 AKTUALNE KONKURSY UE:\n`;
+          for (const comp of euData.competitions.slice(0, 5)) {
+            sources.push({
+              title: comp.title,
+              url: comp.url,
+              type: "Fundusze UE",
+            });
+            contextForSynthesis += `- ${comp.title}\n  Program: ${
+              comp.program
+            }\n  Budżet: ${comp.budget.toLocaleString(
+              "pl-PL"
+            )} PLN\n  Termin: ${comp.endDate}\n`;
+          }
+        }
+      }
+
+      if (
+        result.tool === "calendar_add" ||
+        result.tool === "calendar_list" ||
+        result.tool === "calendar_edit" ||
+        result.tool === "calendar_delete" ||
+        result.tool === "task_add" ||
+        result.tool === "task_list" ||
+        result.tool === "task_complete" ||
+        result.tool === "task_delete" ||
+        result.tool === "alert_check" ||
+        result.tool === "quick_tool" ||
+        result.tool === "app_navigate"
+      ) {
+        const actionData = data as {
+          type?: string;
+          success?: boolean;
+          message?: string;
+        };
+        if (actionData.message) {
+          return {
+            response: actionData.message,
+            sources: [],
+          };
         }
       }
     }
 
-    // Synteza przez LLM
-    const synthesisPrompt = `Na podstawie zebranych informacji, udziel wyczerpującej odpowiedzi na pytanie użytkownika.
+    const synthesisPrompt = `Na podstawie zebranych informacji, udziel odpowiedzi na pytanie użytkownika.
 
 PYTANIE: ${userMessage}
 
 ZEBRANE INFORMACJE:
 ${contextForSynthesis.substring(0, 12000)}
 
-ZASADY:
-1. Odpowiedz konkretnie i rzeczowo
-2. Jeśli informacje są sprzeczne - zaznacz to
-3. Jeśli brakuje danych - powiedz wprost
-4. Cytuj źródła gdy to możliwe
-5. Formatuj odpowiedź czytelnie (nagłówki, listy)`;
+Odpowiedz konkretnie i rzeczowo. Formatuj odpowiedź czytelnie.`;
 
     const completion = await this.llmClient.chat.completions.create({
       model: this.model,
@@ -709,7 +917,7 @@ ZASADY:
         {
           role: "system",
           content:
-            "Jesteś asystentem radnego miejskiego. Tworzysz precyzyjne, merytoryczne odpowiedzi na podstawie dostarczonych źródeł.",
+            "Jesteś asystentem radnego miejskiego. Tworzysz precyzyjne odpowiedzi na podstawie dostarczonych źródeł.",
         },
         { role: "user", content: synthesisPrompt },
       ],
@@ -717,125 +925,9 @@ ZASADY:
       max_tokens: 2000,
     });
 
-    return {
-      response: completion.choices[0]?.message?.content || "",
-      sources,
-    };
-  }
-
-  /**
-   * Sprawdza dostępność transkrypcji YouTube dla danej sesji
-   * Jeśli transkrypcja jest dostępna, pobiera jej treść z RAG
-   */
-  private async checkYouTubeTranscriptionAvailability(
-    sessionNumber: number
-  ): Promise<{
-    available: boolean;
-    status: "pending" | "completed" | "not_found";
-    videoUrl?: string;
-    videoTitle?: string;
-    transcriptionDocumentId?: string;
-    transcriptionContent?: string;
-    message: string;
-  }> {
-    try {
-      // Importuj supabase
-      const { createClient } = await import("@supabase/supabase-js");
-      const supabaseUrl = process.env.SUPABASE_URL!;
-      const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-      const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-      // Szukaj w scraped_content YouTube z tym numerem sesji
-      const { data: youtubeVideos } = await supabase
-        .from("scraped_content")
-        .select("*")
-        .eq("content_type", "youtube_video")
-        .eq("user_id", this.userId);
-
-      if (!youtubeVideos || youtubeVideos.length === 0) {
-        return {
-          available: false,
-          status: "not_found",
-          message: "Brak nagrań YouTube dla tej sesji",
-        };
-      }
-
-      // Filtruj po sessionNumber w metadata
-      const matchingVideo = youtubeVideos.find(
-        (v) =>
-          v.metadata &&
-          typeof v.metadata === "object" &&
-          "sessionNumber" in v.metadata &&
-          v.metadata.sessionNumber === sessionNumber
-      );
-
-      if (!matchingVideo) {
-        return {
-          available: false,
-          status: "not_found",
-          message: `Brak nagrania YouTube dla sesji nr ${sessionNumber}`,
-        };
-      }
-
-      const metadata = matchingVideo.metadata as Record<string, unknown>;
-      const transcriptionStatus = metadata.transcriptionStatus as string;
-      const transcriptionDocumentId = metadata.transcriptionDocumentId as
-        | string
-        | undefined;
-
-      if (transcriptionStatus === "completed" && transcriptionDocumentId) {
-        // Pobierz treść transkrypcji z processed_documents
-        const { data: transcriptionDoc } = await supabase
-          .from("processed_documents")
-          .select("content, title")
-          .eq("id", transcriptionDocumentId)
-          .single();
-
-        return {
-          available: true,
-          status: "completed",
-          videoUrl: matchingVideo.url,
-          videoTitle: matchingVideo.title,
-          transcriptionDocumentId,
-          transcriptionContent: transcriptionDoc?.content || undefined,
-          message: `Transkrypcja sesji nr ${sessionNumber} jest dostępna`,
-        };
-      }
-
-      if (transcriptionStatus === "pending") {
-        return {
-          available: true,
-          status: "pending",
-          videoUrl: matchingVideo.url,
-          videoTitle: matchingVideo.title,
-          message: `Znaleziono nagranie sesji nr ${sessionNumber} na YouTube. Transkrypcja nie została jeszcze wykonana.`,
-        };
-      }
-
-      return {
-        available: true,
-        status: "pending",
-        videoUrl: matchingVideo.url,
-        videoTitle: matchingVideo.title,
-        message: `Znaleziono nagranie sesji nr ${sessionNumber} na YouTube`,
-      };
-    } catch (error) {
-      console.error(
-        "[AIOrchestrator] Error checking YouTube transcription:",
-        error
-      );
-      return {
-        available: false,
-        status: "not_found",
-        message: "Błąd sprawdzania dostępności transkrypcji",
-      };
-    }
+    return { response: completion.choices[0]?.message?.content || "", sources };
   }
 }
-
-// ============================================================================
-// HELPER: Sprawdź czy pytanie wymaga orchestracji
-// ============================================================================
 
 export function shouldUseOrchestrator(message: string): boolean {
   const triggers = [
@@ -848,130 +940,171 @@ export function shouldUseOrchestrator(message: string): boolean {
     /kto\s+to\s+jest/i,
     /jakie\s+są\s+dane/i,
     /pełn[ae]\s+informacj/i,
-    /wszystk[oi]\s+o\s/i,
-    /research/i,
-    /deep\s*search/i,
     /sesj[aię]\s+(nr|numer)?\s*\d/i,
     /uchwał[aęy]/i,
     /budżet/i,
     /radny|radnego|radnej/i,
-    // YouTube / nagrania wideo
     /nagran|nagranie|wideo|video|youtube/i,
     /obejrz|transmisj|film.*sesj/i,
-    /gdzie.*obejrze/i,
-    /znajd[źż].*nagran/i,
+    /statystyk|demograficzn|ludno[śs][ćc]|mieszka[ńn]c/i,
+    /gus|g\.u\.s\./i,
+    /ustaw[aęy]|rozporz[aą]dzeni|akt.*prawn/i,
+    /dziennik\s*ustaw|monitor\s*polski|isap/i,
+    /fundusz[eóy].*europejsk|dotacj[eai].*uni|ue\s+fund/i,
+    /nabor[yó]|konkurs[yó].*ue|dofinansowani/i,
+    /działk[aęi]|parcela|nieruchomo[śs][ćc]/i,
+    /geoportal|mapa.*dział|mpzp|plan.*zagospodarowania/i,
+    /współrzędn|lokalizacj|adres.*dział/i,
+    /gmina.*granice|jednostka.*administracyjna/i,
+    /teryt|kod.*terytorialn|rejestr.*jednostek/i,
+    /krs|krajow.*rejestr.*sądow|spółk[aię]|stowarzysze/i,
+    /ceidg|działalno[śs][ćc].*gospodarcz|jednoosobow/i,
+    /nip\s*\d|regon\s*\d|firma.*numer/i,
+    /gdoś|natura.*2000|obszar.*chronion|rezerwat|park.*narodow/i,
+    /ochrona.*środowisk|środowisko.*ograniczeni/i,
+    /dodaj.*kalendarz|zaplanuj.*spotkanie|wpisz.*wydarzenie/i,
+    /pokaż.*kalendarz|co.*zaplanowane|jakie.*spotkania/i,
+    /zmień.*termin|przesuń.*spotkanie|usuń.*kalend|odwołaj.*spotkanie/i,
+    /dodaj.*zadanie|zanotuj.*zrobienia|przypomnij.*o/i,
+    /pokaż.*zadania|co.*do.*zrobienia|lista.*zadań/i,
+    /oznacz.*zrobione|ukończ.*zadanie|usuń.*zadanie/i,
+    /sprawdź.*alert|powiadomieni|co.*nowego/i,
+    /utwórz.*interpelacj|napisz.*pismo|generuj.*protokół/i,
+    /przejdź.*do|otwórz.*stron|pokaż.*pulpit|idź.*do/i,
   ];
-
   return triggers.some((pattern) => pattern.test(message));
 }
-
-// ============================================================================
-// INVENTORY: Lista wszystkich dostępnych narzędzi
-// ============================================================================
 
 export const AVAILABLE_TOOLS = {
   deep_research: {
     name: "Deep Research",
-    description:
-      "Głębokie wyszukiwanie w internecie (Exa, Tavily, Serper, Brave)",
+    description: "Głębokie wyszukiwanie w internecie",
     avgTimeSeconds: 30,
-    requiresApiKey: true,
-    providers: ["exa", "tavily", "serper", "brave"],
   },
   rag_search: {
     name: "RAG Search",
-    description:
-      "Wyszukiwanie w lokalnej bazie dokumentów (processed_documents)",
+    description: "Wyszukiwanie w lokalnej bazie dokumentów",
     avgTimeSeconds: 5,
-    requiresApiKey: false,
   },
   legal_analysis: {
     name: "Legal Reasoning Engine",
-    description: "Analiza prawna z wykrywaniem ryzyk i rekomendacjami",
+    description: "Analiza prawna",
     avgTimeSeconds: 20,
-    requiresApiKey: true,
   },
   session_search: {
     name: "Session Discovery",
-    description:
-      "Wyszukiwanie materiałów z sesji rady (transkrypcje, protokoły, wideo)",
+    description: "Wyszukiwanie materiałów z sesji rady",
     avgTimeSeconds: 10,
-    requiresApiKey: false,
   },
   person_search: {
     name: "Person Search",
-    description: "Wyszukiwanie informacji o osobach (radnych, urzędnikach)",
+    description: "Wyszukiwanie informacji o osobach",
     avgTimeSeconds: 25,
-    requiresApiKey: true,
   },
   document_fetch: {
     name: "Document Query",
-    description: "Pobranie konkretnego dokumentu po nazwie/numerze",
+    description: "Pobranie konkretnego dokumentu",
     avgTimeSeconds: 5,
-    requiresApiKey: false,
   },
   budget_analysis: {
     name: "Budget Analysis",
     description: "Analiza budżetowa gminy",
     avgTimeSeconds: 15,
-    requiresApiKey: false,
+  },
+  gus_statistics: {
+    name: "GUS Statistics",
+    description: "Statystyki z GUS BDL",
+    avgTimeSeconds: 10,
+  },
+  isap_legal: {
+    name: "ISAP Legal Acts",
+    description: "Akty prawne z ISAP",
+    avgTimeSeconds: 8,
+  },
+  eu_funds: {
+    name: "EU Funds",
+    description: "Fundusze europejskie - projekty, konkursy, nabory",
+    avgTimeSeconds: 12,
+  },
+  geoportal_spatial: {
+    name: "Geoportal",
+    description: "Dane przestrzenne - działki, MPZP, granice administracyjne",
+    avgTimeSeconds: 8,
+  },
+  teryt_registry: {
+    name: "TERYT",
+    description:
+      "Rejestr jednostek terytorialnych - gminy, powiaty, województwa",
+    avgTimeSeconds: 5,
+  },
+  krs_registry: {
+    name: "KRS",
+    description: "Krajowy Rejestr Sądowy - spółki, stowarzyszenia, fundacje",
+    avgTimeSeconds: 10,
+  },
+  ceidg_registry: {
+    name: "CEIDG",
+    description: "Centralna Ewidencja Działalności Gospodarczej",
+    avgTimeSeconds: 8,
+  },
+  gdos_environmental: {
+    name: "GDOŚ",
+    description: "Dane środowiskowe - obszary chronione, Natura 2000",
+    avgTimeSeconds: 10,
+  },
+  calendar_add: {
+    name: "Dodaj do kalendarza",
+    description: "Dodawanie wydarzeń do kalendarza",
+    avgTimeSeconds: 3,
+  },
+  calendar_list: {
+    name: "Pokaż kalendarz",
+    description: "Wyświetlanie zaplanowanych wydarzeń",
+    avgTimeSeconds: 2,
+  },
+  task_add: {
+    name: "Dodaj zadanie",
+    description: "Tworzenie nowych zadań",
+    avgTimeSeconds: 3,
+  },
+  task_list: {
+    name: "Pokaż zadania",
+    description: "Lista zadań do wykonania",
+    avgTimeSeconds: 2,
+  },
+  calendar_edit: {
+    name: "Edytuj wydarzenie",
+    description: "Zmiana terminu lub szczegółów wydarzenia",
+    avgTimeSeconds: 3,
+  },
+  calendar_delete: {
+    name: "Usuń wydarzenie",
+    description: "Usuwanie wydarzeń z kalendarza",
+    avgTimeSeconds: 2,
+  },
+  task_complete: {
+    name: "Ukończ zadanie",
+    description: "Oznaczanie zadań jako wykonane",
+    avgTimeSeconds: 2,
+  },
+  task_delete: {
+    name: "Usuń zadanie",
+    description: "Usuwanie zadań z listy",
+    avgTimeSeconds: 2,
+  },
+  alert_check: {
+    name: "Sprawdź alerty",
+    description: "Sprawdzanie powiadomień i alertów",
+    avgTimeSeconds: 2,
+  },
+  quick_tool: {
+    name: "Szybkie narzędzia",
+    description: "Interpelacje, pisma, protokoły, analizy budżetu",
+    avgTimeSeconds: 5,
+  },
+  app_navigate: {
+    name: "Nawigacja",
+    description: "Przechodzenie między stronami aplikacji",
+    avgTimeSeconds: 1,
   },
 };
-
-// ============================================================================
-// SUGGESTED NEW TOOLS
-// ============================================================================
-
-export const SUGGESTED_TOOLS = [
-  {
-    name: "Voting Analysis",
-    description:
-      "Analiza głosowań radnych - jak głosował, statystyki, porównania",
-    priority: "high",
-    complexity: "medium",
-  },
-  {
-    name: "Calendar Integration",
-    description: "Integracja z kalendarzem sesji, powiadomienia o terminach",
-    priority: "high",
-    complexity: "low",
-  },
-  {
-    name: "Interpellation Tracker",
-    description: "Śledzenie interpelacji i zapytań radnych",
-    priority: "medium",
-    complexity: "medium",
-  },
-  {
-    name: "Comparison Engine",
-    description: "Porównywanie dokumentów, uchwał, budżetów między latami",
-    priority: "medium",
-    complexity: "high",
-  },
-  {
-    name: "Real-time BIP Monitor",
-    description:
-      "Monitoring BIP w czasie rzeczywistym - nowe dokumenty, zmiany",
-    priority: "high",
-    complexity: "medium",
-  },
-  {
-    name: "Email Digest Generator",
-    description: "Generowanie cotygodniowych podsumowań dla radnego",
-    priority: "medium",
-    complexity: "low",
-  },
-  {
-    name: "Public Opinion Analyzer",
-    description:
-      "Analiza opinii publicznej z mediów społecznościowych i lokalnych mediów",
-    priority: "low",
-    complexity: "high",
-  },
-  {
-    name: "Grant & Funding Finder",
-    description: "Wyszukiwanie dostępnych dotacji i funduszy dla gminy",
-    priority: "high",
-    complexity: "medium",
-  },
-];

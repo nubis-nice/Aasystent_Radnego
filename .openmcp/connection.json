@@ -1,1 +1,11 @@
-{"items":[]}
+{
+  "items": [
+    {
+      "mcpServers": {
+        "supabase": {
+          "url": "https://mcp.supabase.com/mcp?project_ref=rgcegixkrigqxtiuuial&read_only=true"
+        }
+      }
+    }
+  ]
+}

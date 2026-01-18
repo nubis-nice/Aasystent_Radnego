@@ -18,6 +18,8 @@ interface LocaleSettings {
   date_format: string;
   time_format: string;
   municipality: string | null;
+  postal_code: string | null;
+  county: string | null;
   voivodeship: string | null;
   bip_url: string | null;
   council_name: string | null;
@@ -57,6 +59,8 @@ export default function LocalePage() {
     date_format: "DD.MM.YYYY",
     time_format: "24h",
     municipality: null,
+    postal_code: null,
+    county: null,
     voivodeship: null,
     bip_url: null,
     council_name: null,
@@ -91,6 +95,8 @@ export default function LocalePage() {
           date_format: data.date_format || "DD.MM.YYYY",
           time_format: data.time_format || "24h",
           municipality: data.municipality,
+          postal_code: data.postal_code,
+          county: data.county,
           voivodeship: data.voivodeship,
           bip_url: data.bip_url,
           council_name: data.council_name,
@@ -272,6 +278,36 @@ export default function LocalePage() {
                 updateSetting("municipality", e.target.value || null)
               }
               placeholder="np. Białobrzegi"
+              className="w-full h-11 rounded-xl border-2 border-secondary-200 bg-white px-4 text-sm font-medium focus:border-primary-500 focus:ring-4 focus:ring-primary-100"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-text mb-2">
+              <MapPin className="inline h-4 w-4 mr-2" />
+              Kod pocztowy
+            </label>
+            <input
+              type="text"
+              value={settings.postal_code || ""}
+              onChange={(e) =>
+                updateSetting("postal_code", e.target.value || null)
+              }
+              placeholder="np. 73-220"
+              className="w-full h-11 rounded-xl border-2 border-secondary-200 bg-white px-4 text-sm font-medium focus:border-primary-500 focus:ring-4 focus:ring-primary-100"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-text mb-2">
+              <MapPin className="inline h-4 w-4 mr-2" />
+              Powiat
+            </label>
+            <input
+              type="text"
+              value={settings.county || ""}
+              onChange={(e) => updateSetting("county", e.target.value || null)}
+              placeholder="np. choszczeński"
               className="w-full h-11 rounded-xl border-2 border-secondary-200 bg-white px-4 text-sm font-medium focus:border-primary-500 focus:ring-4 focus:ring-primary-100"
             />
           </div>

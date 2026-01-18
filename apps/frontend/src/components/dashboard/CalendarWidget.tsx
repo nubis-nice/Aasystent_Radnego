@@ -179,6 +179,18 @@ const getWeekRangeLabel = (referenceDate: Date) => {
   return `${startLabel} – ${endLabel} ${end.getFullYear()}`;
 };
 
+/**
+ * Formatuje datę do formatu datetime-local (YYYY-MM-DDTHH:mm) w lokalnym czasie
+ */
+const formatDateTimeLocal = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+};
+
 interface DayScheduleModalProps {
   date: Date;
   events: CalendarEvent[];
@@ -626,9 +638,16 @@ export function CalendarWidget({ onEventClick }: CalendarWidgetProps) {
 
   const handleDayCellClick = (date: Date, dayEvents: CalendarEvent[]) => {
     setSelectedDate(date);
+
+    // Ustaw domyślną godzinę na 10:00 jeśli nie ma godziny
+    const eventDate = new Date(date);
+    if (eventDate.getHours() === 0 && eventDate.getMinutes() === 0) {
+      eventDate.setHours(10, 0, 0, 0);
+    }
+
     setNewEvent((prev) => ({
       ...prev,
-      start_date: date.toISOString().slice(0, 16),
+      start_date: formatDateTimeLocal(eventDate),
     }));
 
     if (dayEvents.length > 0) {
@@ -727,10 +746,12 @@ export function CalendarWidget({ onEventClick }: CalendarWidgetProps) {
               <button
                 onClick={() => {
                   const now = new Date();
+                  // Zaokrąglij do najbliższych 30 minut
+                  now.setMinutes(Math.ceil(now.getMinutes() / 30) * 30, 0, 0);
                   setSelectedDate(now);
                   setNewEvent((prev) => ({
                     ...prev,
-                    start_date: now.toISOString().slice(0, 16),
+                    start_date: formatDateTimeLocal(now),
                   }));
                   setShowAddModal(true);
                 }}

@@ -118,9 +118,9 @@ export const chatRoutes = async (fastify) => {
       if (!userId) {
         return reply.status(401).send({ error: "Unauthorized" });
       }
-      // Pobierz profil użytkownika (tabela: profiles, klucz: id)
+      // Pobierz profil użytkownika (tabela: user_profiles, klucz: id)
       const { data: profile } = await supabase
-        .from("profiles")
+        .from("user_profiles")
         .select("*")
         .eq("id", userId)
         .single();
@@ -378,22 +378,52 @@ export const chatRoutes = async (fastify) => {
             conversationContext
           );
 
+          // Sprawdź czy to akcja kalendarza/zadań (krótka odpowiedź OK)
+          const actionTools = [
+            "calendar_add",
+            "calendar_list",
+            "calendar_edit",
+            "calendar_delete",
+            "task_add",
+            "task_list",
+            "task_complete",
+            "task_delete",
+            "alert_check",
+            "quick_tool",
+            "app_navigate",
+          ];
+          const isActionTool = actionTools.includes(
+            orchestratorResult.intent.primaryIntent
+          );
+
           // Sprawdź czy orchestrator udzielił sensownej odpowiedzi
           const hasValidResponse =
             orchestratorResult.synthesizedResponse &&
-            orchestratorResult.synthesizedResponse.length > 100 &&
+            (isActionTool
+              ? orchestratorResult.synthesizedResponse.length > 10
+              : orchestratorResult.synthesizedResponse.length > 100) &&
             !orchestratorResult.synthesizedResponse.includes(
               "nie udało się znaleźć"
             ) &&
             orchestratorResult.toolResults.some((r) => r.success && r.data);
 
           console.log(
-            `[Chat] Orchestrator result: hasValidResponse=${hasValidResponse}, responseLen=${
+            `[Chat] Orchestrator result: intent=${
+              orchestratorResult.intent.primaryIntent
+            }, isActionTool=${isActionTool}, hasValidResponse=${hasValidResponse}, responseLen=${
               orchestratorResult.synthesizedResponse?.length || 0
             }, successfulTools=${
               orchestratorResult.toolResults.filter((r) => r.success).length
             }`
           );
+
+          // Debug: pokaż wyniki narzędzi
+          if (isActionTool) {
+            console.log(
+              `[Chat] Action tool results:`,
+              JSON.stringify(orchestratorResult.toolResults, null, 2)
+            );
+          }
 
           // Jeśli orchestrator udzielił pełnej odpowiedzi
           if (hasValidResponse) {
@@ -639,6 +669,9 @@ export const chatRoutes = async (fastify) => {
         // Dane użytkownika - używamy userName z fallbackiem
         userName: userName,
         userPosition: profile?.position,
+        // Dane adresowe gminy
+        postalCode: localeSettings?.postal_code,
+        county: localeSettings?.county,
         // Dodatkowe dane lokalne
         voivodeship: localeSettings?.voivodeship,
         bipUrl: localeSettings?.bip_url,

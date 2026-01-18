@@ -4,10 +4,13 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
+import { Buffer } from "node:buffer";
 import OpenAI from "openai";
+import { DocumentProcessor } from "./document-processor.js";
 
-// Node.js 18+ has built-in fetch
+// Node.js 18+ has built-in fetch and AbortSignal
 declare const fetch: typeof globalThis.fetch;
+declare const AbortSignal: typeof globalThis.AbortSignal;
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -76,22 +79,22 @@ export async function scrapeDataSource(
 
     switch (source.type) {
       case "bip":
-        scrapedItems = await scrapeBIP(source.url);
+        scrapedItems = await scrapeBIP(source.url, userId);
         break;
       case "municipality":
-        scrapedItems = await scrapeMunicipality(source.url);
+        scrapedItems = await scrapeMunicipality(source.url, userId);
         break;
       case "legal":
-        scrapedItems = await scrapeLegalPortal(source.url);
+        scrapedItems = await scrapeLegalPortal(source.url, userId);
         break;
       case "councilor":
-        scrapedItems = await scrapeCouncilorPortal(source.url);
+        scrapedItems = await scrapeCouncilorPortal(source.url, userId);
         break;
       case "statistics":
-        scrapedItems = await scrapeStatistics(source.url);
+        scrapedItems = await scrapeStatistics(source.url, userId);
         break;
       default:
-        scrapedItems = await scrapeGeneric(source.url);
+        scrapedItems = await scrapeGeneric(source.url, userId);
     }
 
     result.itemsScraped = scrapedItems.length;
@@ -167,25 +170,139 @@ export async function scrapeDataSource(
 }
 
 /**
+ * Inteligentne pobieranie URL - sprawdza Content-Type i odpowiednio przetwarza
+ * PDF → DocumentProcessor (OCR/ekstrakcja tekstu)
+ * HTML → extractTextFromHtml
+ */
+async function fetchUrlContent(
+  url: string,
+  userId?: string
+): Promise<{
+  content: string;
+  contentType: "html" | "pdf" | "text";
+  title: string;
+} | null> {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        Accept: "text/html,application/xhtml+xml,application/pdf,*/*;q=0.8",
+      },
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!response.ok) {
+      console.warn(`[Scraper] Failed to fetch ${url}: ${response.status}`);
+      return null;
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+    const urlLower = url.toLowerCase();
+
+    // Wykryj PDF po Content-Type lub rozszerzeniu URL
+    const isPdf =
+      contentType.includes("application/pdf") ||
+      urlLower.endsWith(".pdf") ||
+      urlLower.includes(".pdf?");
+
+    if (isPdf) {
+      console.log(`[Scraper] Detected PDF: ${url}`);
+
+      // Pobierz jako Buffer i przetwórz przez DocumentProcessor
+      const arrayBuffer = await response.arrayBuffer();
+      const pdfBuffer = Buffer.from(arrayBuffer);
+
+      // Wyciągnij nazwę pliku z URL
+      const urlParts = url.split("/");
+      const fileName = decodeURIComponent(
+        urlParts[urlParts.length - 1] || "document.pdf"
+      ).replace(/\?.*$/, ""); // Usuń query string
+
+      // Użyj DocumentProcessor do ekstrakcji tekstu z PDF
+      const processor = new DocumentProcessor();
+      if (userId) {
+        try {
+          await processor.initializeWithUserConfig(userId);
+        } catch (e) {
+          console.warn(
+            "[Scraper] Failed to init DocumentProcessor with user config:",
+            e
+          );
+        }
+      }
+
+      const result = await processor.processFile(
+        pdfBuffer,
+        fileName,
+        "application/pdf"
+      );
+
+      if (result.success && result.text && result.text.length > 50) {
+        console.log(
+          `[Scraper] PDF processed: ${fileName}, ${result.text.length} chars, method: ${result.metadata.processingMethod}`
+        );
+        return {
+          content: result.text,
+          contentType: "pdf",
+          title: fileName.replace(".pdf", "").replace(/_/g, " "),
+        };
+      } else {
+        console.warn(`[Scraper] PDF processing failed or empty: ${fileName}`);
+        return null;
+      }
+    }
+
+    // HTML lub tekst
+    const html = await response.text();
+
+    // Sprawdź czy to nie jest ukryty PDF (nagłówek %PDF w treści)
+    if (html.startsWith("%PDF")) {
+      console.warn(
+        `[Scraper] URL returned raw PDF data as text, skipping: ${url}`
+      );
+      return null;
+    }
+
+    return {
+      content: extractTextFromHtml(html),
+      contentType: "html",
+      title: extractTitleFromHtml(html) || url,
+    };
+  } catch (error) {
+    console.error(`[Scraper] Error fetching ${url}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Wyciągnij tytuł z HTML
+ */
+function extractTitleFromHtml(html: string): string | null {
+  const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  return titleMatch ? titleMatch[1].trim() : null;
+}
+
+/**
  * Scrapowanie BIP (Biuletyn Informacji Publicznej)
  */
-async function scrapeBIP(baseUrl: string): Promise<ScrapedItem[]> {
+async function scrapeBIP(
+  baseUrl: string,
+  userId?: string
+): Promise<ScrapedItem[]> {
   const items: ScrapedItem[] = [];
 
   try {
-    // Symulacja scrapowania - w produkcji użyłbyś cheerio/puppeteer
-    const response = await fetch(baseUrl);
-    const html = await response.text();
-
-    // Parsuj HTML i wyciągnij dokumenty
-    // To jest uproszczona wersja - w produkcji trzeba by sparsować DOM
-    items.push({
-      url: baseUrl,
-      title: `BIP - Strona główna`,
-      content: extractTextFromHtml(html),
-      contentType: "html",
-      metadata: { source: "bip" },
-    });
+    const result = await fetchUrlContent(baseUrl, userId);
+    if (result) {
+      items.push({
+        url: baseUrl,
+        title: result.title || `BIP - Strona główna`,
+        content: result.content,
+        contentType: result.contentType,
+        metadata: { source: "bip" },
+      });
+    }
   } catch (error) {
     console.error("BIP scraping error:", error);
   }
@@ -196,20 +313,23 @@ async function scrapeBIP(baseUrl: string): Promise<ScrapedItem[]> {
 /**
  * Scrapowanie strony gminy
  */
-async function scrapeMunicipality(baseUrl: string): Promise<ScrapedItem[]> {
+async function scrapeMunicipality(
+  baseUrl: string,
+  userId?: string
+): Promise<ScrapedItem[]> {
   const items: ScrapedItem[] = [];
 
   try {
-    const response = await fetch(baseUrl);
-    const html = await response.text();
-
-    items.push({
-      url: baseUrl,
-      title: `Strona Gminy`,
-      content: extractTextFromHtml(html),
-      contentType: "html",
-      metadata: { source: "municipality" },
-    });
+    const result = await fetchUrlContent(baseUrl, userId);
+    if (result) {
+      items.push({
+        url: baseUrl,
+        title: result.title || `Strona Gminy`,
+        content: result.content,
+        contentType: result.contentType,
+        metadata: { source: "municipality" },
+      });
+    }
   } catch (error) {
     console.error("Municipality scraping error:", error);
   }
@@ -220,20 +340,23 @@ async function scrapeMunicipality(baseUrl: string): Promise<ScrapedItem[]> {
 /**
  * Scrapowanie portalu prawnego
  */
-async function scrapeLegalPortal(baseUrl: string): Promise<ScrapedItem[]> {
+async function scrapeLegalPortal(
+  baseUrl: string,
+  userId?: string
+): Promise<ScrapedItem[]> {
   const items: ScrapedItem[] = [];
 
   try {
-    const response = await fetch(baseUrl);
-    const html = await response.text();
-
-    items.push({
-      url: baseUrl,
-      title: `Portal Prawny`,
-      content: extractTextFromHtml(html),
-      contentType: "html",
-      metadata: { source: "legal" },
-    });
+    const result = await fetchUrlContent(baseUrl, userId);
+    if (result) {
+      items.push({
+        url: baseUrl,
+        title: result.title || `Portal Prawny`,
+        content: result.content,
+        contentType: result.contentType,
+        metadata: { source: "legal" },
+      });
+    }
   } catch (error) {
     console.error("Legal portal scraping error:", error);
   }
@@ -244,20 +367,23 @@ async function scrapeLegalPortal(baseUrl: string): Promise<ScrapedItem[]> {
 /**
  * Scrapowanie portalu dla radnych
  */
-async function scrapeCouncilorPortal(baseUrl: string): Promise<ScrapedItem[]> {
+async function scrapeCouncilorPortal(
+  baseUrl: string,
+  userId?: string
+): Promise<ScrapedItem[]> {
   const items: ScrapedItem[] = [];
 
   try {
-    const response = await fetch(baseUrl);
-    const html = await response.text();
-
-    items.push({
-      url: baseUrl,
-      title: `Portal Samorządowy`,
-      content: extractTextFromHtml(html),
-      contentType: "html",
-      metadata: { source: "councilor" },
-    });
+    const result = await fetchUrlContent(baseUrl, userId);
+    if (result) {
+      items.push({
+        url: baseUrl,
+        title: result.title || `Portal Samorządowy`,
+        content: result.content,
+        contentType: result.contentType,
+        metadata: { source: "councilor" },
+      });
+    }
   } catch (error) {
     console.error("Councilor portal scraping error:", error);
   }
@@ -268,20 +394,23 @@ async function scrapeCouncilorPortal(baseUrl: string): Promise<ScrapedItem[]> {
 /**
  * Scrapowanie statystyk
  */
-async function scrapeStatistics(baseUrl: string): Promise<ScrapedItem[]> {
+async function scrapeStatistics(
+  baseUrl: string,
+  userId?: string
+): Promise<ScrapedItem[]> {
   const items: ScrapedItem[] = [];
 
   try {
-    const response = await fetch(baseUrl);
-    const html = await response.text();
-
-    items.push({
-      url: baseUrl,
-      title: `Dane Statystyczne`,
-      content: extractTextFromHtml(html),
-      contentType: "html",
-      metadata: { source: "statistics" },
-    });
+    const result = await fetchUrlContent(baseUrl, userId);
+    if (result) {
+      items.push({
+        url: baseUrl,
+        title: result.title || `Dane Statystyczne`,
+        content: result.content,
+        contentType: result.contentType,
+        metadata: { source: "statistics" },
+      });
+    }
   } catch (error) {
     console.error("Statistics scraping error:", error);
   }
@@ -292,20 +421,23 @@ async function scrapeStatistics(baseUrl: string): Promise<ScrapedItem[]> {
 /**
  * Scrapowanie ogólne
  */
-async function scrapeGeneric(baseUrl: string): Promise<ScrapedItem[]> {
+async function scrapeGeneric(
+  baseUrl: string,
+  userId?: string
+): Promise<ScrapedItem[]> {
   const items: ScrapedItem[] = [];
 
   try {
-    const response = await fetch(baseUrl);
-    const html = await response.text();
-
-    items.push({
-      url: baseUrl,
-      title: `Strona`,
-      content: extractTextFromHtml(html),
-      contentType: "html",
-      metadata: { source: "generic" },
-    });
+    const result = await fetchUrlContent(baseUrl, userId);
+    if (result) {
+      items.push({
+        url: baseUrl,
+        title: result.title || `Strona`,
+        content: result.content,
+        contentType: result.contentType,
+        metadata: { source: "generic" },
+      });
+    }
   } catch (error) {
     console.error("Generic scraping error:", error);
   }

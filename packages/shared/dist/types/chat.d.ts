@@ -514,6 +514,8 @@ export interface SystemPromptContext {
     municipalityType?: MunicipalityType;
     userName?: string;
     userPosition?: string;
+    postalCode?: string;
+    county?: string;
     voivodeship?: string;
     bipUrl?: string;
     councilName?: string;

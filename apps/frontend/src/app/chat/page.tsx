@@ -21,6 +21,7 @@ import {
   TrendingUp,
   ExternalLink,
   Zap,
+  Paperclip,
 } from "lucide-react";
 import { sendMessage, getConversation } from "@/lib/api/chat";
 import { performResearch } from "@/lib/api/deep-research";
@@ -44,6 +45,9 @@ import {
 import { DocumentUploadButton } from "@/components/chat/DocumentUploadButton";
 import { YouTubeSessionTool } from "@/components/chat/YouTubeSessionTool";
 import { SystemStatus } from "@/components/chat/SystemStatus";
+import { VoiceButton } from "@/components/voice/VoiceButton";
+import { useVoice } from "@/contexts/VoiceContext";
+import { DocumentPicker } from "@/components/chat/DocumentPicker";
 
 interface Citation {
   documentId?: string;
@@ -118,6 +122,11 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [showYouTubeTool, setShowYouTubeTool] = useState(false);
+  const [showDocumentPicker, setShowDocumentPicker] = useState(false);
+
+  // Globalny kontekst głosowy
+  const voiceContext = useVoice();
+  const { pendingMessage, clearPendingMessage } = voiceContext;
   const [showSidebar, setShowSidebar] = useState(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("chatSidebarVisible");
@@ -154,6 +163,15 @@ export default function ChatPage() {
     window.addEventListener("storage", loadContext);
     return () => window.removeEventListener("storage", loadContext);
   }, []);
+
+  // Obsługa wiadomości głosowych z VoiceContext (gdy użytkownik przychodzi z innej strony)
+  useEffect(() => {
+    if (pendingMessage && pendingMessage.transcription) {
+      // Automatycznie wstaw transkrypcję do pola wiadomości
+      setMessage(pendingMessage.transcription);
+      clearPendingMessage();
+    }
+  }, [pendingMessage, clearPendingMessage]);
 
   // Usuń element z kontekstu
   const removeContextItem = (id: string) => {
@@ -1713,6 +1731,15 @@ export default function ChatPage() {
                 onError={(err) => setError({ message: err })}
               />
 
+              {/* Załącz dokumenty z bazy */}
+              <button
+                onClick={() => setShowDocumentPicker(true)}
+                className="h-full px-3 rounded-xl border-2 border-secondary-200 hover:border-violet-300 hover:bg-violet-50 transition-colors"
+                title="Załącz dokumenty z bazy wiedzy"
+              >
+                <Paperclip className="h-4 w-4 text-text-secondary" />
+              </button>
+
               {/* System Status */}
               <SystemStatus apiError={error} />
 
@@ -1778,6 +1805,25 @@ export default function ChatPage() {
                 disabled={loading}
                 className="flex-1 rounded-xl border-2 border-secondary-200 bg-white px-4 py-2.5 text-sm font-medium text-text transition-all duration-200 placeholder:text-secondary-400 hover:border-secondary-300 focus:border-primary-500 focus:ring-4 focus:ring-primary-100 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
               />
+              <VoiceButton
+                variant="inline"
+                size="md"
+                onTranscription={(text) => {
+                  setMessage(text);
+                }}
+                onCommand={(cmd) => {
+                  const command = cmd as {
+                    action?: { type?: string; message?: string };
+                  };
+                  if (
+                    command.action?.type === "chat" &&
+                    command.action?.message
+                  ) {
+                    setMessage(command.action.message);
+                    handleSend();
+                  }
+                }}
+              />
               <button
                 data-send-button
                 onClick={handleSend}
@@ -1810,6 +1856,12 @@ export default function ChatPage() {
           onClose={() => setShowYouTubeTool(false)}
         />
       )}
+
+      {/* Document Picker Modal */}
+      <DocumentPicker
+        isOpen={showDocumentPicker}
+        onClose={() => setShowDocumentPicker(false)}
+      />
 
       {/* Modal dokumentu źródłowego */}
       {documentModal.isOpen && (

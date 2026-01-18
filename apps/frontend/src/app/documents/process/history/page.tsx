@@ -20,7 +20,6 @@ import {
   Trash2,
   BarChart3,
   RefreshCw,
-  Upload,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -30,7 +29,6 @@ import {
   addDocumentToRag,
   analyzeSentiment,
   deleteProcessedDocument,
-  processDocumentAsync,
   type ProcessedDocument,
   type ProcessingJob,
 } from "@/lib/api/document-processing";
@@ -43,10 +41,6 @@ export default function DocumentHistoryPage() {
   const [selectedDocument, setSelectedDocument] =
     useState<ProcessedDocument | null>(null);
 
-  // Opcje przetwarzania
-  const [includeSentiment, setIncludeSentiment] = useState(true);
-  const [saveToRag, setSaveToRag] = useState(true);
-
   // Zadania asynchroniczne
   const [jobs, setJobs] = useState<ProcessingJob[]>([]);
   const [showJobsPanel, setShowJobsPanel] = useState(false);
@@ -55,10 +49,6 @@ export default function DocumentHistoryPage() {
   const { counts, refresh: refreshCounts } = useDataCounts({
     refreshInterval: 10000,
   });
-
-  // Upload
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
 
   // Paginacja i filtrowanie
   const [currentPage, setCurrentPage] = useState(1);
@@ -126,36 +116,6 @@ export default function DocumentHistoryPage() {
       );
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleUpload = async () => {
-    if (!uploadFile) return;
-
-    setIsUploading(true);
-    setError(null);
-
-    try {
-      const result = await processDocumentAsync(uploadFile, {
-        includeSentiment,
-        saveToRag,
-        formatAsProfessional: true,
-      });
-
-      if (result.success) {
-        setUploadFile(null);
-        setShowJobsPanel(true);
-        await loadJobs();
-        alert(
-          "✅ Zadanie przetwarzania zostało utworzone!\n\n" +
-            "Dokument będzie przetwarzany w tle i automatycznie zapisany.\n" +
-            "Status zadania znajdziesz w panelu po prawej stronie."
-        );
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Błąd przetwarzania");
-    } finally {
-      setIsUploading(false);
     }
   };
 
@@ -330,66 +290,6 @@ export default function DocumentHistoryPage() {
         <div className="flex gap-6">
           {/* Main Content */}
           <div className="flex-1">
-            {/* Upload Section */}
-            <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-6 mb-6">
-              <h2 className="text-lg font-bold text-slate-800 mb-4">
-                Przetwórz nowy dokument
-              </h2>
-              <div className="flex gap-4 items-start">
-                <div className="flex-1">
-                  <input
-                    type="file"
-                    onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-                    accept=".pdf,.jpg,.jpeg,.png,.mp3,.mp4,.wav,.m4a"
-                    className="hidden"
-                    id="file-upload"
-                  />
-                  <label
-                    htmlFor="file-upload"
-                    className="flex items-center justify-center gap-3 w-full px-6 py-4 rounded-xl border-2 border-dashed border-slate-300 hover:border-primary-400 hover:bg-primary-50 transition-all cursor-pointer"
-                  >
-                    <Upload className="h-6 w-6 text-slate-400" />
-                    <span className="text-sm text-slate-600">
-                      {uploadFile
-                        ? uploadFile.name
-                        : "Wybierz plik (PDF, obraz, audio)"}
-                    </span>
-                  </label>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={includeSentiment}
-                      onChange={(e) => setIncludeSentiment(e.target.checked)}
-                      className="rounded border-slate-300"
-                    />
-                    <span>Analiza sentymentu</span>
-                  </label>
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={saveToRag}
-                      onChange={(e) => setSaveToRag(e.target.checked)}
-                      className="rounded border-slate-300"
-                    />
-                    <span>Zapisz do RAG</span>
-                  </label>
-                </div>
-                <button
-                  onClick={handleUpload}
-                  disabled={!uploadFile || isUploading}
-                  className="px-6 py-3 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 text-white font-semibold shadow-lg hover:from-primary-600 hover:to-primary-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isUploading ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                  ) : (
-                    "Przetwórz"
-                  )}
-                </button>
-              </div>
-            </div>
-
             {/* Filters */}
             <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-4 mb-6">
               <div className="flex flex-wrap gap-4 items-center">

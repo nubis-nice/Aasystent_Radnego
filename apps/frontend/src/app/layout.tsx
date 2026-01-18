@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { ToastProvider } from "@/lib/notifications/toast";
 import { ThemeProvider } from "@/contexts/ThemeContext";
+import { VoiceProvider } from "@/contexts/VoiceContext";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -20,7 +21,9 @@ export default function RootLayout({
     <html lang="pl">
       <body className={inter.className}>
         <ThemeProvider>
-          <ToastProvider>{children}</ToastProvider>
+          <ToastProvider>
+            <VoiceProvider>{children}</VoiceProvider>
+          </ToastProvider>
         </ThemeProvider>
       </body>
     </html>

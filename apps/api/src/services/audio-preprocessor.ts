@@ -44,6 +44,22 @@ export interface AudioPreprocessorOptions {
   channels?: number; // domyślnie 1 (mono)
 }
 
+export interface AudioPart {
+  index: number;
+  filePath: string;
+  duration: number;
+  startTime: number;
+  endTime: number;
+  fileSize: number;
+}
+
+export interface AudioSplitResult {
+  success: boolean;
+  parts: AudioPart[];
+  totalDuration: number;
+  error?: string;
+}
+
 const DEFAULT_OPTIONS: Required<AudioPreprocessorOptions> = {
   normalizeVolume: true,
   targetLoudness: -16,
@@ -202,14 +218,15 @@ export class AudioPreprocessor {
     const inputSizeMB = (inputStats.size / 1024 / 1024).toFixed(2);
     const outputSizeMB = (outputStats.size / 1024 / 1024).toFixed(2);
 
+    const sizeRatio = outputStats.size / inputStats.size;
+    const sizeChangePercent = ((sizeRatio - 1) * 100).toFixed(1);
+    const sizeChangeLabel = sizeRatio > 1 ? "Increase" : "Reduction";
+    const sizeChangeSign = sizeRatio > 1 ? "+" : "";
+
     console.log(`[AudioPreprocessor] Adaptive preprocessing complete:`);
     console.log(`  Input: ${inputSizeMB}MB`);
     console.log(`  Output: ${outputSizeMB}MB`);
-    console.log(
-      `  Reduction: ${((1 - outputStats.size / inputStats.size) * 100).toFixed(
-        1
-      )}%`
-    );
+    console.log(`  ${sizeChangeLabel}: ${sizeChangeSign}${sizeChangePercent}%`);
 
     return { outputPath, analysis };
   }
@@ -417,12 +434,172 @@ export class AudioPreprocessor {
   }
 
   /**
-   * Czyści pliki tymczasowe
+   * Cleanup pliku tymczasowego
    */
   cleanup(tempPath: string): void {
     if (fs.existsSync(tempPath)) {
       fs.unlinkSync(tempPath);
+      console.log(`[AudioPreprocessor] Cleaned up: ${tempPath}`);
     }
+  }
+
+  /**
+   * Pobierz długość audio w sekundach
+   */
+  async getAudioDuration(inputPath: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const args = ["-i", inputPath, "-f", "null", "-"];
+
+      const ffmpeg = spawn(this.ffmpegPath, args);
+      let stderr = "";
+
+      ffmpeg.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      ffmpeg.on("close", () => {
+        const durationMatch = stderr.match(
+          /Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})/
+        );
+        if (durationMatch) {
+          const hours = parseInt(durationMatch[1], 10);
+          const minutes = parseInt(durationMatch[2], 10);
+          const seconds = parseFloat(durationMatch[3]);
+          const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+          resolve(totalSeconds);
+        } else {
+          reject(new Error("Could not parse audio duration"));
+        }
+      });
+
+      ffmpeg.on("error", reject);
+    });
+  }
+
+  /**
+   * Podziel audio na części według czasu (MVP - bez silence detection)
+   */
+  async splitAudioByTime(
+    inputPath: string,
+    maxPartDuration: number = 600
+  ): Promise<AudioSplitResult> {
+    try {
+      console.log(`[AudioPreprocessor] Splitting audio: ${inputPath}`);
+      console.log(`[AudioPreprocessor] Max part duration: ${maxPartDuration}s`);
+
+      const totalDuration = await this.getAudioDuration(inputPath);
+      console.log(
+        `[AudioPreprocessor] Total duration: ${totalDuration.toFixed(1)}s`
+      );
+
+      if (totalDuration <= maxPartDuration) {
+        console.log(
+          `[AudioPreprocessor] Audio shorter than maxPartDuration, no splitting needed`
+        );
+        return {
+          success: true,
+          parts: [],
+          totalDuration: totalDuration,
+        };
+      }
+
+      const parts: AudioPart[] = [];
+      const baseName = path.basename(inputPath, path.extname(inputPath));
+      const outputDir = path.dirname(inputPath);
+
+      let currentTime = 0;
+      let partIndex = 1;
+
+      while (currentTime < totalDuration) {
+        const startTime = currentTime;
+        const endTime = Math.min(currentTime + maxPartDuration, totalDuration);
+        const partDuration = endTime - startTime;
+
+        const outputPath = path.join(
+          outputDir,
+          `${baseName}_part_${String(partIndex).padStart(3, "0")}.wav`
+        );
+
+        console.log(
+          `[AudioPreprocessor] Extracting part ${partIndex}: ${startTime.toFixed(
+            1
+          )}s - ${endTime.toFixed(1)}s`
+        );
+
+        await this.extractAudioSegment(
+          inputPath,
+          outputPath,
+          startTime,
+          endTime
+        );
+
+        const stats = fs.statSync(outputPath);
+
+        parts.push({
+          index: partIndex,
+          filePath: outputPath,
+          duration: partDuration,
+          startTime: startTime,
+          endTime: endTime,
+          fileSize: stats.size,
+        });
+
+        currentTime = endTime;
+        partIndex++;
+      }
+
+      console.log(`[AudioPreprocessor] Split into ${parts.length} parts`);
+
+      return {
+        success: true,
+        parts: parts,
+        totalDuration: totalDuration,
+      };
+    } catch (error) {
+      console.error(`[AudioPreprocessor] Split failed:`, error);
+      return {
+        success: false,
+        parts: [],
+        totalDuration: 0,
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+
+  /**
+   * Wyciągnij segment audio
+   */
+  private extractAudioSegment(
+    inputPath: string,
+    outputPath: string,
+    startTime: number,
+    endTime: number
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const args = [
+        "-i",
+        inputPath,
+        "-ss",
+        startTime.toString(),
+        "-to",
+        endTime.toString(),
+        "-c",
+        "copy",
+        outputPath,
+      ];
+
+      const ffmpeg = spawn(this.ffmpegPath, args);
+
+      ffmpeg.on("close", (code) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`FFmpeg extraction failed with code ${code}`));
+        }
+      });
+
+      ffmpeg.on("error", reject);
+    });
   }
 }
 

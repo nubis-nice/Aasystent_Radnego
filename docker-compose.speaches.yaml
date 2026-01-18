@@ -1,0 +1,57 @@
+version: "3.8"
+
+services:
+  speaches-stt-tts:
+    container_name: aasystent-speaches
+    image: ghcr.io/speaches-ai/speaches:latest-cuda
+    restart: unless-stopped
+    ports:
+      - "8001:8000" # Changed from 8000 to avoid conflict with existing whisper
+    volumes:
+      - speaches-hf-cache:/home/ubuntu/.cache/huggingface/hub
+      - ./config/speaches:/config:ro
+    environment:
+      # Core config
+      - UVICORN_HOST=0.0.0.0
+      - UVICORN_PORT=8000
+      - LOG_LEVEL=info
+
+      # CORS - allow frontend and API
+      - ALLOW_ORIGINS=["http://localhost:3000","http://localhost:3001","http://192.168.33.4:3000","http://192.168.33.4:3001"]
+
+      # Model TTL (Time To Live)
+      - STT_MODEL_TTL=600 # 10 min - keep models loaded longer
+      - TTS_MODEL_TTL=600
+      - VAD_MODEL_TTL=-1 # -1 = never unload VAD
+
+      # Whisper config (nested with double underscore)
+      - WHISPER__INFERENCE_DEVICE=cuda
+      - WHISPER__COMPUTE_TYPE=int8 # int8 for low VRAM GPUs (RTX 3050 4GB)
+
+      # UI
+      - ENABLE_UI=true # Gradio web interface
+
+      # Preload models (optional - speeds up first request)
+      # Include TTS model (kokoro) - required for TTS to work
+      - PRELOAD_MODELS=["speaches-ai/Kokoro-82M-v1.0-ONNX"]
+
+      # API Key (optional - uncomment for auth)
+      # - API_KEY=your-secret-key-here
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://0.0.0.0:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s # Increased for model download time
+
+volumes:
+  speaches-hf-cache:
+    name: aasystent-speaches-cache

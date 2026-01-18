@@ -21,13 +21,22 @@ import {
   Zap,
   X,
   Link2,
+  Info,
+  Trash2,
+  XCircle,
+  RotateCw,
 } from "lucide-react";
 import Link from "next/link";
+import { TranscriptionDetailModal } from "./components/TranscriptionDetailModal";
 import {
   getYouTubeSessions,
   transcribeYouTubeVideo,
   startAsyncTranscription,
   getTranscriptionJobs,
+  getTranscriptionDocument,
+  cancelTranscriptionJob,
+  deleteTranscriptionJob,
+  retryTranscriptionJob,
   type YouTubeVideo,
   type YouTubeTranscriptionResult,
   type TranscriptionJob,
@@ -53,6 +62,16 @@ export default function YouTubeTranscriptionPage() {
   // Zadania asynchroniczne
   const [jobs, setJobs] = useState<TranscriptionJob[]>([]);
   const [showJobsPanel, setShowJobsPanel] = useState(false);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [jobDocumentModalOpen, setJobDocumentModalOpen] = useState(false);
+  const [jobDocumentLoading, setJobDocumentLoading] = useState(false);
+  const [jobDocumentError, setJobDocumentError] = useState<string | null>(null);
+  const [jobDocumentContent, setJobDocumentContent] = useState<{
+    jobId: string;
+    title: string;
+    content: string;
+    videoTitle?: string;
+  } | null>(null);
 
   // Paginacja i filtrowanie
   const [currentPage, setCurrentPage] = useState(1);
@@ -107,6 +126,76 @@ export default function YouTubeTranscriptionPage() {
       }
     } catch (e) {
       console.error("Error loading jobs:", e);
+    }
+  };
+
+  const handleShowJobDocument = async (job: TranscriptionJob) => {
+    if (!job.resultDocumentId) return;
+    setJobDocumentModalOpen(true);
+    setJobDocumentLoading(true);
+    setJobDocumentError(null);
+    setJobDocumentContent(null);
+    try {
+      const response = await getTranscriptionDocument(job.resultDocumentId);
+      setJobDocumentContent({
+        jobId: job.id,
+        title: response.document.title,
+        content: response.document.content,
+        videoTitle: job.videoTitle,
+      });
+    } catch (err) {
+      setJobDocumentError(
+        err instanceof Error ? err.message : "Błąd pobierania transkrypcji"
+      );
+    } finally {
+      setJobDocumentLoading(false);
+    }
+  };
+
+  const handleCloseJobDocument = () => {
+    setJobDocumentModalOpen(false);
+    setJobDocumentContent(null);
+    setJobDocumentError(null);
+    setJobDocumentLoading(false);
+  };
+
+  const handleCancelJob = async (job: TranscriptionJob) => {
+    if (!confirm(`Czy na pewno chcesz anulować zadanie "${job.videoTitle}"?`))
+      return;
+
+    try {
+      await cancelTranscriptionJob(job.id);
+      await loadJobs();
+    } catch (err) {
+      alert(
+        "❌ Błąd: " + (err instanceof Error ? err.message : "Nieznany błąd")
+      );
+    }
+  };
+
+  const handleDeleteJob = async (job: TranscriptionJob) => {
+    if (!confirm(`Czy na pewno chcesz usunąć zadanie "${job.videoTitle}"?`))
+      return;
+
+    try {
+      await deleteTranscriptionJob(job.id);
+      await loadJobs();
+    } catch (err) {
+      alert(
+        "❌ Błąd: " + (err instanceof Error ? err.message : "Nieznany błąd")
+      );
+    }
+  };
+
+  const handleRetryJob = async (job: TranscriptionJob) => {
+    try {
+      const result = await retryTranscriptionJob(job.id);
+      alert("✅ " + result.message);
+      await loadJobs();
+    } catch (err) {
+      alert(
+        "❌ Błąd: " + (err instanceof Error ? err.message : "Nieznany błąd")
+      );
     }
   };
 
@@ -874,91 +963,245 @@ export default function YouTubeTranscriptionPage() {
               {jobs.map((job) => (
                 <div
                   key={job.id}
-                  className={`p-4 rounded-xl border ${
-                    job.status === "completed"
-                      ? "bg-green-50 border-green-200"
-                      : job.status === "failed"
-                      ? "bg-red-50 border-red-200"
-                      : "bg-blue-50 border-blue-200"
-                  }`}
+                  className="p-4 rounded-xl border bg-blue-50 border-blue-200 cursor-pointer hover:bg-blue-100 transition-colors"
+                  onClick={() => setSelectedJobId(job.id)}
                 >
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="font-medium text-sm truncate flex-1">
                       {job.videoTitle}
                     </h3>
-                    <span
-                      className={`text-xs px-2 py-1 rounded-full ${
-                        job.status === "completed"
-                          ? "bg-green-200 text-green-800"
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`text-xs px-2 py-1 rounded-full ${
+                          job.status === "completed"
+                            ? "bg-green-200 text-green-800"
+                            : job.status === "failed"
+                            ? "bg-red-200 text-red-800"
+                            : "bg-blue-200 text-blue-800"
+                        }`}
+                      >
+                        {job.status === "completed"
+                          ? "✅ Zakończone"
                           : job.status === "failed"
-                          ? "bg-red-200 text-red-800"
-                          : "bg-blue-200 text-blue-800"
-                      }`}
-                    >
-                      {job.status === "completed"
-                        ? "✅ Zakończone"
-                        : job.status === "failed"
-                        ? "❌ Błąd"
-                        : job.status === "downloading"
-                        ? "📥 Pobieranie"
-                        : job.status === "transcribing"
-                        ? "🎤 Transkrypcja"
-                        : job.status === "analyzing"
-                        ? "🔍 Analiza"
-                        : job.status === "saving"
-                        ? "💾 Zapisywanie"
-                        : "⏳ Oczekuje"}
-                    </span>
+                          ? "❌ Błąd"
+                          : job.status === "downloading"
+                          ? "📥 Pobieranie"
+                          : job.status === "transcribing"
+                          ? "🎤 Transkrypcja"
+                          : job.status === "analyzing"
+                          ? "🔍 Analiza"
+                          : job.status === "saving"
+                          ? "💾 Zapisywanie"
+                          : "⏳ Oczekuje"}
+                      </span>
+                      {!["completed", "failed"].includes(job.status) && (
+                        <>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedJobId(job.id);
+                            }}
+                            className="text-blue-600 hover:text-blue-800 transition-colors"
+                            title="Zobacz szczegóły"
+                          >
+                            <Info className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCancelJob(job);
+                            }}
+                            className="text-orange-500 hover:text-orange-700 transition-colors"
+                            title="Anuluj zadanie"
+                          >
+                            <XCircle className="h-4 w-4" />
+                          </button>
+                        </>
+                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteJob(job);
+                        }}
+                        className="text-red-500 hover:text-red-700 transition-colors"
+                        title="Usuń zadanie"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
 
                   {!["completed", "failed"].includes(job.status) && (
-                    <div className="mb-2">
-                      <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-blue-500 transition-all duration-500"
-                          style={{ width: `${job.progress}%` }}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between mt-1">
-                        <p className="text-xs text-slate-600">
-                          {job.progressMessage}
-                        </p>
-                        {job.progress > 0 && job.progress < 100 && (
-                          <p className="text-xs text-slate-500 font-medium">
-                            ~
-                            {(() => {
-                              const elapsed =
-                                (Date.now() -
-                                  new Date(job.createdAt).getTime()) /
-                                1000;
-                              const estimatedTotal =
-                                elapsed / (job.progress / 100);
-                              const remaining = Math.max(
-                                0,
-                                estimatedTotal - elapsed
-                              );
-                              if (remaining < 60)
-                                return `${Math.ceil(remaining)}s`;
-                              if (remaining < 3600)
-                                return `${Math.ceil(remaining / 60)} min`;
-                              return `${Math.floor(
-                                remaining / 3600
-                              )}h ${Math.ceil((remaining % 3600) / 60)}min`;
-                            })()}
+                    <>
+                      <div className="mb-2">
+                        <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-blue-500 transition-all duration-500"
+                            style={{ width: `${job.progress}%` }}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between mt-1">
+                          <p className="text-xs text-slate-600">
+                            {job.progressMessage}
                           </p>
+                          {job.progress > 0 && job.progress < 100 && (
+                            <p className="text-xs text-slate-500 font-medium">
+                              ~
+                              {(() => {
+                                const elapsed =
+                                  (Date.now() -
+                                    new Date(job.createdAt).getTime()) /
+                                  1000;
+                                const estimatedTotal =
+                                  elapsed / (job.progress / 100);
+                                const remaining = Math.max(
+                                  0,
+                                  estimatedTotal - elapsed
+                                );
+                                if (remaining < 60)
+                                  return `${Math.ceil(remaining)}s`;
+                                if (remaining < 3600)
+                                  return `${Math.ceil(remaining / 60)} min`;
+                                return `${Math.floor(
+                                  remaining / 3600
+                                )}h ${Math.ceil((remaining % 3600) / 60)}min`;
+                              })()}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Mini steps indicator */}
+                      <div className="flex items-center gap-1 mt-2 text-xs flex-wrap">
+                        <span
+                          className={
+                            job.progress > 15
+                              ? "text-green-600 font-medium"
+                              : job.progress > 0
+                              ? "text-blue-600 font-semibold"
+                              : "text-slate-400"
+                          }
+                        >
+                          {job.progress > 15
+                            ? "✓"
+                            : job.progress > 0
+                            ? "→"
+                            : ""}{" "}
+                          Download
+                        </span>
+                        <span className="text-slate-300">•</span>
+                        <span
+                          className={
+                            job.progress > 25
+                              ? "text-green-600 font-medium"
+                              : job.progress > 15
+                              ? "text-blue-600 font-semibold"
+                              : "text-slate-400"
+                          }
+                        >
+                          {job.progress > 25
+                            ? "✓"
+                            : job.progress > 15
+                            ? "→"
+                            : ""}{" "}
+                          Preprocessing
+                        </span>
+                        <span className="text-slate-300">•</span>
+                        <span
+                          className={
+                            job.progress > 65
+                              ? "text-green-600 font-medium"
+                              : job.progress > 25
+                              ? "text-blue-600 font-semibold"
+                              : "text-slate-400"
+                          }
+                        >
+                          {job.progress > 65
+                            ? "✓"
+                            : job.progress > 25
+                            ? `→ ${job.progress}%`
+                            : ""}{" "}
+                          Transcription
+                        </span>
+                        <span className="text-slate-300">•</span>
+                        <span
+                          className={
+                            job.progress > 85
+                              ? "text-green-600 font-medium"
+                              : job.progress > 65
+                              ? "text-blue-600 font-semibold"
+                              : "text-slate-400"
+                          }
+                        >
+                          {job.progress > 85
+                            ? "✓"
+                            : job.progress > 65
+                            ? "→"
+                            : ""}{" "}
+                          Analysis
+                        </span>
+                        <span className="text-slate-300">•</span>
+                        <span
+                          className={
+                            job.progress >= 100
+                              ? "text-green-600 font-medium"
+                              : job.progress > 85
+                              ? "text-blue-600 font-semibold"
+                              : "text-slate-400"
+                          }
+                        >
+                          {job.progress >= 100
+                            ? "✓"
+                            : job.progress > 85
+                            ? "→"
+                            : ""}{" "}
+                          Saving
+                        </span>
+                      </div>
+                    </>
+                  )}
+
+                  {job.status === "completed" && job.resultDocumentId && (
+                    <div className="mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                      <p className="text-xs text-green-700">
+                        ✅ Zapisano do bazy RAG (kategoria: transkrypcje)
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => handleShowJobDocument(job)}
+                          className="px-3 py-1.5 text-xs font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors"
+                        >
+                          Podgląd transkrypcji
+                        </button>
+                        {job.videoUrl && (
+                          <a
+                            href={job.videoUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-3 py-1.5 text-xs font-medium rounded-lg border border-green-300 text-green-700 hover:bg-green-50 transition-colors"
+                          >
+                            Otwórz nagranie
+                          </a>
                         )}
                       </div>
                     </div>
                   )}
 
-                  {job.status === "completed" && job.resultDocumentId && (
-                    <p className="text-xs text-green-700">
-                      ✅ Zapisano do bazy RAG (kategoria: transkrypcje)
-                    </p>
-                  )}
-
-                  {job.status === "failed" && job.error && (
-                    <p className="text-xs text-red-700">{job.error}</p>
+                  {job.status === "failed" && (
+                    <div className="mt-2 flex items-center justify-between">
+                      <p className="text-xs text-red-700 flex-1">{job.error}</p>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRetryJob(job);
+                        }}
+                        className="ml-2 px-3 py-1.5 text-xs font-medium rounded-lg bg-orange-500 text-white hover:bg-orange-600 transition-colors flex items-center gap-1"
+                        title="Ponów zadanie"
+                      >
+                        <RotateCw className="h-3 w-3" />
+                        Ponów
+                      </button>
+                    </div>
                   )}
                 </div>
               ))}
@@ -1052,7 +1295,68 @@ export default function YouTubeTranscriptionPage() {
             </div>
           </div>
         )}
+
+        {/* Modal podglądu transkrypcji z zadania */}
+        {jobDocumentModalOpen && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-2xl p-6 max-w-3xl w-full mx-4 shadow-2xl max-h-[90vh] flex flex-col">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">
+                    {jobDocumentContent?.title || "Transkrypcja"}
+                  </h3>
+                  {jobDocumentContent?.videoTitle && (
+                    <p className="text-sm text-slate-500">
+                      {jobDocumentContent.videoTitle}
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={handleCloseJobDocument}
+                  className="p-2 rounded-lg hover:bg-slate-100"
+                  aria-label="Zamknij podgląd"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800 whitespace-pre-wrap">
+                {jobDocumentLoading && (
+                  <div className="flex items-center justify-center gap-2 text-slate-500">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Wczytywanie transkrypcji...
+                  </div>
+                )}
+
+                {!jobDocumentLoading && jobDocumentError && (
+                  <div className="text-red-600">{jobDocumentError}</div>
+                )}
+
+                {!jobDocumentLoading &&
+                  !jobDocumentError &&
+                  jobDocumentContent && <>{jobDocumentContent.content}</>}
+              </div>
+
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  onClick={handleCloseJobDocument}
+                  className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-100"
+                >
+                  Zamknij
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Transcription Detail Modal */}
+      {selectedJobId && (
+        <TranscriptionDetailModal
+          jobId={selectedJobId}
+          onClose={() => setSelectedJobId(null)}
+        />
+      )}
     </div>
   );
 }

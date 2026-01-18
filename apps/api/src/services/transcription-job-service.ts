@@ -19,6 +19,25 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+type TranscriptionJobRow = {
+  id: string;
+  user_id: string;
+  video_url: string;
+  video_title: string;
+  session_id: string | null;
+  status: string;
+  progress: number;
+  progress_message: string | null;
+  include_sentiment: boolean;
+  identify_speakers: boolean;
+  created_at: string;
+  completed_at: string | null;
+  error: string | null;
+  result_document_id: string | null;
+  audio_issues: unknown;
+  metadata: Record<string, unknown> | null;
+};
+
 export interface TranscriptionJob {
   id: string;
   userId: string;
@@ -43,6 +62,7 @@ export interface TranscriptionJob {
   error?: string;
   resultDocumentId?: string;
   audioIssues?: string[]; // Wykryte problemy z audio
+  metadata?: Record<string, unknown>;
 }
 
 export interface CouncilMember {
@@ -109,6 +129,7 @@ export class TranscriptionJobService {
     };
 
     jobQueue.set(jobId, job);
+    await this.saveJobRow(job);
 
     // Uruchom przetwarzanie asynchronicznie
     this.processJob(jobId).catch((error) => {
@@ -118,6 +139,7 @@ export class TranscriptionJobService {
         failedJob.status = "failed";
         failedJob.error =
           error instanceof Error ? error.message : "Nieznany błąd";
+        void this.saveJobRow(failedJob);
       }
     });
 
@@ -127,17 +149,44 @@ export class TranscriptionJobService {
   /**
    * Pobiera status zadania
    */
-  getJob(jobId: string): TranscriptionJob | undefined {
-    return jobQueue.get(jobId);
+  async getJob(jobId: string): Promise<TranscriptionJob | undefined> {
+    const inMemory = jobQueue.get(jobId);
+    if (inMemory) {
+      return inMemory;
+    }
+
+    const { data, error } = await supabase
+      .from("transcription_jobs")
+      .select("*")
+      .eq("id", jobId)
+      .eq("user_id", this.userId)
+      .maybeSingle();
+
+    if (error || !data) {
+      return undefined;
+    }
+
+    return this.mapRowToJob(data);
   }
 
   /**
    * Pobiera wszystkie zadania użytkownika
    */
-  getUserJobs(): TranscriptionJob[] {
-    return Array.from(jobQueue.values())
-      .filter((job) => job.userId === this.userId)
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  async getUserJobs(): Promise<TranscriptionJob[]> {
+    const { data, error } = await supabase
+      .from("transcription_jobs")
+      .select("*")
+      .eq("user_id", this.userId)
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    if (error || !data) {
+      return Array.from(jobQueue.values())
+        .filter((job) => job.userId === this.userId)
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    }
+
+    return data.map((row) => this.mapRowToJob(row));
   }
 
   /**
@@ -279,6 +328,53 @@ export class TranscriptionJobService {
     const job = jobQueue.get(jobId);
     if (job) {
       Object.assign(job, updates);
+      void this.saveJobRow(job);
+    }
+  }
+
+  private mapRowToJob(row: TranscriptionJobRow): TranscriptionJob {
+    return {
+      id: row.id,
+      userId: row.user_id,
+      videoUrl: row.video_url,
+      videoTitle: row.video_title,
+      sessionId: row.session_id ?? undefined,
+      status: row.status as TranscriptionJob["status"],
+      progress: row.progress,
+      progressMessage: row.progress_message ?? "",
+      includeSentiment: Boolean(row.include_sentiment),
+      identifySpeakers: Boolean(row.identify_speakers),
+      createdAt: new Date(row.created_at),
+      completedAt: row.completed_at ? new Date(row.completed_at) : undefined,
+      error: row.error ?? undefined,
+      resultDocumentId: row.result_document_id ?? undefined,
+      audioIssues: (row.audio_issues as string[]) ?? undefined,
+      metadata: row.metadata ?? undefined,
+    };
+  }
+
+  private async saveJobRow(job: TranscriptionJob): Promise<void> {
+    const { error } = await supabase.from("transcription_jobs").upsert({
+      id: job.id,
+      user_id: job.userId,
+      video_url: job.videoUrl,
+      video_title: job.videoTitle,
+      session_id: job.sessionId ?? null,
+      status: job.status,
+      progress: job.progress,
+      progress_message: job.progressMessage,
+      include_sentiment: job.includeSentiment,
+      identify_speakers: job.identifySpeakers,
+      created_at: job.createdAt.toISOString(),
+      completed_at: job.completedAt ? job.completedAt.toISOString() : null,
+      error: job.error ?? null,
+      result_document_id: job.resultDocumentId ?? null,
+      audio_issues: job.audioIssues ?? null,
+      metadata: job.metadata ?? null,
+    });
+
+    if (error) {
+      console.error("[TranscriptionJob] Failed to persist job row:", error);
     }
   }
 

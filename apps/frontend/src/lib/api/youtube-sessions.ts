@@ -50,6 +50,95 @@ export async function getYouTubeSessions(): Promise<YouTubeSessionsResult> {
   return data;
 }
 
+export interface TranscriptionDocumentResponse {
+  success: boolean;
+  document: {
+    id: string;
+    title: string;
+    content: string;
+    metadata?: Record<string, unknown>;
+  };
+}
+
+export async function getTranscriptionDocument(
+  documentId: string
+): Promise<TranscriptionDocumentResponse> {
+  const token = await getAuthToken();
+
+  const response = await fetch(
+    `${API_URL}/api/youtube/transcription/${documentId}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Błąd pobierania transkrypcji");
+  }
+
+  return data;
+}
+
+export interface DetailedJobResponse {
+  success: boolean;
+  job: {
+    id: string;
+    videoTitle: string;
+    videoUrl: string;
+    status: "waiting" | "active" | "completed" | "failed" | "delayed";
+    progress: number;
+    progressMessage: string;
+    detailedProgress?: {
+      globalProgress: number;
+      globalMessage: string;
+      currentStep: string;
+      steps: Array<{
+        name: string;
+        label: string;
+        status: "pending" | "active" | "completed" | "failed";
+        progress: number;
+        startTime?: string;
+        endTime?: string;
+        duration?: number;
+        details?: Record<string, unknown>;
+      }>;
+      estimatedTimeRemaining?: number;
+      startedAt: string;
+      lastUpdate: string;
+    };
+    createdAt: string;
+    completedAt?: string;
+    error?: string;
+    resultDocumentId?: string;
+  };
+}
+
+export async function getTranscriptionJobDetailed(
+  jobId: string
+): Promise<DetailedJobResponse> {
+  const token = await getAuthToken();
+
+  const response = await fetch(`${API_URL}/api/youtube/job/${jobId}/detailed`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Błąd pobierania szczegółów zadania");
+  }
+
+  return data;
+}
+
 export async function getYouTubeVideoInfo(
   videoUrl: string
 ): Promise<YouTubeVideo> {
@@ -143,6 +232,7 @@ export interface TranscriptionJob {
   progress: number;
   progressMessage: string;
   videoTitle: string;
+  videoUrl?: string;
   videoDuration?: string; // np. "1:23:45"
   createdAt: string;
   completedAt?: string;
@@ -239,6 +329,83 @@ export async function getTranscriptionJobs(): Promise<{
 
   if (!response.ok) {
     throw new Error(data.error || "Błąd pobierania listy zadań");
+  }
+
+  return data;
+}
+
+/**
+ * Anuluje aktywne zadanie transkrypcji
+ */
+export async function cancelTranscriptionJob(jobId: string): Promise<{
+  success: boolean;
+  cancelled: boolean;
+  message: string;
+}> {
+  const token = await getAuthToken();
+
+  const response = await fetch(`${API_URL}/api/youtube/job/${jobId}/cancel`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Błąd anulowania zadania");
+  }
+
+  return data;
+}
+
+/**
+ * Usuwa zadanie transkrypcji
+ */
+export async function deleteTranscriptionJob(jobId: string): Promise<{
+  success: boolean;
+  message: string;
+}> {
+  const token = await getAuthToken();
+
+  const response = await fetch(`${API_URL}/api/youtube/job/${jobId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Błąd usuwania zadania");
+  }
+
+  return data;
+}
+
+/**
+ * Ponawia nieudane zadanie transkrypcji
+ */
+export async function retryTranscriptionJob(jobId: string): Promise<{
+  success: boolean;
+  newJobId?: string;
+  message: string;
+}> {
+  const token = await getAuthToken();
+
+  const response = await fetch(`${API_URL}/api/youtube/job/${jobId}/retry`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Błąd ponowienia zadania");
   }
 
   return data;

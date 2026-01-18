@@ -38,7 +38,17 @@ Agent AI "Winsdurf" oparty na aktualnych, zewnętrznych źródłach prawa zamias
 
 **WARSTWA 1 - Źródła danych (API / scraping):**
 
-- ISAP (Sejm RP) - HTML/XML scraping
+- **ISAP API (Sejm RP)** - REST API ELI (Dziennik Ustaw, Monitor Polski)
+  - Endpoint: `https://api.sejm.gov.pl/eli`
+  - Serwis: `ISAPApiService`
+  - Routes: `/api/isap/*`
+- **GUS BDL API** - REST API Bank Danych Lokalnych
+  - Endpoint: `https://bdl.stat.gov.pl/api/v1`
+  - Serwis: `GUSApiService`
+  - Routes: `/api/gus/*`
+- **EU Funds** - Portal Funduszy Europejskich, Mapa Dotacji
+  - Serwis: `EUFundsService`
+  - Routes: `/api/eu-funds/*`
 - RCL - akty wykonawcze
 - WSA/NSA - orzecznictwo (scraping)
 - RIO - uchwały i rozstrzygnięcia nadzorcze (scraping)
@@ -146,6 +156,7 @@ IntelligentScraper.analyzeContentWithLLM()
 - Pobranie/załadowanie nagrań sesji rady.
 - Transkrypcja (ASR) w OpenAI Whisper + segmentacja czasowa.
 - Indeksowanie transkryptu do wyszukiwania i Q&A.
+- **Timeout STT**: lokalny serwer faster-whisper otrzymuje limit 600 s (pole `timeout_seconds` w `api_configurations`) aby długie nagrania (>1h) nie kończyły się błędem `Request timed out`.
 
 ### 4.7.1. Zaawansowana Transkrypcja z Analizą (2026-01-10)
 
@@ -189,15 +200,35 @@ IntelligentScraper.analyzeContentWithLLM()
 - **Dashboard**: nagłówek łączy tytuł sekcji z kartami statystyk (dokumenty, konwersacje, zapytania AI, aktywność tygodnia) w jednym komponencie z gradientowym tłem.
 - **Kalendarz**: widget wspiera tryby miesiąc/tydzień; widok tygodniowy ma 7 kolumn z sekcją wydarzeń całodziennych i blokami 6‑godzinnymi przewijanymi bez widocznych pasków.
 
-## 5. Tool calling (narzędzia LLM)
+## 4.10. Voice Command Processor - Stefan 2.0 (2026-01-16)
 
-LLM wywołuje narzędzia aplikacyjne zamiast „wymyślać” wyniki. Każde narzędzie:
+System obsługi głosowej umożliwiający sterowanie aplikacją za pomocą komend głosowych.
 
-- ma schemat wejścia/wyjścia (Zod), wersję (`v1`),
-- loguje `traceId`,
-- zwraca dane do cytowania.
+**Stefan 2.0 - Tryb czuwania:**
 
-Minimalny zestaw (MVP):
+- Wake word: **"Hej Stefan"** (warianty: "Hey Stefan", "Cześć Stefan", "Ok Stefan")
+- Słowo wykonania: **"wykonaj"**, "tak", "potwierdź"
+- Tryby: `off` → `standby` → `active` → `processing`
+
+**Akcje głosowe (`VoiceActionService`):**
+
+| Kategoria  | Akcje                                                               |
+| ---------- | ------------------------------------------------------------------- |
+| Kalendarz  | `calendar_add`, `calendar_list`, `calendar_edit`, `calendar_delete` |
+| Zadania    | `task_add`, `task_list`, `task_complete`                            |
+| Alerty     | `alert_check`, `alert_dismiss`                                      |
+| Dokumenty  | `document_search`, `document_open`                                  |
+| QuickTools | `quick_tool` (interpelacja, pismo, protokół, budżet)                |
+| Nawigacja  | `navigate` (pulpit, dokumenty, czat, ustawienia)                    |
+
+**Komponenty:**
+
+- `apps/api/src/services/voice-action-service.ts` - serwis akcji głosowych
+- `apps/api/src/routes/voice.ts` - endpointy `/voice/action`, `/voice/detect-wake-word`
+- `apps/frontend/src/contexts/VoiceContext.tsx` - globalny kontekst głosowy
+- `apps/frontend/src/components/layout/sidebar.tsx` - `StefanVoiceButton`
+
+**Narzędzia AI Orchestrator:**
 
 - `search_documents`
 - `get_document`
