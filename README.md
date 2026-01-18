@@ -1,4 +1,4 @@
-# Asystent Radnego - Agent AI "Winsdurf"
+# Asystent Radnego - Agent AI 
 
 Agent analityczno-kontrolny wspierający Radnego w kontroli legalności, zasadności i skutków uchwał samorządowych.
 
