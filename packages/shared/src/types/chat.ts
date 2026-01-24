@@ -71,7 +71,7 @@ export const ChatResponseSchema = z.object({
         id: z.string().uuid(),
         title: z.string(),
         relevanceScore: z.number(),
-      })
+      }),
     )
     .optional(),
   suggestedActions: z
@@ -80,7 +80,7 @@ export const ChatResponseSchema = z.object({
         type: z.string(),
         label: z.string(),
         data: z.record(z.unknown()).optional(),
-      })
+      }),
     )
     .optional(),
 });
@@ -202,7 +202,30 @@ export function buildSystemPrompt(context: SystemPromptContext): string {
   // Wyciągnij imię z pełnego imienia i nazwiska
   const firstName = userName?.split(" ")[0] || "";
 
+  // Aktualna data - KLUCZOWE dla poprawnego rozumowania temporalnego
+  const now = new Date();
+  const currentDate = now.toLocaleDateString("pl-PL", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1; // 0-indexed
+
   return `Jesteś doświadczonym Asystentem Radnego - inteligentnym systemem AI wspierającym pracę radnych samorządowych.
+
+# ⏰ AKTUALNA DATA I CZAS
+
+**DZISIAJ JEST: ${currentDate}**
+**ROK: ${currentYear}**
+
+**WAŻNE - Rozumowanie temporalne:**
+- Gdy użytkownik pyta o "ostatnią" sesję/wydarzenie - szukaj w roku ${currentYear} lub ${currentYear - 1}
+- "Ostatnia grudniowa sesja" = grudzień ${currentMonth >= 1 && currentMonth <= 6 ? currentYear - 1 : currentYear}
+- "W tym roku" = ${currentYear}
+- "W zeszłym roku" = ${currentYear - 1}
+- Zawsze uwzględniaj aktualną datę przy interpretacji pytań o czas
 
 # ZASADA KLUCZOWA - PERSONALIZACJA
 

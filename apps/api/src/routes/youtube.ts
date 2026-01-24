@@ -488,15 +488,37 @@ export const youtubeRoutes: FastifyPluginAsync = async (fastify) => {
       const queueJobs = await getUserTranscriptionJobs(user.id);
       const queueJobsMap = new Map(queueJobs.map((j) => [j.id, j]));
 
+      // Debug: loguj mapowanie
+      if (queueJobs.length > 0) {
+        fastify.log.info(
+          `[YouTube/jobs] Queue jobs: ${queueJobs.map((j) => `${j.id.slice(0, 8)}:${j.progress}%`).join(", ")}`,
+        );
+      }
+
       // Połącz dane z bazy z postępem z queue
       const jobsWithDetails = (dbJobs || []).map((dbJob) => {
         const queueJob = queueJobsMap.get(dbJob.id);
 
+        // Jeśli zadanie jest aktywne w bazie ale nie ma go w Redis queue - jest osierocone
+        const isOrphaned =
+          !queueJob &&
+          !["completed", "failed"].includes(dbJob.status) &&
+          dbJob.status !== "pending";
+
+        // Dla osierocononych zadań - używaj danych z bazy (worker aktualizuje bazę)
+        const effectiveProgress = queueJob?.progress ?? dbJob.progress ?? 0;
+        const effectiveMessage =
+          queueJob?.progressMessage ||
+          dbJob.progress_message ||
+          (isOrphaned
+            ? "Przetwarzanie (brak połączenia z kolejką)..."
+            : "Oczekuje...");
+
         return {
           id: dbJob.id,
           status: queueJob?.status || dbJob.status,
-          progress: queueJob?.progress ?? dbJob.progress,
-          progressMessage: queueJob?.progressMessage || dbJob.progress_message,
+          progress: effectiveProgress,
+          progressMessage: effectiveMessage,
           videoTitle: dbJob.video_title,
           videoUrl: dbJob.video_url,
           createdAt: queueJob?.createdAt || new Date(dbJob.created_at),

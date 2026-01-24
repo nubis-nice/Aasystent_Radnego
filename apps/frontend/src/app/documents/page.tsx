@@ -29,6 +29,23 @@ import { supabase } from "@/lib/supabase/client";
 import { groupDocuments, type GroupingScheme } from "@/lib/documents/grouping";
 import { DocumentGroupView } from "@/components/documents/DocumentGroupView";
 
+// Normalizacja tytułu - usuwa śmieci i zamienia angielskie nazwy na polskie
+function normalizeTitle(title: string | null | undefined): string {
+  if (!title) return "Bez tytułu";
+  return title
+    .replace(/\s*\|.*$/g, "") // Usuń " | Urząd Miejski..."
+    .replace(/\s*-?\s*System\s+Rada.*$/gi, "") // Usuń "System Rada"
+    .replace(/\s*-?\s*BIP\s*.*$/gi, "") // Usuń "BIP..."
+    .replace(/\bresolution\s+nr\b/gi, "Uchwała nr")
+    .replace(/\bresolution\b/gi, "Uchwała")
+    .replace(/\bprotocol\b/gi, "Protokół")
+    .replace(/\bdraft\b/gi, "Projekt")
+    .replace(/\battachment\b/gi, "Załącznik")
+    .replace(/\bsession\b/gi, "Sesja")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 interface UserPreferences {
   default_sort_by: string;
   default_sort_order: string;
@@ -46,7 +63,7 @@ export default function DocumentsPage() {
   const [documentType, setDocumentType] = useState("");
   const [priority, setPriority] = useState<DocumentPriority | "">("");
   const [sortBy, setSortBy] = useState<"score" | "date" | "title" | "number">(
-    "date"
+    "date",
   );
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [dateRange, setDateRange] = useState("");
@@ -86,7 +103,7 @@ export default function DocumentsPage() {
           // Zastosuj domyślne sortowanie
           if (prefs.default_sort_by) {
             setSortBy(
-              prefs.default_sort_by as "score" | "date" | "title" | "number"
+              prefs.default_sort_by as "score" | "date" | "title" | "number",
             );
           }
           if (prefs.default_sort_order) {
@@ -179,7 +196,7 @@ export default function DocumentsPage() {
           context: result.chatContext,
           document: result.document,
           references: result.references,
-        })
+        }),
       );
 
       router.push("/chat?analysis=true");
@@ -233,7 +250,7 @@ export default function DocumentsPage() {
         if (userError || !user) {
           console.log(
             "[Documents] No valid user, redirecting to login",
-            userError?.message
+            userError?.message,
           );
           // Brak sesji - przekieruj do logowania BEZ wywoływania API
           window.location.href = "/login";
@@ -245,7 +262,7 @@ export default function DocumentsPage() {
           "[Documents] Using sortBy:",
           sortBy,
           "sortOrder:",
-          sortOrder
+          sortOrder,
         );
 
         // Użytkownik zalogowany - pobierz dane
@@ -331,7 +348,7 @@ export default function DocumentsPage() {
     if (showOnlyMyCommittees && userCommittees.length > 0) {
       const text = (doc.title + " " + (doc.summary || "")).toLowerCase();
       const matchesCommittee = userCommittees.some((committee) =>
-        text.includes(committee.toLowerCase())
+        text.includes(committee.toLowerCase()),
       );
       if (!matchesCommittee) return false;
     }
@@ -509,7 +526,7 @@ export default function DocumentsPage() {
               value={sortBy}
               onChange={(e) =>
                 setSortBy(
-                  e.target.value as "score" | "date" | "title" | "number"
+                  e.target.value as "score" | "date" | "title" | "number",
                 )
               }
               className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-medium cursor-pointer"
@@ -577,7 +594,7 @@ export default function DocumentsPage() {
                       show_only_my_committees: showOnlyMyCommittees,
                       updated_at: new Date().toISOString(),
                     },
-                    { onConflict: "user_id" }
+                    { onConflict: "user_id" },
                   );
 
                 if (error) {
@@ -634,8 +651,8 @@ export default function DocumentsPage() {
                   {dateRange === "week"
                     ? "Tydzień"
                     : dateRange === "month"
-                    ? "Miesiąc"
-                    : "Rok"}
+                      ? "Miesiąc"
+                      : "Rok"}
                   <X
                     className="h-3 w-3 cursor-pointer"
                     onClick={() => setDateRange("")}
@@ -681,7 +698,7 @@ export default function DocumentsPage() {
               filteredDocuments,
               groupingScheme,
               sortBy,
-              sortOrder
+              sortOrder,
             )}
             onAnalyze={(id) => handleAnalyze(id)}
             analyzingId={analyzingId}
@@ -711,7 +728,7 @@ export default function DocumentsPage() {
             // Ekstrakcja charakterystycznych szczegółów (dla top 5)
             const extractDetails = (
               content: string | undefined,
-              summary: string | null
+              summary: string | null,
             ) => {
               const details: string[] = [];
               const text =
@@ -719,26 +736,26 @@ export default function DocumentsPage() {
 
               // Szukaj kwot
               const amountMatch = text.match(
-                /(\d{1,3}(?:\s?\d{3})*(?:[.,]\d{2})?)\s*(?:zł|PLN|złotych)/i
+                /(\d{1,3}(?:\s?\d{3})*(?:[.,]\d{2})?)\s*(?:zł|PLN|złotych)/i,
               );
               if (amountMatch) details.push(`💰 ${amountMatch[0]}`);
 
               // Szukaj numerów uchwał
               const resolutionMatch = text.match(
-                /(?:uchwał[ay]?\s*(?:nr|numer)?\s*)([IVXLCDM]+\/\d+\/\d+|\d+\/\d+\/\d+)/i
+                /(?:uchwał[ay]?\s*(?:nr|numer)?\s*)([IVXLCDM]+\/\d+\/\d+|\d+\/\d+\/\d+)/i,
               );
               if (resolutionMatch)
                 details.push(`📜 Uchwała ${resolutionMatch[1]}`);
 
               // Szukaj terminów
               const deadlineMatch = text.match(
-                /(?:termin|do dnia|najpóźniej)[:\s]+(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{4})/i
+                /(?:termin|do dnia|najpóźniej)[:\s]+(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{4})/i,
               );
               if (deadlineMatch) details.push(`⏰ Termin: ${deadlineMatch[1]}`);
 
               // Szukaj lokalizacji
               const locationMatch = text.match(
-                /(?:w |przy |ul\.|ulica)\s*([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+(?:\s+[A-ZĄĆĘŁŃÓŚŹŻ]?[a-ząćęłńóśźż]+)*)/
+                /(?:w |przy |ul\.|ulica)\s*([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+(?:\s+[A-ZĄĆĘŁŃÓŚŹŻ]?[a-ząćęłńóśźż]+)*)/,
               );
               if (locationMatch) details.push(`📍 ${locationMatch[0].trim()}`);
 
@@ -770,10 +787,10 @@ export default function DocumentsPage() {
                         doc.score.priority === "critical"
                           ? "#ef4444"
                           : doc.score.priority === "high"
-                          ? "#f59e0b"
-                          : doc.score.priority === "medium"
-                          ? "#3b82f6"
-                          : "#9ca3af",
+                            ? "#f59e0b"
+                            : doc.score.priority === "medium"
+                              ? "#3b82f6"
+                              : "#9ca3af",
                     }}
                   />
                 )}
@@ -805,7 +822,7 @@ export default function DocumentsPage() {
                             isTopDocument ? "text-xl" : "text-lg"
                           } font-bold text-text mb-2 pr-16`}
                         >
-                          {doc.title}
+                          {normalizeTitle(doc.title)}
                         </h3>
                         {/* Score badge */}
                         {doc.score && !isTopDocument && (
@@ -833,7 +850,7 @@ export default function DocumentsPage() {
                                 {contentDate ||
                                   (doc.publish_date
                                     ? new Date(
-                                        doc.publish_date
+                                        doc.publish_date,
                                       ).toLocaleDateString("pl-PL")
                                     : "brak daty")}
                               </span>
@@ -880,7 +897,7 @@ export default function DocumentsPage() {
                             <span className="flex items-center gap-1">
                               <Clock className="h-4 w-4" />
                               {new Date(doc.publish_date).toLocaleDateString(
-                                "pl-PL"
+                                "pl-PL",
                               )}
                             </span>
                           )}

@@ -8,8 +8,9 @@ import { VoiceProvider } from "@/contexts/VoiceContext";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Asystent Radnego",
-  description: "Inteligentny asystent dla radnych samorządowych",
+  title: "bezRADNY",
+  description:
+    "Agent AI wspierający radnych samorządowych - bo z nami radny nigdy nie jest bezradny",
 };
 
 export default function RootLayout({

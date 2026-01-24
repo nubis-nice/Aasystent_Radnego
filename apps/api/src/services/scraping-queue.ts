@@ -3,9 +3,12 @@
  *
  * Zarządza kolejką zadań scrapingu z limitem równoczesnych procesów.
  * Implementuje priorytetyzację źródeł i równoległe przetwarzanie.
+ * Używa BullMQ + Redis dla persistence.
  */
 
 import EventEmitter from "events";
+import { wsHub } from "./websocket-hub.js";
+import { backgroundTaskService } from "./background-task-service.js";
 
 // ============================================================================
 // TYPES
@@ -64,7 +67,7 @@ export class ScrapingQueueManager extends EventEmitter {
     };
 
     console.log(
-      `[ScrapingQueue] Initialized: maxConcurrent=${this.config.maxConcurrent}, maxPagesParallel=${this.config.maxPagesParallel}`
+      `[ScrapingQueue] Initialized: maxConcurrent=${this.config.maxConcurrent}, maxPagesParallel=${this.config.maxPagesParallel}`,
     );
   }
 
@@ -72,7 +75,7 @@ export class ScrapingQueueManager extends EventEmitter {
    * Singleton - jedna instancja kolejki dla całej aplikacji
    */
   static getInstance(
-    config?: Partial<ScrapingQueueConfig>
+    config?: Partial<ScrapingQueueConfig>,
   ): ScrapingQueueManager {
     if (!ScrapingQueueManager.instance) {
       ScrapingQueueManager.instance = new ScrapingQueueManager(config);
@@ -89,24 +92,24 @@ export class ScrapingQueueManager extends EventEmitter {
     options?: {
       priority?: number;
       config?: Record<string, unknown>;
-    }
+    },
   ): Promise<string> {
     // Sprawdź czy zadanie dla tego źródła już istnieje
     const existingQueued = this.queue.find((j) => j.sourceId === sourceId);
     const existingRunning = Array.from(this.runningJobs.values()).find(
-      (j) => j.sourceId === sourceId
+      (j) => j.sourceId === sourceId,
     );
 
     if (existingQueued) {
       console.log(
-        `[ScrapingQueue] Job for source ${sourceId} already queued, skipping`
+        `[ScrapingQueue] Job for source ${sourceId} already queued, skipping`,
       );
       return existingQueued.id;
     }
 
     if (existingRunning) {
       console.log(
-        `[ScrapingQueue] Job for source ${sourceId} already running, skipping`
+        `[ScrapingQueue] Job for source ${sourceId} already running, skipping`,
       );
       return existingRunning.id;
     }
@@ -127,10 +130,33 @@ export class ScrapingQueueManager extends EventEmitter {
     this.queue.sort((a, b) => b.priority - a.priority);
 
     console.log(
-      `[ScrapingQueue] Enqueued job ${job.id} for source ${sourceId} (priority: ${job.priority}, queue size: ${this.queue.length})`
+      `[ScrapingQueue] Enqueued job ${job.id} for source ${sourceId} (priority: ${job.priority}, queue size: ${this.queue.length})`,
     );
 
     this.emit("job:queued", job);
+
+    // Powiadom przez WebSocket
+    wsHub.registerTask(userId, {
+      id: job.id,
+      type: "scraping",
+      status: "queued",
+      title: `Scraping źródła`,
+      description: `Zadanie w kolejce (pozycja: ${this.queue.length})`,
+      startedAt: job.createdAt.toISOString(),
+    });
+
+    // Zapisz do background_tasks dla Supabase Realtime
+    backgroundTaskService
+      .createTask({
+        userId,
+        taskType: "scraping",
+        title: `Scraping źródła`,
+        description: `Zadanie w kolejce (pozycja: ${this.queue.length})`,
+        metadata: { jobId: job.id, sourceId },
+      })
+      .catch((err) =>
+        console.error("[ScrapingQueue] Background task error:", err),
+      );
 
     // Uruchom przetwarzanie kolejki
     this.processQueue();
@@ -173,16 +199,31 @@ export class ScrapingQueueManager extends EventEmitter {
     this.runningJobs.set(job.id, job);
 
     console.log(
-      `[ScrapingQueue] Starting job ${job.id} for source ${job.sourceId} (${this.runningJobs.size}/${this.config.maxConcurrent} running)`
+      `[ScrapingQueue] Starting job ${job.id} for source ${job.sourceId} (${this.runningJobs.size}/${this.config.maxConcurrent} running)`,
     );
 
     this.emit("job:started", job);
 
+    // Powiadom przez WebSocket - zadanie uruchomione
+    wsHub.updateTask(job.userId, job.id, {
+      status: "running",
+      description: `Scraping w toku...`,
+    });
+
+    // Aktualizuj background_tasks
+    backgroundTaskService
+      .updateByJobId(job.id, {
+        status: "running",
+        description: "Scraping w toku...",
+      })
+      .catch((err) =>
+        console.error("[ScrapingQueue] Background task error:", err),
+      );
+
     try {
       // Import dynamiczny aby uniknąć circular dependency
-      const { intelligentScrapeDataSource } = await import(
-        "./intelligent-scraper.js"
-      );
+      const { intelligentScrapeDataSource } =
+        await import("./intelligent-scraper.js");
 
       // Uruchom scraping z konfiguracją równoległości
       const result = await intelligentScrapeDataSource(
@@ -191,7 +232,7 @@ export class ScrapingQueueManager extends EventEmitter {
         {
           ...job.config,
           maxPagesParallel: this.config.maxPagesParallel, // Przekaż konfigurację równoległości
-        }
+        },
       );
 
       // Zadanie zakończone sukcesem
@@ -205,10 +246,27 @@ export class ScrapingQueueManager extends EventEmitter {
       console.log(
         `[ScrapingQueue] Completed job ${job.id} for source ${
           job.sourceId
-        } (duration: ${job.finishedAt.getTime() - job.startedAt!.getTime()}ms)`
+        } (duration: ${job.finishedAt.getTime() - job.startedAt!.getTime()}ms)`,
       );
 
       this.emit("job:completed", job);
+
+      // Powiadom przez WebSocket - zadanie zakończone
+      wsHub.updateTask(job.userId, job.id, {
+        status: "completed",
+        description: `Scraping zakończony pomyślnie`,
+      });
+
+      // Aktualizuj background_tasks
+      backgroundTaskService
+        .updateByJobId(job.id, {
+          status: "completed",
+          progress: 100,
+          description: "Scraping zakończony pomyślnie",
+        })
+        .catch((err) =>
+          console.error("[ScrapingQueue] Background task error:", err),
+        );
     } catch (error) {
       // Zadanie zakończone błędem
       job.status = "failed";
@@ -220,10 +278,27 @@ export class ScrapingQueueManager extends EventEmitter {
 
       console.error(
         `[ScrapingQueue] Failed job ${job.id} for source ${job.sourceId}:`,
-        error
+        error,
       );
 
       this.emit("job:failed", job);
+
+      // Powiadom przez WebSocket - błąd zadania
+      wsHub.updateTask(job.userId, job.id, {
+        status: "failed",
+        description: `Błąd: ${job.error}`,
+        error: job.error,
+      });
+
+      // Aktualizuj background_tasks
+      backgroundTaskService
+        .updateByJobId(job.id, {
+          status: "failed",
+          error_message: job.error,
+        })
+        .catch((err) =>
+          console.error("[ScrapingQueue] Background task error:", err),
+        );
     } finally {
       // Kontynuuj przetwarzanie kolejki
       this.processQueue();
@@ -304,6 +379,63 @@ export class ScrapingQueueManager extends EventEmitter {
   getParallelConfig(): { maxPagesParallel: number } {
     return {
       maxPagesParallel: this.config.maxPagesParallel,
+    };
+  }
+
+  /**
+   * Dodaj wiele źródeł do kolejki naraz (bulk enqueue)
+   * Używane przez przycisk "Scrapuj wszystkie"
+   */
+  async enqueueBulk(
+    sources: Array<{
+      sourceId: string;
+      userId: string;
+      priority?: number;
+      sourceType?: string;
+    }>,
+  ): Promise<{
+    queued: string[];
+    skipped: string[];
+    totalQueued: number;
+  }> {
+    const queued: string[] = [];
+    const skipped: string[] = [];
+
+    for (const source of sources) {
+      // Sprawdź czy źródło już jest w kolejce lub się wykonuje
+      const existingQueued = this.queue.find(
+        (j) => j.sourceId === source.sourceId,
+      );
+      const existingRunning = Array.from(this.runningJobs.values()).find(
+        (j) => j.sourceId === source.sourceId,
+      );
+
+      if (existingQueued || existingRunning) {
+        skipped.push(source.sourceId);
+        continue;
+      }
+
+      // Oblicz priorytet na podstawie typu źródła
+      let priority = source.priority ?? this.config.defaultPriority;
+      if (source.sourceType === "youtube") priority += 20;
+      if (source.sourceType === "bip" || source.sourceType === "scraper_bip")
+        priority += 15;
+      if (source.sourceType === "municipality") priority += 10;
+
+      const jobId = await this.enqueue(source.sourceId, source.userId, {
+        priority,
+      });
+      queued.push(jobId);
+    }
+
+    console.log(
+      `[ScrapingQueue] Bulk enqueue: ${queued.length} queued, ${skipped.length} skipped`,
+    );
+
+    return {
+      queued,
+      skipped,
+      totalQueued: queued.length,
     };
   }
 }

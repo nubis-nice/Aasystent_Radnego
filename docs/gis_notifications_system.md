@@ -9,33 +9,27 @@ GIS to system globalnych powiadomień o nowościach z instytucji lokalnych i kra
 ### Nowe typy źródeł danych:
 
 1. **`national_park`** - Parki narodowe
-
    - Drawieński Park Narodowy
    - Aktualności, wydarzenia, ochrona przyrody
 
 2. **`hospital`** - Szpitale
-
    - Szpital Powiatowy w Drawsku
    - Godziny przyjęć, ogłoszenia, informacje
 
 3. **`school`** - Szkoły
-
    - Szkoły w Gminie Drawno
    - Aktualności, wydarzenia, ogłoszenia
 
 4. **`cultural`** - Instytucje kultury
-
    - Gminny Ośrodek Kultury
    - Biblioteka Publiczna
    - Wydarzenia, wystawy, koncerty
 
 5. **`environmental`** - Ochrona środowiska
-
    - WIOŚ (Wojewódzki Inspektorat Ochrony Środowiska)
    - Raporty, kontrole, decyzje
 
 6. **`transport`** - Transport publiczny
-
    - PKS - Rozkład jazdy
    - Zmiany w kursach, ogłoszenia
 
@@ -449,6 +443,66 @@ Usuwa powiadomienia starsze niż 90 dni, które zostały przeczytane lub odrzuco
 - Push notifications zawierają minimalną informację
 - Pełna treść tylko w aplikacji (po zalogowaniu)
 
+## REST Polling Real-Time (ZAIMPLEMENTOWANE)
+
+> ✅ **STATUS:** Polling jest zaimplementowane i aktywne.
+> Najprostsze i najbardziej stabilne rozwiązanie. Odświeżanie co 15 sekund.
+
+### Backend
+
+**Serwis:** `apps/api/src/services/websocket-hub.ts`
+
+```typescript
+import { wsHub } from "./websocket-hub.js";
+
+// Rejestracja zadania
+wsHub.registerTask(userId, {
+  id: "task-123",
+  type: "scraping" | "transcription" | "ocr" | "embedding" | "analysis",
+  status: "queued" | "running" | "completed" | "failed",
+  title: "Scraping źródła",
+  description: "Zadanie w kolejce",
+});
+
+// Aktualizacja statusu
+wsHub.updateTask(userId, "task-123", {
+  status: "running",
+  progress: 50,
+  description: "Przetwarzanie...",
+});
+
+// Powiadomienie GIS
+wsHub.sendGISNotification(userId, {
+  id: "notif-123",
+  notification_type: "new_document",
+  priority: "high",
+  title: "Nowy dokument",
+  message: "Dodano uchwałę...",
+});
+```
+
+**Endpoint:** `GET /api/ws` (WebSocket)
+
+**Statystyki:** `GET /api/ws/stats`
+
+### Frontend
+
+**Hook:** `apps/frontend/src/lib/hooks/useWebSocket.ts`
+
+```typescript
+const { isConnected, activeTasks, notifications } = useWebSocket({
+  enabled: true,
+  onTaskComplete: (task) => console.log("Done:", task),
+  onGISNotification: (n) => toast(n.title),
+});
+```
+
+### Integracje
+
+- **ScrapingQueue** - powiadomienia o zadaniach scrapingu
+- **TranscriptionWorker** - powiadomienia o transkrypcjach
+- **DashboardPage** - widget "Przetwarzanie danych" z real-time statusem
+
 ## Roadmap
 
 ### Faza 1 (MVP) - 1 tydzień
@@ -456,7 +510,8 @@ Usuwa powiadomienia starsze niż 90 dni, które zostały przeczytane lub odrzuco
 - ✅ Schemat bazy danych
 - ✅ Triggery i funkcje
 - ✅ Typy TypeScript
-- ⏳ Backend API
+- ✅ Backend API
+- ✅ WebSocket real-time
 - ⏳ Frontend UI (dzwonek, panel)
 
 ### Faza 2 - 1 tydzień

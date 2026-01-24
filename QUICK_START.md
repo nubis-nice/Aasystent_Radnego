@@ -1,4 +1,4 @@
-# 🚀 Quick Start - Agent AI "Winsdurf"
+# 🚀 Quick Start - ~~bez~~RADNY
 
 ## ✅ Checklist uruchomienia
 
@@ -201,4 +201,4 @@ npm run build:shared
 
 ---
 
-**System gotowy! Powodzenia! 🚀**
+**~~bez~~RADNY gotowy! Powodzenia! 🚀**

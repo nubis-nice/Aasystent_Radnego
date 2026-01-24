@@ -18,6 +18,9 @@ import { KrsService } from "./krs-service.js";
 import { CeidgService } from "./ceidg-service.js";
 import { GdosService } from "./gdos-service.js";
 import { VoiceActionService } from "./voice-action-service.js";
+import { semanticDocumentSearch } from "./semantic-document-discovery.js";
+import { semanticWebSearch } from "./semantic-web-search.js";
+import { cascadeSearch } from "./search-cascade.js";
 import { getLLMClient, getAIConfig } from "../ai/index.js";
 
 export type ToolType =
@@ -37,6 +40,9 @@ export type ToolType =
   | "krs_registry"
   | "ceidg_registry"
   | "gdos_environmental"
+  | "data_sources_search"
+  | "verified_web_search"
+  | "exhaustive_search"
   | "voice_control"
   | "app_navigation"
   | "calendar_add"
@@ -106,6 +112,18 @@ const INTENT_DETECTION_PROMPT = `Jesteś ekspertem od analizy intencji użytkown
 - **rag_search** → uchwała, protokół, dokument lokalny (bez numeru sesji)
 - **document_fetch** → pobranie konkretnego dokumentu po numerze/referencji
 - **budget_analysis** → budżet gminy, wydatki, dochody, finanse
+
+## ŹRÓDŁA DANYCH:
+- **data_sources_search** → "przeszukaj źródła", "scraping", "pobierz dane ze źródeł", "wyszukaj w źródłach danych", "aktualizuj dane", "synchronizuj źródła", "uruchom wyszukiwanie"
+
+## WYSZUKIWANIE W INTERNECIE Z WERYFIKACJĄ:
+- **verified_web_search** → "sprawdź w internecie", "zweryfikuj informację", "czy to prawda", "fake news", "potwierdź", "wiarygodność", "wyszukaj z weryfikacją"
+
+## WYCZERPUJĄCE WYSZUKIWANIE KASKADOWE:
+- **exhaustive_search** → "przeszukaj wszystko", "wyczerpujące wyszukiwanie", "przeszukaj wszystkie źródła", "znajdź gdziekolwiek", "szukaj wszędzie", "pełne wyszukiwanie", "sprawdź wszystkie bazy"
+
+## SESJE RADY (bez numeru):
+- **session_search** → "ostatnia sesja", "sesja grudniowa", "sesja rady", "sesja z grudnia" (gdy brak konkretnego numeru, szukaj najnowszej)
 
 ## INNE:
 - **person_search** → pytanie o KONKRETNĄ OSOBĘ z imienia/nazwiska
@@ -328,6 +346,59 @@ export class AIToolOrchestrator {
           data,
           executionTimeMs: Date.now() - startTime,
         });
+
+        // ZASADA OGÓLNA: Fallback do exhaustive_search dla narzędzi wyszukiwania bez wyników
+        const searchTools: ToolType[] = [
+          "session_search",
+          "rag_search",
+          "person_search",
+          "document_fetch",
+          "budget_analysis",
+          "youtube_search",
+          "data_sources_search",
+        ];
+
+        if (searchTools.includes(tool)) {
+          const searchData = data as {
+            results?: unknown[];
+            documents?: unknown[];
+            ragResults?: unknown[];
+            videos?: unknown[];
+            totalFound?: number;
+          };
+
+          const hasResults =
+            (searchData?.results?.length || 0) > 0 ||
+            (searchData?.documents?.length || 0) > 0 ||
+            (searchData?.ragResults?.length || 0) > 0 ||
+            (searchData?.videos?.length || 0) > 0 ||
+            (searchData?.totalFound || 0) > 0;
+
+          if (!hasResults && !tools.includes("exhaustive_search")) {
+            console.log(
+              `[Orchestrator] ${tool} empty, fallback to exhaustive_search`,
+            );
+            const cascadeStartTime = Date.now();
+            try {
+              const cascadeData = await this.executeSingleTool(
+                "exhaustive_search",
+                userMessage,
+                intent,
+              );
+              results.push({
+                tool: "exhaustive_search",
+                success: true,
+                data: cascadeData,
+                executionTimeMs: Date.now() - cascadeStartTime,
+              });
+            } catch (cascadeError) {
+              console.error(
+                "[Orchestrator] Exhaustive search fallback failed:",
+                cascadeError,
+              );
+            }
+          }
+        }
       } catch (error) {
         results.push({
           tool,
@@ -378,15 +449,81 @@ export class AIToolOrchestrator {
         const service = new SessionDiscoveryService(this.userId);
         await service.initialize();
         const sessionNumber = intent.entities.sessionNumbers[0];
+
         if (!sessionNumber || sessionNumber <= 0) {
+          // Brak numeru sesji - szukaj po kontekście (miesiąc, rok, "ostatnia")
           const ragService = new LegalSearchAPI(this.userId);
+
+          // Wykryj miesiąc z pytania
+          const monthPatterns: Record<string, string> = {
+            stycz: "styczeń",
+            luty: "luty",
+            marz: "marzec",
+            kwie: "kwiecień",
+            maj: "maj",
+            czerw: "czerwiec",
+            lip: "lipiec",
+            sierp: "sierpień",
+            wrze: "wrzesień",
+            paźdz: "październik",
+            listop: "listopad",
+            grud: "grudzień",
+          };
+
+          let detectedMonth = "";
+          const lowerMessage = userMessage.toLowerCase();
+          for (const [pattern, month] of Object.entries(monthPatterns)) {
+            if (lowerMessage.includes(pattern)) {
+              detectedMonth = month;
+              break;
+            }
+          }
+
+          // Określ rok na podstawie aktualnej daty
+          const now = new Date();
+          const currentYear = now.getFullYear();
+          const currentMonth = now.getMonth() + 1;
+
+          // "Ostatnia grudniowa" w styczniu = grudzień poprzedniego roku
+          let targetYear = currentYear;
+          if (detectedMonth && lowerMessage.includes("ostatni")) {
+            const monthIndex =
+              [
+                "styczeń",
+                "luty",
+                "marzec",
+                "kwiecień",
+                "maj",
+                "czerwiec",
+                "lipiec",
+                "sierpień",
+                "wrzesień",
+                "październik",
+                "listopad",
+                "grudzień",
+              ].indexOf(detectedMonth) + 1;
+            if (monthIndex > currentMonth) {
+              targetYear = currentYear - 1;
+            }
+          }
+
+          // Zbuduj query z kontekstem czasowym
+          const searchQuery = detectedMonth
+            ? `sesja rady ${detectedMonth} ${targetYear}`
+            : `sesja rady ${userMessage}`;
+
+          console.log(
+            `[Session Search] No session number, searching: "${searchQuery}"`,
+          );
+
           return await ragService.search({
-            query: `sesja rady ${userMessage}`,
+            query: searchQuery,
             searchMode: "hybrid",
-            maxResults: 10,
+            maxResults: 15,
             filters: { documentTypes: ["session", "protocol", "transcript"] },
           });
         }
+
         return await service.discoverSession({
           sessionNumber,
           requestType: "ogolne",
@@ -689,6 +826,138 @@ export class AIToolOrchestrator {
         };
       }
 
+      case "verified_web_search": {
+        // Wyszukiwanie w internecie z weryfikacją wiarygodności
+        const searchQuery = intent.entities.topics[0] || userMessage;
+        const result = await semanticWebSearch(this.userId, {
+          query: searchQuery,
+          maxResults: 10,
+          minCredibility: 50,
+          requireCrossReference: true,
+        });
+        return {
+          type: "verified_web_search",
+          query: searchQuery,
+          success: result.success,
+          results: result.results.slice(0, 8),
+          summary: result.summary,
+          overallConfidence: result.overallConfidence,
+          warnings: result.warnings,
+          reliableSourcesCount: result.reliableSourcesCount,
+          sourcesAnalyzed: result.sourcesAnalyzed,
+          source: "Zweryfikowane wyszukiwanie internetowe",
+        };
+      }
+
+      case "data_sources_search": {
+        // Przeszukaj wszystkie źródła danych użytkownika (dokumenty + API)
+        const searchQuery = intent.entities.topics[0] || userMessage;
+
+        // 1. Wyszukaj w lokalnych dokumentach (RAG)
+        const ragResult = await semanticDocumentSearch(this.userId, {
+          query: searchQuery,
+          maxResults: 15,
+          minRelevance: 0.3,
+          deepCrawl: true,
+          extractPDFs: true,
+        });
+
+        // 2. Wywołaj serwisy API równolegle
+        const apiResults: Array<{
+          source: string;
+          data: unknown;
+          success: boolean;
+        }> = [];
+
+        try {
+          // GUS - statystyki
+          const gusService = new GUSApiService();
+          const gusData = await gusService.getSubjects();
+          if (gusData && gusData.length > 0) {
+            apiResults.push({
+              source: "GUS BDL",
+              data: { subjects: gusData.slice(0, 5) },
+              success: true,
+            });
+          }
+        } catch {
+          /* ignore */
+        }
+
+        try {
+          // ISAP - akty prawne
+          const isapService = new ISAPApiService();
+          const isapData = await isapService.searchByTitle(
+            searchQuery,
+            undefined,
+            5,
+          );
+          if (isapData && isapData.length > 0) {
+            apiResults.push({
+              source: "ISAP",
+              data: { acts: isapData },
+              success: true,
+            });
+          }
+        } catch {
+          /* ignore */
+        }
+
+        try {
+          // EU Funds - dotacje
+          const euService = new EUFundsService();
+          const euData = await euService.getActiveCompetitions();
+          if (euData && euData.length > 0) {
+            apiResults.push({
+              source: "Fundusze UE",
+              data: { competitions: euData.slice(0, 5) },
+              success: true,
+            });
+          }
+        } catch {
+          /* ignore */
+        }
+
+        return {
+          type: "data_sources_search",
+          query: searchQuery,
+          success: ragResult.success || apiResults.length > 0,
+          totalFound:
+            ragResult.totalFound +
+            apiResults.reduce((sum, r) => sum + (r.success ? 1 : 0), 0),
+          newDocumentsProcessed: ragResult.newDocumentsProcessed,
+          documents: ragResult.documents?.slice(0, 10) || [],
+          apiResults: apiResults,
+          processingTimeMs: ragResult.processingTimeMs,
+          source: "Źródła danych użytkownika (dokumenty + API)",
+        };
+      }
+
+      case "exhaustive_search": {
+        // Kaskadowe wyszukiwanie - wyczerpuje wszystkie źródła
+        const searchQuery = intent.entities.topics[0] || userMessage;
+        const sessionNumber = intent.entities.sessionNumbers[0];
+
+        const cascadeResult = await cascadeSearch(this.userId, searchQuery, {
+          exhaustive: true,
+          maxResults: 20,
+          sessionNumber,
+        });
+
+        return {
+          type: "exhaustive_search",
+          query: searchQuery,
+          success: cascadeResult.success,
+          totalResults: cascadeResult.totalResults,
+          sourcesQueried: cascadeResult.sourcesQueried,
+          sourcesWithResults: cascadeResult.sourcesWithResults,
+          results: cascadeResult.results,
+          exhausted: cascadeResult.exhausted,
+          executionTimeMs: cascadeResult.executionTimeMs,
+          source: "Wyczerpujące wyszukiwanie kaskadowe",
+        };
+      }
+
       case "calendar_add":
       case "calendar_list":
       case "calendar_edit":
@@ -874,6 +1143,203 @@ export class AIToolOrchestrator {
         }
       }
 
+      if (result.tool === "data_sources_search") {
+        const dsData = data as {
+          type?: string;
+          query?: string;
+          success?: boolean;
+          totalFound?: number;
+          newDocumentsProcessed?: number;
+          documents?: Array<{
+            id: string;
+            title: string;
+            content?: string;
+            sourceUrl?: string;
+            documentType?: string;
+            relevanceScore?: number;
+          }>;
+          apiResults?: Array<{
+            source: string;
+            data: unknown;
+            success: boolean;
+          }>;
+        };
+
+        // Dokumenty lokalne (RAG)
+        if (dsData.documents && dsData.documents.length > 0) {
+          contextForSynthesis += `\n📚 DOKUMENTY LOKALNE (${dsData.documents.length} znalezionych):\n`;
+          for (const doc of dsData.documents.slice(0, 10)) {
+            sources.push({
+              title: doc.title,
+              url: doc.sourceUrl,
+              type: doc.documentType || "dokument",
+            });
+            contextForSynthesis += `- ${doc.title}${doc.relevanceScore ? ` (trafność: ${Math.round(doc.relevanceScore * 100)}%)` : ""}\n`;
+            if (doc.content) {
+              contextForSynthesis += `  ${doc.content.substring(0, 300)}...\n`;
+            }
+          }
+        }
+
+        // Wyniki z API
+        if (dsData.apiResults && dsData.apiResults.length > 0) {
+          contextForSynthesis += `\n🔌 DANE Z SERWISÓW API:\n`;
+          for (const apiResult of dsData.apiResults) {
+            if (!apiResult.success) continue;
+
+            sources.push({
+              title: `${apiResult.source}`,
+              type: "API",
+            });
+
+            const apiData = apiResult.data as Record<string, unknown>;
+
+            if (apiResult.source === "ISAP" && apiData.acts) {
+              const acts = apiData.acts as Array<{
+                title: string;
+                displayAddress?: string;
+              }>;
+              contextForSynthesis += `\n⚖️ ISAP - Akty prawne (${acts.length}):\n`;
+              for (const act of acts.slice(0, 5)) {
+                contextForSynthesis += `- ${act.displayAddress || ""}: ${act.title?.substring(0, 100)}...\n`;
+              }
+            }
+
+            if (apiResult.source === "Fundusze UE" && apiData.competitions) {
+              const comps = apiData.competitions as Array<{
+                title: string;
+                program?: string;
+              }>;
+              contextForSynthesis += `\n🇪🇺 Fundusze UE - Konkursy (${comps.length}):\n`;
+              for (const comp of comps.slice(0, 5)) {
+                contextForSynthesis += `- ${comp.title} (${comp.program || ""})\n`;
+              }
+            }
+
+            if (apiResult.source === "GUS BDL" && apiData.subjects) {
+              const subjects = apiData.subjects as Array<{ name: string }>;
+              contextForSynthesis += `\n📊 GUS BDL - Dostępne kategorie (${subjects.length}):\n`;
+              for (const subj of subjects.slice(0, 5)) {
+                contextForSynthesis += `- ${subj.name}\n`;
+              }
+            }
+          }
+        }
+
+        if (!dsData.documents?.length && !dsData.apiResults?.length) {
+          contextForSynthesis += `\n📚 ŹRÓDŁA DANYCH: Nie znaleziono wyników dla zapytania "${dsData.query}".\n`;
+        }
+      }
+
+      if (result.tool === "verified_web_search") {
+        const webData = data as {
+          type?: string;
+          query?: string;
+          success?: boolean;
+          results?: Array<{
+            title: string;
+            url: string;
+            snippet?: string;
+            weightedScore: number;
+            isReliable: boolean;
+            warnings: string[];
+            credibility: {
+              overall: number;
+              domainTrust: number;
+              biasLevel: number;
+              flags: Array<{ type: string; reason: string }>;
+            };
+          }>;
+          summary?: string;
+          overallConfidence?: number;
+          warnings?: string[];
+          reliableSourcesCount?: number;
+        };
+
+        if (webData.success && webData.results && webData.results.length > 0) {
+          contextForSynthesis += `\n🔍 ZWERYFIKOWANE WYSZUKIWANIE (pewność: ${webData.overallConfidence}%, wiarygodnych źródeł: ${webData.reliableSourcesCount}):\n`;
+
+          if (webData.summary) {
+            contextForSynthesis += `\n📝 Podsumowanie: ${webData.summary}\n`;
+          }
+
+          contextForSynthesis += `\n📰 Źródła:\n`;
+          for (const res of webData.results.slice(0, 6)) {
+            const reliableIcon = res.isReliable ? "✅" : "⚠️";
+            sources.push({
+              title: res.title,
+              url: res.url,
+              type: res.isReliable
+                ? "Zweryfikowane źródło"
+                : "Wymaga weryfikacji",
+            });
+            contextForSynthesis += `${reliableIcon} ${res.title} (wiarygodność: ${res.weightedScore}%)\n`;
+            if (res.snippet) {
+              contextForSynthesis += `   ${res.snippet.substring(0, 200)}...\n`;
+            }
+            if (res.warnings.length > 0) {
+              contextForSynthesis += `   ⚠️ ${res.warnings.join(", ")}\n`;
+            }
+          }
+
+          if (webData.warnings && webData.warnings.length > 0) {
+            contextForSynthesis += `\n⚠️ OSTRZEŻENIA:\n`;
+            for (const warning of webData.warnings) {
+              contextForSynthesis += `- ${warning}\n`;
+            }
+          }
+        } else {
+          contextForSynthesis += `\n🔍 WYSZUKIWANIE: Nie znaleziono wiarygodnych źródeł dla "${webData.query}".\n`;
+        }
+      }
+
+      if (result.tool === "exhaustive_search") {
+        const cascadeData = data as {
+          type?: string;
+          query?: string;
+          success?: boolean;
+          totalResults?: number;
+          sourcesQueried?: string[];
+          sourcesWithResults?: string[];
+          results?: Array<{
+            title: string;
+            content: string;
+            url?: string;
+            relevance: number;
+            sourceType: string;
+            credibility?: number;
+          }>;
+          exhausted?: boolean;
+        };
+
+        if (
+          cascadeData.success &&
+          cascadeData.results &&
+          cascadeData.results.length > 0
+        ) {
+          contextForSynthesis += `\n🔎 WYCZERPUJĄCE WYSZUKIWANIE KASKADOWE:\n`;
+          contextForSynthesis += `Przeszukane źródła: ${cascadeData.sourcesQueried?.join(", ") || "nieznane"}\n`;
+          contextForSynthesis += `Źródła z wynikami: ${cascadeData.sourcesWithResults?.join(", ") || "nieznane"}\n`;
+          contextForSynthesis += `Znaleziono wyników: ${cascadeData.totalResults}\n\n`;
+
+          for (const r of cascadeData.results.slice(0, 10)) {
+            sources.push({
+              title: r.title,
+              url: r.url,
+              type: r.sourceType,
+            });
+            contextForSynthesis += `[${r.sourceType.toUpperCase()}] ${r.title}\n`;
+            contextForSynthesis += `${r.content.substring(0, 400)}...\n`;
+            if (r.credibility) {
+              contextForSynthesis += `(Wiarygodność: ${r.credibility}%)\n`;
+            }
+            contextForSynthesis += "\n";
+          }
+        } else {
+          contextForSynthesis += `\n🔎 WYCZERPUJĄCE WYSZUKIWANIE: Nie znaleziono wyników mimo przeszukania wszystkich źródeł (${cascadeData.sourcesQueried?.join(", ") || "wszystkich"}).\n`;
+        }
+      }
+
       if (result.tool === "geoportal_spatial") {
         const geoData = data as {
           type?: string;
@@ -1010,7 +1476,9 @@ export function shouldUseOrchestrator(message: string): boolean {
   const triggers = [
     /pobierz.*dane/i,
     /wyszukaj.*informacje/i,
+    /wyszukaj.*sesj/i,
     /znajd[źż].*o\s/i,
+    /znajd[źż].*sesj/i,
     /przeanalizuj/i,
     /sprawd[źż]/i,
     /co\s+wiadomo\s+o/i,
@@ -1018,6 +1486,9 @@ export function shouldUseOrchestrator(message: string): boolean {
     /jakie\s+są\s+dane/i,
     /pełn[ae]\s+informacj/i,
     /sesj[aię]\s+(nr|numer)?\s*\d/i,
+    /ostatni[aąeę].*sesj/i,
+    /sesj[aię].*grudni|sesj[aię].*stycz|sesj[aię].*luty|sesj[aię].*marz|sesj[aię].*kwie|sesj[aię].*maj|sesj[aię].*czerw|sesj[aię].*lip|sesj[aię].*sierp|sesj[aię].*wrze[sś]|sesj[aię].*pa[zź]dzier|sesj[aię].*listopa/i,
+    /sesj[aię].*rady/i,
     /uchwał[aęy]/i,
     /budżet/i,
     /radny|radnego|radnej/i,
@@ -1048,6 +1519,11 @@ export function shouldUseOrchestrator(message: string): boolean {
     /sprawdź.*alert|powiadomieni|co.*nowego/i,
     /utwórz.*interpelacj|napisz.*pismo|generuj.*protokół/i,
     /przejdź.*do|otwórz.*stron|pokaż.*pulpit|idź.*do/i,
+    /przeszukaj.*źród|wyszukaj.*źród|scraping|pobierz.*ze.*źród|aktualizuj.*dane|synchronizuj.*źród/i,
+    /uruchom.*wyszukiwanie|uruchom.*scraping/i,
+    /zweryfikuj.*informacj|czy.*to.*prawda|fake.*news|potwierd[źż]|wiarygodno[śs][ćc]/i,
+    /sprawd[źż].*w.*internecie|wyszukaj.*z.*weryfikacj/i,
+    /przeszukaj.*wszystk|wyczerpuj[aą]c.*wyszukiwan|szukaj.*wszędzie|pełn.*wyszukiwan|sprawdź.*wszystkie.*baz/i,
   ];
   return triggers.some((pattern) => pattern.test(message));
 }

@@ -1,4 +1,99 @@
-# Change Log
+# ~~bez~~RADNY - Change Log
+
+## 2026-01-25 — Rebranding i publikacja open source
+
+### Zmiany:
+
+1. **Nowa nazwa projektu**: ~~bez~~RADNY (z przekreślonym "bez")
+   - Slogan: "Bo z nami radny nigdy nie jest bezradny"
+   - Zmiana we wszystkich plikach dokumentacji i UI
+
+2. **Licencja**: MIT License (open source)
+
+3. **Aktualizacja metadanych**:
+   - `package.json` z nowymi metadanymi dla npm
+   - Dodanie pliku LICENSE
+   - Przygotowanie do publikacji na GitHub
+
+---
+
+## 2026-01-24 — Search Cascade - Kaskadowe wyczerpujące wyszukiwanie
+
+### Nowa architektura wyszukiwania
+
+System kaskadowego wyszukiwania, który automatycznie przeszukuje wszystkie źródła gdy główne narzędzie nie znajdzie wyników.
+
+### Komponenty
+
+1. **SearchCascadeService** (`apps/api/src/services/search-cascade.ts`):
+   - Priorytetowe przeszukiwanie źródeł w grupach
+   - Tier 1: RAG, Session (5s timeout)
+   - Tier 2: YouTube (8s timeout)
+   - Tier 3: ISAP, GUS (10s timeout)
+   - Tier 4: Web Verified (15s timeout)
+   - Tier 5: Deep Research (30s timeout)
+
+2. **Automatyczny fallback**:
+   - Gdy `session_search`, `rag_search`, `person_search`, `document_fetch`, `budget_analysis`, `youtube_search`, `data_sources_search` nie znajdą wyników
+   - Automatycznie uruchamia `exhaustive_search`
+   - Przeszukuje WSZYSTKIE źródła kaskadowo
+
+3. **Nowe narzędzie `exhaustive_search`**:
+   - Triggery: "przeszukaj wszystko", "szukaj wszędzie", "pełne wyszukiwanie"
+   - Wyczerpuje wszystkie źródła danych
+   - Deduplikacja i sortowanie wyników
+
+### Zasada ogólna
+
+```
+Pytanie użytkownika
+       ↓
+   Główne narzędzie (np. session_search)
+       ↓
+   Brak wyników?
+       ↓ TAK
+   exhaustive_search (kaskada wszystkich źródeł)
+       ↓
+   RAG → Session → YouTube → ISAP → GUS → Web → Deep Research
+```
+
+---
+
+## 2026-01-24 — Semantic Web Search z weryfikacją wiarygodności
+
+### Nowa funkcjonalność:
+
+Narzędzie do wyszukiwania w internecie z automatyczną weryfikacją wiarygodności źródeł i wykrywaniem fake newsów.
+
+### Komponenty:
+
+1. **SemanticWebSearchService** (`apps/api/src/services/semantic-web-search.ts`):
+   - Integracja z Brave Search API i DuckDuckGo (fallback)
+   - Baza zaufanych domen (gov.pl: 95, sejm.gov.pl: 95, PAP: 85)
+   - Baza niezaufanych domen i stron satyrycznych
+   - Ocena wiarygodności: domainTrust, contentQuality, factualAccuracy, biasLevel
+   - Cross-referencing między źródłami
+   - Wykrywanie sprzeczności
+
+2. **API Endpoint** (`apps/api/src/routes/web-search.ts`):
+   - `POST /api/web-search` - wyszukiwanie z weryfikacją
+   - `GET /api/web-search/trusted-domains` - lista zaufanych domen
+   - `POST /api/web-search/verify-url` - weryfikacja pojedynczego URL
+
+3. **AI Tool Orchestrator**:
+   - Nowe narzędzie `verified_web_search`
+   - Triggery: "zweryfikuj informację", "czy to prawda", "fake news"
+
+4. **Frontend** (`apps/frontend/src/app/chat/page.tsx`):
+   - Nowy przycisk "✅ Zweryfikuj w internecie"
+
+### Konfiguracja:
+
+```env
+BRAVE_SEARCH_API_KEY=your_key  # Opcjonalne, bez tego używa DuckDuckGo
+```
+
+---
 
 ## 2026-01-24 — Rozszerzona naprawa STT: powtórzenia i identyfikacja mówców
 

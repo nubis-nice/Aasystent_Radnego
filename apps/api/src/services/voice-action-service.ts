@@ -110,15 +110,26 @@ const VOICE_ACTION_PROMPT = `Jesteś asystentem głosowym Stefan. Analizujesz po
 
 4. Jeśli użytkownik mówi "wykonaj", "tak", "potwierdź" → **execute_pending**
 
+5. WAŻNE dla dat:
+   - Parsuj KAŻDĄ datę do formatu DD-MM-YYYY (np. "03-02-2026")
+   - Przykłady:
+     * "jutro" → oblicz datę i zwróć "25-01-2026"
+     * "wtorek przyszły tydzień" → oblicz datę i zwróć "03-02-2026"
+     * "3 luty 2026" → "03-02-2026"
+     * "15 stycznia" → "15-01-2026"
+   - Jeśli użytkownik nie podał roku, użyj 2026
+   - Jeśli nie możesz obliczyć daty, zwróć null i dodaj do missingInfo
+
 # ODPOWIEDŹ (TYLKO JSON):
 
 {
   "actionType": "action_name",
   "confidence": 0.95,
   "entities": {
-    "eventTitle": "opcjonalnie",
-    "eventDate": "YYYY-MM-DD lub null",
+    "eventTitle": "tytuł wydarzenia",
+    "eventDate": "DD-MM-YYYY (np. '03-02-2026', '25-01-2026')",
     "eventTime": "HH:mm lub null",
+    "eventLocation": "miejsce lub null",
     "taskTitle": "opcjonalnie",
     "documentQuery": "opcjonalnie",
     "toolName": "opcjonalnie",
@@ -130,83 +141,33 @@ const VOICE_ACTION_PROMPT = `Jesteś asystentem głosowym Stefan. Analizujesz po
 }`;
 
 /**
- * Parsuje datę z różnych formatów i relatywnych wyrażeń
+ * Parsuje datę z formatu DD-MM-YYYY
+ * LLM już przetwarza naturalne daty, tutaj tylko konwersja do Date
  */
 function parseNaturalDate(dateStr: string): Date | null {
   if (!dateStr) return null;
 
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const lowerDate = dateStr.toLowerCase().trim();
-
-  // Relatywne daty
-  if (
-    lowerDate === "dziś" ||
-    lowerDate === "dzisiaj" ||
-    lowerDate === "today"
-  ) {
-    return today;
-  }
-  if (lowerDate === "jutro" || lowerDate === "tomorrow") {
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
-    return tomorrow;
-  }
-  if (lowerDate === "pojutrze") {
-    const dayAfter = new Date(today);
-    dayAfter.setDate(today.getDate() + 2);
-    return dayAfter;
+  // Format DD-MM-YYYY (główny format z LLM)
+  const ddmmyyyyMatch = dateStr.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (ddmmyyyyMatch) {
+    const day = parseInt(ddmmyyyyMatch[1], 10);
+    const month = parseInt(ddmmyyyyMatch[2], 10) - 1;
+    const year = parseInt(ddmmyyyyMatch[3], 10);
+    return new Date(year, month, day);
   }
 
-  // "za X dni"
-  const inDaysMatch = lowerDate.match(/za\s+(\d+)\s+dni/);
-  if (inDaysMatch) {
-    const days = parseInt(inDaysMatch[1], 10);
-    const futureDate = new Date(today);
-    futureDate.setDate(today.getDate() + days);
-    return futureDate;
+  // Format DD.MM.YYYY (fallback)
+  const dotMatch = dateStr.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (dotMatch) {
+    const day = parseInt(dotMatch[1], 10);
+    const month = parseInt(dotMatch[2], 10) - 1;
+    const year = parseInt(dotMatch[3], 10);
+    return new Date(year, month, day);
   }
 
-  // Dni tygodnia (z odmianami)
-  const weekdays: Array<{ patterns: string[]; dayNum: number }> = [
-    { patterns: ["niedziela", "niedzielę", "niedziele"], dayNum: 0 },
-    { patterns: ["poniedziałek", "poniedziałku"], dayNum: 1 },
-    { patterns: ["wtorek", "wtorku", "wtorek"], dayNum: 2 },
-    { patterns: ["środa", "środę", "sroda", "srode"], dayNum: 3 },
-    { patterns: ["czwartek", "czwartku"], dayNum: 4 },
-    { patterns: ["piątek", "piątku", "piatek", "piatku"], dayNum: 5 },
-    { patterns: ["sobota", "sobotę", "sobote"], dayNum: 6 },
-  ];
-  for (const { patterns, dayNum } of weekdays) {
-    if (patterns.some((p) => lowerDate.includes(p))) {
-      const currentDay = today.getDay();
-      let daysUntil = dayNum - currentDay;
-      if (daysUntil <= 0) daysUntil += 7; // Następny tydzień
-      const targetDate = new Date(today);
-      targetDate.setDate(today.getDate() + daysUntil);
-      return targetDate;
-    }
-  }
-
-  // Format YYYY-MM-DD
+  // Format YYYY-MM-DD (fallback)
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
     return new Date(dateStr + "T00:00:00");
-  }
-
-  // Format DD.MM.YYYY lub DD-MM-YYYY
-  const euMatch = dateStr.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})$/);
-  if (euMatch) {
-    return new Date(
-      parseInt(euMatch[3]),
-      parseInt(euMatch[2]) - 1,
-      parseInt(euMatch[1]),
-    );
-  }
-
-  // Próba standardowego parsowania
-  const parsed = new Date(dateStr);
-  if (!isNaN(parsed.getTime())) {
-    return parsed;
   }
 
   return null;
@@ -338,7 +299,7 @@ export class VoiceActionService {
     clarificationQuestion?: string;
     description: string;
   }): Promise<VoiceActionResult> {
-    const { actionType, entities, missingInfo, description } = detection;
+    const { actionType, entities, missingInfo } = detection;
 
     // Jeśli brakuje kluczowych informacji
     if (
@@ -454,13 +415,14 @@ export class VoiceActionService {
     }
 
     try {
-      // Parsuj datę używając naturalnego parsera
+      // Parsuj datę z formatu DD-MM-YYYY (LLM już przetwarza naturalne daty)
       let eventDate = parseNaturalDate(date);
       if (!eventDate) {
+        console.error(`[VoiceAction] Failed to parse date: "${date}"`);
         return {
           success: false,
           actionType: "calendar_add",
-          message: `Nie rozumiem daty "${date}". Podaj datę w formacie: "jutro", "poniedziałek", "15.01.2026" lub "2026-01-15".`,
+          message: `Nie udało się przetworzyć daty "${date}". Spróbuj podać datę w innym formacie.`,
         };
       }
 
@@ -488,11 +450,19 @@ export class VoiceActionService {
           event_type: "meeting",
           all_day: false,
           color: "primary",
+          reminder_minutes: [1440, 60], // Przypomnienie 24h i 1h przed
         })
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error("[VoiceAction] Calendar insert error:", error);
+        throw error;
+      }
+
+      console.log(
+        `[VoiceAction] ✅ Event created: "${title}" on ${eventDate.toISOString()} for user ${this.userId}`,
+      );
 
       return {
         success: true,
@@ -502,7 +472,8 @@ export class VoiceActionService {
         )}${time ? ` o ${time}` : ""}`,
         data,
         uiAction: {
-          type: "show_toast",
+          type: "refresh",
+          target: "calendar",
           data: {
             type: "success",
             message: `Wydarzenie "${title}" dodane do kalendarza`,

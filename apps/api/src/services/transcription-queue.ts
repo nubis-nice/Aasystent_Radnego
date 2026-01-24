@@ -13,6 +13,7 @@ import { Queue, QueueEvents } from "bullmq";
 import { Redis } from "ioredis";
 import { randomUUID } from "node:crypto";
 import { setTimeout } from "node:timers/promises";
+import { backgroundTaskService } from "./background-task-service.js";
 
 // ============================================================================
 // TYPES
@@ -130,8 +131,8 @@ export const TRANSCRIPTION_STEPS = [
 
 class TranscriptionQueueService {
   private static instance: TranscriptionQueueService | null = null;
-  private queue: Queue<TranscriptionJobData, TranscriptionJobResult> | null =
-    null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private queue: Queue<any, any> | null = null;
   private queueEvents: QueueEvents | null = null;
   private connection: Redis | null = null;
   private initialized: boolean = false;
@@ -165,36 +166,45 @@ class TranscriptionQueueService {
         maxRetriesPerRequest: null,
       });
 
-      this.queue = new Queue<TranscriptionJobData, TranscriptionJobResult>(
-        "transcription-jobs",
-        {
-          connection: this.connection,
-          defaultJobOptions: {
-            attempts: 3, // 3 próby przy błędach
-            backoff: {
-              type: "exponential",
-              delay: 5000, // Start od 5s, potem 10s, 20s
-            },
-            removeOnComplete: {
-              age: 7 * 86400, // Usuń ukończone po 7 dniach
-              count: 500, // Zachowaj max 500 ostatnich
-            },
-            removeOnFail: {
-              age: 30 * 86400, // Usuń nieudane po 30 dniach
-            },
-            timeout: 7200000, // 2 godziny timeout per job
+      this.queue = new Queue("transcription-jobs", {
+        connection: this.connection as never,
+        defaultJobOptions: {
+          attempts: 3, // 3 próby przy błędach
+          backoff: {
+            type: "exponential",
+            delay: 5000, // Start od 5s, potem 10s, 20s
           },
+          removeOnComplete: {
+            age: 7 * 86400, // Usuń ukończone po 7 dniach
+            count: 500, // Zachowaj max 500 ostatnich
+          },
+          removeOnFail: {
+            age: 30 * 86400, // Usuń nieudane po 30 dniach
+          },
+          // timeout przeniesiony do Worker options (jobTimeout)
         },
-      );
+      });
 
       this.queueEvents = new QueueEvents("transcription-jobs", {
-        connection: this.connection,
+        connection: this.connection as never,
       });
 
       // Nasłuchuj na ukończone zadania
-      this.queueEvents.on("completed", ({ jobId, returnvalue }) => {
+      this.queueEvents.on("completed", ({ jobId }) => {
         console.log(`[TranscriptionQueue] Job ${jobId} completed`);
         this.progressCache.delete(jobId);
+        // Aktualizuj status w background_tasks
+        backgroundTaskService
+          .updateByJobId(jobId, {
+            status: "completed",
+            progress: 100,
+          })
+          .catch((err) =>
+            console.error(
+              "[TranscriptionQueue] Background task update error:",
+              err,
+            ),
+          );
       });
 
       this.queueEvents.on("failed", ({ jobId, failedReason }) => {
@@ -202,6 +212,18 @@ class TranscriptionQueueService {
           `[TranscriptionQueue] Job ${jobId} failed: ${failedReason}`,
         );
         this.progressCache.delete(jobId);
+        // Aktualizuj status w background_tasks
+        backgroundTaskService
+          .updateByJobId(jobId, {
+            status: "failed",
+            error_message: failedReason,
+          })
+          .catch((err) =>
+            console.error(
+              "[TranscriptionQueue] Background task update error:",
+              err,
+            ),
+          );
       });
 
       this.queueEvents.on("progress", ({ jobId, data }) => {
@@ -210,6 +232,19 @@ class TranscriptionQueueService {
           `[TranscriptionQueue] Job ${jobId} progress: ${progressData.progress}% - ${progressData.message}`,
         );
         this.progressCache.set(jobId, progressData);
+        // Aktualizuj progress w background_tasks
+        backgroundTaskService
+          .updateByJobId(jobId, {
+            status: "running",
+            progress: progressData.progress,
+            description: progressData.message,
+          })
+          .catch((err) =>
+            console.error(
+              "[TranscriptionQueue] Background task update error:",
+              err,
+            ),
+          );
       });
 
       this.initialized = true;
@@ -257,6 +292,14 @@ class TranscriptionQueueService {
     await this.queue.add("youtube-transcription", jobData, {
       jobId,
       priority: options.priority ?? 5, // Domyślny priorytet 5 (1=highest)
+    });
+
+    // Zapisz do background_tasks dla Supabase Realtime
+    await backgroundTaskService.createTask({
+      userId,
+      taskType: "transcription",
+      title: `Transkrypcja: ${videoTitle}`,
+      metadata: { jobId, videoUrl, sessionId: options.sessionId },
     });
 
     console.log(
@@ -357,21 +400,33 @@ class TranscriptionQueueService {
         .filter((job) => job.data.userId === userId)
         .map(async (job) => {
           const state = await job.getState();
-          const progressData = this.progressCache.get(job.id!) ?? {
-            progress: 0,
-            message: "Oczekuje w kolejce...",
-          };
 
-          const jobProgress =
-            typeof job.progress === "object"
-              ? (job.progress as { progress: number; message: string })
-              : progressData;
+          // Preferuj progressCache (aktualizowane przez Redis events w czasie rzeczywistym)
+          // Fallback do job.progress tylko jeśli cache pusty
+          const cachedProgress = this.progressCache.get(job.id!);
+          let progress = 0;
+          let progressMessage = "Oczekuje w kolejce...";
+
+          if (cachedProgress) {
+            progress = cachedProgress.progress;
+            progressMessage = cachedProgress.message;
+          } else if (
+            typeof job.progress === "object" &&
+            job.progress !== null
+          ) {
+            const jobProgress = job.progress as {
+              progress: number;
+              message: string;
+            };
+            progress = jobProgress.progress ?? 0;
+            progressMessage = jobProgress.message ?? "Przetwarzanie...";
+          }
 
           return {
             id: job.id!,
             status: state as TranscriptionJobStatus["status"],
-            progress: jobProgress.progress,
-            progressMessage: jobProgress.message,
+            progress,
+            progressMessage,
             result: job.returnvalue ?? undefined,
             error: job.failedReason,
             createdAt: new Date(job.timestamp),

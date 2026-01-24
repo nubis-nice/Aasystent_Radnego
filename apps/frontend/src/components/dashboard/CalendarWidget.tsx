@@ -11,8 +11,13 @@ import {
   Clock,
   MapPin,
   Trash2,
+  Bell,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
+import {
+  useCalendarNotifications,
+  formatTimeUntilEvent,
+} from "@/lib/hooks/useCalendarNotifications";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -486,6 +491,12 @@ export function CalendarWidget({ onEventClick }: CalendarWidgetProps) {
   const [dayModalDate, setDayModalDate] = useState<Date | null>(null);
   const [viewMode, setViewMode] = useState<"month" | "week">("month");
 
+  // System powiadomień - sprawdza co minutę
+  const { notifications, dismissNotification } = useCalendarNotifications({
+    enabled: true,
+    pollingIntervalMs: 60000,
+  });
+
   // Formularz nowego wydarzenia
   const [newEvent, setNewEvent] = useState({
     title: "",
@@ -780,6 +791,36 @@ export function CalendarWidget({ onEventClick }: CalendarWidgetProps) {
           </div>
         </div>
       </div>
+
+      {/* Powiadomienia o nadchodzących wydarzeniach */}
+      {notifications.length > 0 && (
+        <div className="mx-4 mb-2 space-y-2">
+          {notifications.map((notification) => (
+            <div
+              key={notification.id}
+              className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg animate-pulse"
+            >
+              <Bell className="h-5 w-5 text-amber-500 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-amber-800 text-sm truncate">
+                  {notification.title}
+                </div>
+                <div className="text-xs text-amber-600">
+                  {formatTimeUntilEvent(notification.minutes_until_event)}
+                  {notification.location && ` • ${notification.location}`}
+                </div>
+              </div>
+              <button
+                onClick={() => dismissNotification(notification.id)}
+                className="p-1 hover:bg-amber-100 rounded transition-colors"
+                title="Odrzuć"
+              >
+                <X className="h-4 w-4 text-amber-500" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Calendar Grid */}
       <div className="p-4">

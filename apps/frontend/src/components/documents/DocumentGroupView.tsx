@@ -14,6 +14,23 @@ import Link from "next/link";
 import type { Document, DocumentPriority } from "@/lib/api/documents-list";
 import type { DocumentGroup, GroupingResult } from "@/lib/documents/grouping";
 
+// Normalizacja tytułu - usuwa śmieci i zamienia angielskie nazwy na polskie
+function normalizeTitle(title: string | null | undefined): string {
+  if (!title) return "Bez tytułu";
+  return title
+    .replace(/\s*\|.*$/g, "")
+    .replace(/\s*-?\s*System\s+Rada.*$/gi, "")
+    .replace(/\s*-?\s*BIP\s*.*$/gi, "")
+    .replace(/\bresolution\s+nr\b/gi, "Uchwała nr")
+    .replace(/\bresolution\b/gi, "Uchwała")
+    .replace(/\bprotocol\b/gi, "Protokół")
+    .replace(/\bdraft\b/gi, "Projekt")
+    .replace(/\battachment\b/gi, "Załącznik")
+    .replace(/\bsession\b/gi, "Sesja")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 interface DocumentCardProps {
   doc: Document;
   onAnalyze?: (id: string) => void;
@@ -56,7 +73,7 @@ const DocumentCard = memo(function DocumentCard({
             href={`/documents/${doc.id}`}
             className="text-lg font-semibold text-text hover:text-primary-600 line-clamp-2 block"
           >
-            {doc.title}
+            {normalizeTitle(doc.title)}
           </Link>
 
           {doc.summary && (

@@ -18,6 +18,7 @@ import {
   AlertCircle,
   Pencil,
   X,
+  ListChecks,
 } from "lucide-react";
 import {
   getDataSources,
@@ -26,6 +27,7 @@ import {
   updateDataSource,
   deleteDataSource,
   triggerScraping,
+  triggerScrapingAllQueue,
   createDataSource,
   seedTestData,
   type DataSource,
@@ -230,6 +232,48 @@ function SourcesTab({
     fetch_method: "scraping" as const,
   });
   const [adding, setAdding] = useState(false);
+  const [scrapingAll, setScrapingAll] = useState(false);
+  const toast = useToast();
+
+  // Typy źródeł API (nie wymagają scrapingu)
+  const API_SOURCE_TYPES = [
+    "youtube",
+    "youtube_channel",
+    "api",
+    "statistical",
+    "legal",
+    "registry",
+    "environmental",
+    "funding",
+    "spatial",
+  ];
+  const scrapableSources = sources.filter(
+    (s) => !API_SOURCE_TYPES.includes(s.source_type),
+  );
+
+  const handleScrapeAll = async () => {
+    if (scrapableSources.length === 0) {
+      toast.warning("Brak źródeł", "Nie ma źródeł do scrapowania");
+      return;
+    }
+
+    setScrapingAll(true);
+    try {
+      const result = await triggerScrapingAllQueue({ excludeApiSources: true });
+      toast.success(
+        "Dodano do kolejki",
+        `${result.queued} źródeł dodano do kolejki scrapingu`,
+      );
+      setTimeout(() => onRefresh(), 2000);
+    } catch (error) {
+      toast.error(
+        "Błąd kolejkowania",
+        error instanceof Error ? error.message : "Nieznany błąd",
+      );
+    } finally {
+      setScrapingAll(false);
+    }
+  };
 
   const handleAdd = async () => {
     if (!newSource.name || !newSource.base_url) return;
@@ -337,6 +381,19 @@ function SourcesTab({
         >
           <Plus className="h-4 w-4" />
           Dodaj źródło
+        </button>
+        <button
+          onClick={handleScrapeAll}
+          disabled={scrapingAll || scrapableSources.length === 0}
+          className="px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 disabled:opacity-50 flex items-center gap-2"
+          title={`Scrapuj ${scrapableSources.length} źródeł (bez API)`}
+        >
+          {scrapingAll ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <ListChecks className="h-4 w-4" />
+          )}
+          Scrapuj wszystkie ({scrapableSources.length})
         </button>
       </div>
 

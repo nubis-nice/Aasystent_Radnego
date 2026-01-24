@@ -161,7 +161,7 @@ export class DocumentScorer {
     // Bonus za nadchodzącą sesję (jeśli w tytule jest data w najbliższych 7 dniach)
     let sessionBonus = 0;
     const sessionMatch = combinedText.match(
-      /sesj[ai].*?(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})/i
+      /sesj[ai].*?(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})/i,
     );
     if (sessionMatch) {
       try {
@@ -173,7 +173,7 @@ export class DocumentScorer {
         const sessionDate = new Date(year, month, day);
         const now = new Date();
         const diffDays = Math.ceil(
-          (sessionDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
+          (sessionDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
         );
 
         if (diffDays >= 0 && diffDays <= 7) {
@@ -218,7 +218,7 @@ export class DocumentScorer {
       typeScore * 0.3 +
         relevanceScore * 0.35 +
         urgencyScore * 0.2 +
-        recencyScore * 0.15
+        recencyScore * 0.15,
     );
 
     // Określ priorytet na podstawie total score
@@ -330,7 +330,7 @@ export class DocumentScorer {
       sortOrder?: "asc" | "desc";
       limit?: number;
       offset?: number;
-    } = {}
+    } = {},
   ): Promise<{ documents: ScoredDocument[]; total: number }> {
     const {
       search,
@@ -361,13 +361,13 @@ export class DocumentScorer {
     if (search) {
       const normalizedSearch = search.trim();
       console.log(
-        `[DocumentScorer] Search query: "${normalizedSearch}", sessionNumber: ${sessionNumber}`
+        `[DocumentScorer] Search query: "${normalizedSearch}", sessionNumber: ${sessionNumber}`,
       );
 
       if (sessionNumber) {
         // PRIORYTET 1: Szukaj po znormalizowanym polu session_number (najszybsze)
         console.log(
-          `[DocumentScorer] Using session_number filter: ${sessionNumber}`
+          `[DocumentScorer] Using session_number filter: ${sessionNumber}`,
         );
 
         // Szukaj po session_number LUB tradycyjnie po tytule (dla starych dokumentów)
@@ -378,14 +378,14 @@ export class DocumentScorer {
             `title.ilike.%sesja nr ${sessionNumber}%,` +
             `title.ilike.%sesja ${romanNum}%,` +
             `title.ilike.%nr ${romanNum}%,` +
-            `normalized_title.ilike.%Sesja ${sessionNumber}%`
+            `normalized_title.ilike.%Sesja ${sessionNumber}%`,
         );
       } else {
         // Standardowe wyszukiwanie - szukaj w tytule i znormalizowanym tytule
         query = query.or(
           `title.ilike.%${normalizedSearch}%,` +
             `normalized_title.ilike.%${normalizedSearch}%,` +
-            `content.ilike.%${normalizedSearch}%`
+            `content.ilike.%${normalizedSearch}%`,
         );
       }
     }
@@ -402,14 +402,14 @@ export class DocumentScorer {
     if (dateFrom) {
       // Szukaj w normalized_publish_date, publish_date LUB processed_at
       query = query.or(
-        `normalized_publish_date.gte.${dateFrom},publish_date.gte.${dateFrom},processed_at.gte.${dateFrom}`
+        `normalized_publish_date.gte.${dateFrom},publish_date.gte.${dateFrom},processed_at.gte.${dateFrom}`,
       );
     }
     if (dateTo) {
       // Dla processed_at dodajemy czas do końca dnia, aby objąć cały dzień
       const dateToEndOfDay = `${dateTo}T23:59:59`;
       query = query.or(
-        `normalized_publish_date.lte.${dateTo},publish_date.lte.${dateTo},processed_at.lte.${dateToEndOfDay}`
+        `normalized_publish_date.lte.${dateTo},publish_date.lte.${dateTo},processed_at.lte.${dateToEndOfDay}`,
       );
     }
 
@@ -437,12 +437,14 @@ export class DocumentScorer {
     });
 
     console.log(
-      `[DocumentScorer] After deduplication: ${uniqueDocuments.length} unique docs (was ${documents.length})`
+      `[DocumentScorer] After deduplication: ${uniqueDocuments.length} unique docs (was ${documents.length})`,
     );
 
-    // Oblicz score dla każdego dokumentu
+    // Oblicz score dla każdego dokumentu i znormalizuj tytuły
     const scoredDocuments: ScoredDocument[] = uniqueDocuments.map((doc) => ({
       ...doc,
+      // Normalizacja tytułu - usuń śmieci i zamień angielskie nazwy na polskie
+      title: this.normalizeTitle(doc.title),
       score: this.calculateScore(doc),
     }));
 
@@ -450,13 +452,13 @@ export class DocumentScorer {
     let filteredDocuments = scoredDocuments;
     if (priority) {
       filteredDocuments = scoredDocuments.filter(
-        (doc) => doc.score.priority === priority
+        (doc) => doc.score.priority === priority,
       );
     }
 
     // Sortuj
     console.log(
-      `[DocumentScorer] Sorting ${filteredDocuments.length} docs by: ${sortBy} (${sortOrder})`
+      `[DocumentScorer] Sorting ${filteredDocuments.length} docs by: ${sortBy} (${sortOrder})`,
     );
 
     filteredDocuments.sort((a, b) => {
@@ -490,8 +492,8 @@ export class DocumentScorer {
     console.log(
       `[DocumentScorer] After sort, first doc: ${filteredDocuments[0]?.title?.substring(
         0,
-        50
-      )}...`
+        50,
+      )}...`,
     );
 
     // Paginacja
@@ -532,6 +534,36 @@ export class DocumentScorer {
       .eq("id", documentId);
 
     return score;
+  }
+
+  /**
+   * Normalizacja tytułu dokumentu
+   * - Usuwa śmieci (| Urząd Miejski..., System Rada...)
+   * - Zamienia angielskie nazwy na polskie
+   */
+  private normalizeTitle(title: string | null): string {
+    if (!title) return "Bez tytułu";
+
+    return (
+      title
+        // Usuń śmieci z tytułu
+        .replace(/\s*\|.*$/g, "") // Usuń " | Urząd Miejski..."
+        .replace(/\s*-?\s*System\s+Rada.*$/gi, "") // Usuń "System Rada"
+        .replace(/\s*-?\s*BIP\s*.*$/gi, "") // Usuń "BIP..."
+        // Zamień angielskie nazwy dokumentów na polskie
+        .replace(/\bresolution\s+nr\b/gi, "Uchwała nr")
+        .replace(/\bresolution\b/gi, "Uchwała")
+        .replace(/\bprotocol\s+nr\b/gi, "Protokół nr")
+        .replace(/\bprotocol\b/gi, "Protokół")
+        .replace(/\bdraft\s+nr\b/gi, "Projekt nr")
+        .replace(/\bdraft\b/gi, "Projekt")
+        .replace(/\battachment\b/gi, "Załącznik")
+        .replace(/\bsession\b/gi, "Sesja")
+        .replace(/\bannouncement\b/gi, "Ogłoszenie")
+        // Cleanup
+        .replace(/\s+/g, " ")
+        .trim()
+    );
   }
 }
 

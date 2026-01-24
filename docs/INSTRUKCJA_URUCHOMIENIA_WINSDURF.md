@@ -1,4 +1,4 @@
-# Instrukcja uruchomienia systemu Agent AI "Winsdurf"
+# Instrukcja uruchomienia systemu ~~bez~~RADNY
 
 ## Wymagania wstępne
 

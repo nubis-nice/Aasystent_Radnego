@@ -606,6 +606,20 @@ async function saveToRAG(
     .single();
 
   if (error) {
+    // Duplikat - dokument już istnieje, nie zapisuj ponownie
+    if (error.code === "23505" || error.message?.includes("duplicate key")) {
+      console.log(
+        `[TranscriptionWorker] Duplikat transkrypcji - brak zapisu: ${videoUrl}`,
+      );
+      // Pobierz istniejący dokument
+      const { data: existing } = await supabase
+        .from("processed_documents")
+        .select("id")
+        .eq("source_url", videoUrl)
+        .eq("user_id", userId)
+        .single();
+      return existing?.id || "duplicate";
+    }
     throw new Error(`Błąd zapisu do bazy: ${error.message}`);
   }
 

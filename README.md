@@ -1,6 +1,8 @@
-# Asystent Radnego - Agent AI 
+# ~~bez~~RADNY - Agent AI
 
-Agent analityczno-kontrolny wspierający Radnego w kontroli legalności, zasadności i skutków uchwał samorządowych.
+Agent AI wspierający Radnego w kontroli legalności, zasadności i skutków uchwał samorządowych.
+
+> **~~bez~~RADNY** - bo z nami radny nigdy nie jest *bez*radny.
 
 ## 🎯 Kluczowe funkcje
 
@@ -105,8 +107,8 @@ cd apps/worker && npm run dev     # Worker (opcjonalnie)
 
 ```
 ┌─────────────────────────────────────────┐
-│     Agent AI "Winsdurf"                 │
-│  Asystent Analityczno-Kontrolny        │
+│           ~~bez~~RADNY                  │
+│     Agent AI dla Rady Miejskiej         │
 └─────────────────────────────────────────┘
               │
               ▼
@@ -218,7 +220,7 @@ Aasystent_Radnego/
 
 ## 📝 Licencja
 
-Projekt prywatny - Gmina Drawno
+Open Source - MIT License
 
 ## 🤝 Wsparcie
 

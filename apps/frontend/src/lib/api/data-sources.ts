@@ -98,7 +98,7 @@ export async function getDataSources(): Promise<DataSource[]> {
  * Pobierz szczegóły źródła danych
  */
 export async function getDataSource(
-  id: string
+  id: string,
 ): Promise<{ source: DataSource; logs: ScrapingLog[] }> {
   const token = await getAccessToken();
 
@@ -171,7 +171,7 @@ export async function updateDataSource(
     scrape_config: Record<string, unknown>;
     schedule_cron: string;
     is_active: boolean;
-  }>
+  }>,
 ): Promise<DataSource> {
   const token = await getAccessToken();
 
@@ -228,7 +228,7 @@ export async function deleteDataSource(id: string): Promise<void> {
  * Uruchom scraping dla źródła
  */
 export async function triggerScraping(
-  id: string
+  id: string,
 ): Promise<{ message: string; status: string }> {
   const token = await getAccessToken();
 
@@ -284,7 +284,7 @@ export async function getSourceDocuments(params?: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-    }
+    },
   );
 
   if (!response.ok) {
@@ -361,7 +361,7 @@ export async function seedTestData(): Promise<{
  * Usuń dokument z RAG
  */
 export async function deleteDocument(
-  id: string
+  id: string,
 ): Promise<{ success: boolean; message: string }> {
   const token = await getAccessToken();
 
@@ -390,7 +390,7 @@ export async function deleteDocument(
  * Usuń wiele dokumentów z RAG
  */
 export async function deleteDocumentsBulk(
-  documentIds: string[]
+  documentIds: string[],
 ): Promise<{ success: boolean; deletedCount: number; message: string }> {
   const token = await getAccessToken();
 
@@ -515,7 +515,7 @@ export async function getEmptyDocuments(): Promise<{
  */
 export async function triggerScrapingAll(
   sourceIds: string[],
-  options?: { maxDocumentAgeDays?: number }
+  options?: { maxDocumentAgeDays?: number },
 ): Promise<{
   success: boolean;
   results: Array<{ id: string; status: string; message: string }>;
@@ -562,6 +562,45 @@ export async function triggerScrapingAll(
     success: results.every((r) => r.status === "success"),
     results,
   };
+}
+
+/**
+ * Dodaj wszystkie źródła non-API do kolejki scrapingu
+ */
+export async function triggerScrapingAllQueue(options?: {
+  excludeApiSources?: boolean;
+}): Promise<{
+  message: string;
+  queued: number;
+  skipped: number;
+  jobIds?: string[];
+  status: string;
+}> {
+  const token = await getAccessToken();
+
+  if (!token) {
+    throw new Error("Musisz być zalogowany");
+  }
+
+  const response = await fetch(`${API_URL}/api/data-sources/scrape-all`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      excludeApiSources: options?.excludeApiSources ?? true,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ error: "Unknown error" }));
+    throw new Error(error.error || "Failed to queue scraping");
+  }
+
+  return response.json();
 }
 
 /**

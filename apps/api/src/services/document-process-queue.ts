@@ -7,6 +7,7 @@ import { Queue, QueueEvents } from "bullmq";
 import { Redis } from "ioredis";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
+import { backgroundTaskService } from "./background-task-service.js";
 
 // ============================================================================
 // TYPES
@@ -116,6 +117,15 @@ class DocumentProcessQueue {
         "completed",
         returnvalue as unknown as DocumentProcessJobResult,
       );
+      // Aktualizuj background_tasks
+      backgroundTaskService
+        .updateByJobId(jobId, {
+          status: "completed",
+          progress: 100,
+        })
+        .catch((err) =>
+          console.error("[DocumentProcessQueue] Background task error:", err),
+        );
     });
 
     this.queueEvents.on("failed", async ({ jobId, failedReason }) => {
@@ -123,6 +133,15 @@ class DocumentProcessQueue {
         `[DocumentProcessQueue] ❌ Job ${jobId} failed: ${failedReason}`,
       );
       await this.updateJobStatus(jobId, "failed", undefined, failedReason);
+      // Aktualizuj background_tasks
+      backgroundTaskService
+        .updateByJobId(jobId, {
+          status: "failed",
+          error_message: failedReason,
+        })
+        .catch((err) =>
+          console.error("[DocumentProcessQueue] Background task error:", err),
+        );
     });
 
     this.queueEvents.on("progress", async ({ jobId, data }) => {
@@ -131,6 +150,15 @@ class DocumentProcessQueue {
           ? data
           : ((data as { progress?: number })?.progress ?? 0);
       await this.updateJobProgress(jobId, progress);
+      // Aktualizuj background_tasks
+      backgroundTaskService
+        .updateByJobId(jobId, {
+          status: "running",
+          progress,
+        })
+        .catch((err) =>
+          console.error("[DocumentProcessQueue] Background task error:", err),
+        );
     });
 
     this.initialized = true;
@@ -175,6 +203,18 @@ class DocumentProcessQueue {
       jobId,
       priority: 1,
     });
+
+    // Zapisz do background_tasks dla Supabase Realtime
+    backgroundTaskService
+      .createTask({
+        userId: data.userId,
+        taskType: "ocr",
+        title: `OCR: ${data.fileName}`,
+        metadata: { jobId, recordId: record.id, fileName: data.fileName },
+      })
+      .catch((err) =>
+        console.error("[DocumentProcessQueue] Background task error:", err),
+      );
 
     console.log(
       `[DocumentProcessQueue] Added job ${jobId} for ${data.fileName}`,

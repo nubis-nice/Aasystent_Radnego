@@ -558,6 +558,16 @@ export default function ChatPage() {
       category: "search",
     });
 
+    // Zweryfikowane wyszukiwanie internetowe
+    secondarySuggestions.push({
+      id: "verified-search",
+      label: "Zweryfikuj w internecie",
+      icon: "✅",
+      prompt:
+        "Zweryfikuj tę informację w internecie. Sprawdź wiarygodność źródeł i wykryj potencjalne fake newsy.",
+      category: "search",
+    });
+
     // Plan działania
     secondarySuggestions.push({
       id: "action-plan",
@@ -610,6 +620,93 @@ export default function ChatPage() {
 
   // Stan dla rozwijanej listy dodatkowych narzędzi
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
+
+  // Buduje kontekstowy prompt na podstawie narzędzia i kontekstu rozmowy
+  const buildContextualPrompt = (
+    step: NextStepSuggestion,
+    conversationContext: string,
+    userQuestion?: string,
+  ): string => {
+    // Wyciągnij kluczowe informacje z kontekstu (np. numer sesji, uchwały)
+    const sessionMatch = conversationContext.match(
+      /sesj[aięy]\s*(?:nr|numer)?\s*\.?\s*([IVXLCDM]+|\d+)/i,
+    );
+    const resolutionMatch = conversationContext.match(
+      /uchwa[łl][ayę]?\s*(?:nr|numer)?\s*\.?\s*([IVXLCDM\/\d]+)/i,
+    );
+    const topicMatch = conversationContext.match(
+      /(?:w\s+sprawie|dotyczy|temat)[:.]?\s*([^.]+)/i,
+    );
+
+    // Zbuduj kontekst
+    const contextParts: string[] = [];
+    if (sessionMatch) contextParts.push(`sesji nr ${sessionMatch[1]}`);
+    if (resolutionMatch) contextParts.push(`uchwały nr ${resolutionMatch[1]}`);
+    if (topicMatch) contextParts.push(`sprawy: ${topicMatch[1].trim()}`);
+
+    const contextSummary =
+      contextParts.length > 0
+        ? `Kontekst: ${contextParts.join(", ")}. `
+        : userQuestion
+          ? `Na podstawie pytania: "${userQuestion}". `
+          : "";
+
+    // Dostosuj prompt narzędzia do kontekstu
+    switch (step.id) {
+      case "resolution-draft":
+        return `${contextSummary}Przygotuj projekt uchwały${sessionMatch ? ` dla sesji ${sessionMatch[1]}` : ""}. Uwzględnij: tytuł, podstawę prawną, treść merytoryczną i uzasadnienie.`;
+
+      case "report-template":
+        return `${contextSummary}Wygeneruj szablon raportu kontroli zawierający: nagłówek, zakres kontroli, ustalenia, wnioski i rekomendacje.`;
+
+      case "calendar-reminder":
+        return `${contextSummary}Dodaj przypomnienia o kluczowych terminach do kalendarza.`;
+
+      case "legal-analysis":
+        return `${contextSummary}Przeprowadź szczegółową analizę prawną${resolutionMatch ? ` uchwały ${resolutionMatch[1]}` : ""}, sprawdź zgodność z obowiązującymi przepisami i wskaż potencjalne ryzyka prawne.`;
+
+      case "budget-control":
+        return `${contextSummary}Wykonaj szczegółową kontrolę rozliczeń budżetowych. Sprawdź zgodność wydatków z planem, przeanalizuj odchylenia i wskaż nieprawidłowości.`;
+
+      case "full-report":
+        return `${contextSummary}Przygotuj pełny, profesjonalny raport analizy zawierający: streszczenie wykonawcze, szczegółowe ustalenia, rekomendacje i wnioski końcowe.`;
+
+      case "interpellation":
+        return `${contextSummary}Przygotuj projekt interpelacji lub zapytania radnego w tej sprawie.`;
+
+      case "deep-search":
+        return `${contextSummary}Przeprowadź pogłębione wyszukiwanie w dostępnych dokumentach i bazach danych.`;
+
+      case "verified-search":
+        return `${contextSummary}Zweryfikuj tę informację w internecie. Sprawdź wiarygodność źródeł, wykryj potencjalne fake newsy i porównaj informacje z wielu źródeł.`;
+
+      case "action-plan":
+        return `${contextSummary}Przygotuj konkretny plan działania radnego: kroki do wykonania, terminy i sposób monitorowania.`;
+
+      case "session-speech":
+        return `${contextSummary}Przygotuj projekt wystąpienia radnego na sesji Rady${sessionMatch ? ` nr ${sessionMatch[1]}` : ""}.`;
+
+      case "legal-basis":
+        return `${contextSummary}Wskaż podstawę prawną: właściwe ustawy, rozporządzenia i uchwały.`;
+
+      default:
+        return `${contextSummary}${step.prompt}`;
+    }
+  };
+
+  // Znajdź ostatnie pytanie użytkownika przed daną wiadomością
+  const getLastUserQuestion = (beforeMessageId: string): string | undefined => {
+    const msgIndex = messages.findIndex((m) => m.id === beforeMessageId);
+    if (msgIndex <= 0) return undefined;
+
+    // Szukaj wstecz ostatniej wiadomości użytkownika
+    for (let i = msgIndex - 1; i >= 0; i--) {
+      if (messages[i].role === "user") {
+        return messages[i].content;
+      }
+    }
+    return undefined;
+  };
 
   // Eksport
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -1653,7 +1750,15 @@ export default function ChatPage() {
                               {primary.map((step) => (
                                 <button
                                   key={step.id}
-                                  onClick={() => setMessage(step.prompt)}
+                                  onClick={() => {
+                                    const userQ = getLastUserQuestion(msg.id);
+                                    const contextPrompt = buildContextualPrompt(
+                                      step,
+                                      msg.content,
+                                      userQ,
+                                    );
+                                    setMessage(contextPrompt);
+                                  }}
                                   className={`flex items-center gap-2 px-3 py-2.5 text-xs font-medium rounded-xl border transition-all hover:shadow-md text-left ${getCategoryStyle(step.category)}`}
                                 >
                                   <span className="text-base">{step.icon}</span>
@@ -1694,7 +1799,18 @@ export default function ChatPage() {
                                     {secondary.map((step) => (
                                       <button
                                         key={step.id}
-                                        onClick={() => setMessage(step.prompt)}
+                                        onClick={() => {
+                                          const userQ = getLastUserQuestion(
+                                            msg.id,
+                                          );
+                                          const contextPrompt =
+                                            buildContextualPrompt(
+                                              step,
+                                              msg.content,
+                                              userQ,
+                                            );
+                                          setMessage(contextPrompt);
+                                        }}
                                         className={`flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg border transition-all hover:shadow-sm text-left opacity-90 ${getCategoryStyle(step.category)}`}
                                       >
                                         <span className="text-sm">

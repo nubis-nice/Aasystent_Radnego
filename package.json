@@ -1,7 +1,21 @@
 {
-  "name": "aasystent-radnego",
-  "private": true,
-  "version": "0.0.0",
+  "name": "bezradny",
+  "private": false,
+  "version": "1.0.0",
+  "description": "Agent AI wspierający radnych samorządowych - bo z nami radny nigdy nie jest bezradny",
+  "author": "bezRADNY Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bezradny/bezradny"
+  },
+  "keywords": [
+    "ai",
+    "local-government",
+    "council",
+    "poland",
+    "assistant"
+  ],
   "workspaces": [
     "apps/*",
     "packages/*"

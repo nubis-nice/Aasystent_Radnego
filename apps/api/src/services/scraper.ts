@@ -37,7 +37,7 @@ export interface ScrapeResult {
  */
 export async function scrapeDataSource(
   sourceId: string,
-  userId: string
+  userId: string,
 ): Promise<ScrapeResult> {
   const result: ScrapeResult = {
     success: false,
@@ -153,7 +153,7 @@ export async function scrapeDataSource(
     result.success = true;
   } catch (error) {
     result.errors.push(
-      error instanceof Error ? error.message : "Unknown error"
+      error instanceof Error ? error.message : "Unknown error",
     );
 
     // Zapisz błąd w logach
@@ -176,7 +176,7 @@ export async function scrapeDataSource(
  */
 async function fetchUrlContent(
   url: string,
-  userId?: string
+  userId?: string,
 ): Promise<{
   content: string;
   contentType: "html" | "pdf" | "text";
@@ -216,7 +216,7 @@ async function fetchUrlContent(
       // Wyciągnij nazwę pliku z URL
       const urlParts = url.split("/");
       const fileName = decodeURIComponent(
-        urlParts[urlParts.length - 1] || "document.pdf"
+        urlParts[urlParts.length - 1] || "document.pdf",
       ).replace(/\?.*$/, ""); // Usuń query string
 
       // Użyj DocumentProcessor do ekstrakcji tekstu z PDF
@@ -227,7 +227,7 @@ async function fetchUrlContent(
         } catch (e) {
           console.warn(
             "[Scraper] Failed to init DocumentProcessor with user config:",
-            e
+            e,
           );
         }
       }
@@ -235,12 +235,12 @@ async function fetchUrlContent(
       const result = await processor.processFile(
         pdfBuffer,
         fileName,
-        "application/pdf"
+        "application/pdf",
       );
 
       if (result.success && result.text && result.text.length > 50) {
         console.log(
-          `[Scraper] PDF processed: ${fileName}, ${result.text.length} chars, method: ${result.metadata.processingMethod}`
+          `[Scraper] PDF processed: ${fileName}, ${result.text.length} chars, method: ${result.metadata.processingMethod}`,
         );
         return {
           content: result.text,
@@ -259,7 +259,7 @@ async function fetchUrlContent(
     // Sprawdź czy to nie jest ukryty PDF (nagłówek %PDF w treści)
     if (html.startsWith("%PDF")) {
       console.warn(
-        `[Scraper] URL returned raw PDF data as text, skipping: ${url}`
+        `[Scraper] URL returned raw PDF data as text, skipping: ${url}`,
       );
       return null;
     }
@@ -288,7 +288,7 @@ function extractTitleFromHtml(html: string): string | null {
  */
 async function scrapeBIP(
   baseUrl: string,
-  userId?: string
+  userId?: string,
 ): Promise<ScrapedItem[]> {
   const items: ScrapedItem[] = [];
 
@@ -315,7 +315,7 @@ async function scrapeBIP(
  */
 async function scrapeMunicipality(
   baseUrl: string,
-  userId?: string
+  userId?: string,
 ): Promise<ScrapedItem[]> {
   const items: ScrapedItem[] = [];
 
@@ -342,7 +342,7 @@ async function scrapeMunicipality(
  */
 async function scrapeLegalPortal(
   baseUrl: string,
-  userId?: string
+  userId?: string,
 ): Promise<ScrapedItem[]> {
   const items: ScrapedItem[] = [];
 
@@ -369,7 +369,7 @@ async function scrapeLegalPortal(
  */
 async function scrapeCouncilorPortal(
   baseUrl: string,
-  userId?: string
+  userId?: string,
 ): Promise<ScrapedItem[]> {
   const items: ScrapedItem[] = [];
 
@@ -396,7 +396,7 @@ async function scrapeCouncilorPortal(
  */
 async function scrapeStatistics(
   baseUrl: string,
-  userId?: string
+  userId?: string,
 ): Promise<ScrapedItem[]> {
   const items: ScrapedItem[] = [];
 
@@ -423,7 +423,7 @@ async function scrapeStatistics(
  */
 async function scrapeGeneric(
   baseUrl: string,
-  userId?: string
+  userId?: string,
 ): Promise<ScrapedItem[]> {
   const items: ScrapedItem[] = [];
 
@@ -450,7 +450,7 @@ async function scrapeGeneric(
  */
 async function processScrapedContent(
   sourceId: string,
-  userId: string
+  userId: string,
 ): Promise<number> {
   let processedCount = 0;
 
@@ -481,7 +481,7 @@ async function processScrapedContent(
 
   const openaiApiKey = Buffer.from(
     apiConfig.api_key_encrypted,
-    "base64"
+    "base64",
   ).toString("utf-8");
   const openaiBaseUrl = apiConfig.base_url || undefined;
 
@@ -517,7 +517,7 @@ async function processScrapedContent(
                 role: "user",
                 content: `Streść ten dokument w 2-3 zdaniach:\n\n${content.raw_content.substring(
                   0,
-                  3000
+                  3000,
                 )}`,
               },
             ],
@@ -547,12 +547,21 @@ async function processScrapedContent(
       // Wyciągnij słowa kluczowe
       const keywords = extractKeywords(content.title, content.raw_content);
 
+      // Znormalizuj tytuł (zamień angielskie nazwy na polskie)
+      const normalizedTitle = (content.title || "Bez tytułu")
+        .replace(/\bresolution\s+nr\b/gi, "Uchwała nr")
+        .replace(/\bresolution\b/gi, "Uchwała")
+        .replace(/\bprotocol\b/gi, "Protokół")
+        .replace(/\bdraft\b/gi, "Projekt")
+        .replace(/\battachment\b/gi, "Załącznik")
+        .trim();
+
       // Zapisz przetworzony dokument
       await supabase.from("processed_documents").insert({
         scraped_content_id: content.id,
         user_id: userId,
         document_type: documentType,
-        title: content.title || "Bez tytułu",
+        title: normalizedTitle,
         content: content.raw_content || "",
         summary,
         keywords,

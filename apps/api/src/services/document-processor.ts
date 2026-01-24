@@ -1749,6 +1749,17 @@ export class DocumentProcessor {
     let normalizedTitle = title
       .replace(/\s*\|.*$/, "") // Usuń " | Urząd Miejski..."
       .replace(/\s*-?\s*System\s+Rada.*$/i, "") // Usuń "System Rada"
+      // Zamień angielskie nazwy dokumentów na polskie
+      .replace(/\bresolution\s+nr\b/gi, "Uchwała nr")
+      .replace(/\bresolution\b/gi, "Uchwała")
+      .replace(/\bprotocol\s+nr\b/gi, "Protokół nr")
+      .replace(/\bprotocol\b/gi, "Protokół")
+      .replace(/\bdraft\s+nr\b/gi, "Projekt nr")
+      .replace(/\bdraft\b/gi, "Projekt")
+      .replace(/\battachment\b/gi, "Załącznik")
+      .replace(/\bsession\b/gi, "Sesja")
+      .replace(/\bannouncement\b/gi, "Ogłoszenie")
+      .replace(/\borderordinance\b/gi, "Zarządzenie")
       .trim();
 
     if (sessionNumber) {

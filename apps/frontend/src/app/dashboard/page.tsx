@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import {
@@ -16,6 +16,10 @@ import { CalendarWidget } from "@/components/dashboard/CalendarWidget";
 import { TasksWidget } from "@/components/dashboard/TasksWidget";
 import { QuickToolsWidget } from "@/components/dashboard/QuickToolsWidget";
 import { AlertsWidget } from "@/components/dashboard/AlertsWidget";
+import {
+  useBackgroundTasks,
+  type BackgroundTask,
+} from "@/lib/hooks/useBackgroundTasks";
 
 type ProcessingTone = "ok" | "info" | "warning" | "danger";
 
@@ -72,6 +76,14 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Supabase Realtime - jedno połączenie WebSocket, bez spamu HTTP
+  const { activeTasks, isConnected } = useBackgroundTasks({
+    enabled: true,
+    onTaskComplete: (task) => {
+      console.log("[Dashboard] Task completed:", task.title);
+    },
+  });
+
   useEffect(() => {
     async function fetchStats() {
       try {
@@ -87,7 +99,7 @@ export default function DashboardPage() {
         if (userError || !user) {
           console.log(
             "[Dashboard] No valid user, redirecting to login",
-            userError?.message
+            userError?.message,
           );
           // Brak sesji - przekieruj do logowania BEZ wywoływania API
           window.location.href = "/login";
@@ -149,6 +161,103 @@ export default function DashboardPage() {
     }
   };
 
+  // Mapowanie aktywnych zadań na ProcessingSignal - MUSI być przed warunkowymi returnami!
+  const processingSignals: ProcessingSignal[] = useMemo(() => {
+    const taskTypeLabels: Record<BackgroundTask["task_type"], string> = {
+      scraping: "Scraping źródeł",
+      transcription: "Transkrypcje",
+      ocr: "OCR dokumentów",
+      embedding: "Indeksowanie",
+      analysis: "Analiza dokumentów",
+    };
+
+    const taskTypeTone: Record<BackgroundTask["status"], ProcessingTone> = {
+      queued: "warning",
+      running: "info",
+      completed: "ok",
+      failed: "danger",
+    };
+
+    const taskStatusLabel: Record<BackgroundTask["status"], string> = {
+      queued: "W kolejce",
+      running: "W toku",
+      completed: "Zakończone",
+      failed: "Błąd",
+    };
+
+    // Jeśli są aktywne zadania, agreguj je według typu
+    if (activeTasks.length > 0) {
+      // Grupuj zadania według typu
+      const tasksByType = activeTasks.reduce(
+        (acc, task) => {
+          const type = task.task_type;
+          if (!acc[type]) acc[type] = [];
+          acc[type].push(task);
+          return acc;
+        },
+        {} as Record<string, BackgroundTask[]>,
+      );
+
+      // Twórz jeden wpis dla każdego typu z agregowanym postępem
+      return Object.entries(tasksByType).map(([type, tasks]) => {
+        const completedCount = tasks.filter(
+          (t) => t.status === "completed",
+        ).length;
+        const runningCount = tasks.filter((t) => t.status === "running").length;
+        const queuedCount = tasks.filter((t) => t.status === "queued").length;
+        const activeCount = runningCount + queuedCount;
+
+        // Procent ukończonych zadań
+        const completedPercent = Math.round(
+          (completedCount / tasks.length) * 100,
+        );
+
+        // Wybierz najważniejszy status (running > queued > completed)
+        const status =
+          runningCount > 0
+            ? "running"
+            : queuedCount > 0
+              ? "queued"
+              : "completed";
+
+        // Opis z liczbą zadań
+        const description =
+          activeCount === 1
+            ? tasks.find((t) => t.status !== "completed")?.title ||
+              tasks[0].title
+            : activeCount > 0
+              ? `${activeCount} zadań (${runningCount} w toku, ${queuedCount} w kolejce)`
+              : `${completedCount} zadań zakończonych`;
+
+        return {
+          id: `aggregated-${type}`,
+          title: taskTypeLabels[type as BackgroundTask["task_type"]] || type,
+          statusLabel: taskStatusLabel[status],
+          tone: taskTypeTone[status],
+          description,
+          eta:
+            activeCount > 0
+              ? `${completedCount}/${tasks.length} ukończone (${completedPercent}%)`
+              : "Wszystkie zakończone",
+        };
+      });
+    }
+
+    // Fallback - tylko status systemu gdy brak aktywnych zadań
+    return [
+      {
+        id: "status",
+        title: "Status systemu",
+        statusLabel: isConnected ? "Połączono" : "Rozłączono",
+        tone: (isConnected ? "ok" : "warning") as ProcessingTone,
+        description: isConnected
+          ? "System monitorowany. Oczekiwanie na zadania."
+          : "Brak połączenia. Dane mogą być nieaktualne.",
+        eta: isConnected ? "Supabase Realtime" : "sprawdzanie...",
+      },
+    ];
+  }, [activeTasks, isConnected]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -172,43 +281,6 @@ export default function DashboardPage() {
       </div>
     );
   }
-
-  const processingSignals: ProcessingSignal[] = [
-    {
-      id: "ocr",
-      title: "Transkrypcje i OCR",
-      statusLabel: "W toku",
-      tone: "info",
-      description: "Przetwarzamy 2 nagrania z ostatniej sesji oraz 1 skan PDF.",
-      eta: "ok. 8 minut",
-    },
-    {
-      id: "scraper",
-      title: "Scraping BIP / RIO",
-      statusLabel: "Ostrzeżenie",
-      tone: "warning",
-      description:
-        "Źródło BIP Gminy Drawno odpowiada wolno – dane zostaną zsynchronizowane po 06:30.",
-      eta: "kolejna próba za 12 min",
-    },
-    {
-      id: "analysis",
-      title: "Analizy i scoring dokumentów",
-      statusLabel: "Stabilne",
-      tone: "ok",
-      description: `Zakończono ${stats.documentsThisWeek} analiz w tym tygodniu. Brak błędów krytycznych.`,
-      eta: "ostatnia analiza 12 min temu",
-    },
-    {
-      id: "imports",
-      title: "Integracje kalendarza",
-      statusLabel: "Potrzebna uwaga",
-      tone: "danger",
-      description:
-        "Webhook Google Calendar zwrócił błąd autoryzacji. Sprawdź token usługowy lub połącz konto ponownie.",
-      eta: "ostatnia próba 3 min temu",
-    },
-  ];
 
   return (
     <div className={layoutClasses.page}>
@@ -356,9 +428,6 @@ export default function DashboardPage() {
                   Inteligentny agregator logów i trwających procesów
                 </p>
               </div>
-              <span className="text-[11px] font-medium text-text-secondary">
-                ostatnia aktualizacja: przed chwilą
-              </span>
             </div>
           </div>
           <div className="divide-y divide-border/80 flex-1 overflow-auto">

@@ -18,7 +18,9 @@ export default function Home() {
         <div className="container mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2 font-bold text-xl text-primary">
             <FileText className="h-6 w-6" />
-            <span>Asystent Radnego</span>
+            <span>
+              <s>bez</s>RADNY
+            </span>
           </div>
           <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-muted-foreground">
             <a
@@ -209,7 +211,9 @@ export default function Home() {
             <div className="col-span-1 md:col-span-2">
               <div className="flex items-center gap-2 font-bold text-xl text-primary mb-4">
                 <FileText className="h-6 w-6" />
-                <span>Asystent Radnego</span>
+                <span>
+                  <s>bez</s>RADNY
+                </span>
               </div>
               <p className="text-secondary max-w-sm">
                 Kompleksowe narzędzie wspierające pracę radnych miejskich
@@ -258,7 +262,9 @@ export default function Home() {
             </div>
           </div>
           <div className="pt-8 border-t border-border text-center text-sm text-secondary">
-            <p>&copy; 2025 Asystent Radnego. Wszelkie prawa zastrzeżone.</p>
+            <p>
+              &copy; 2025 <s>bez</s>RADNY. Open Source - MIT License.
+            </p>
           </div>
         </div>
       </footer>

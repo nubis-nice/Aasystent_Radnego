@@ -172,7 +172,7 @@ export class IntelligentRAGSearch {
       this.llmModel = llmConfig.modelName;
 
       console.log(
-        `[IntelligentRAG] Initialized with model: ${this.embeddingModel}`
+        `[IntelligentRAG] Initialized with model: ${this.embeddingModel}`,
       );
     } catch (error) {
       console.error("[IntelligentRAG] Initialization error:", error);
@@ -208,13 +208,13 @@ export class IntelligentRAGSearch {
     try {
       // PHASE 1: Ekstrakcja i normalizacja zapytania
       const { normalized, entities, variants } = await this.normalizeQuery(
-        query.query
+        query.query,
       );
       result.query.normalized = normalized;
       result.query.extractedEntities = entities;
 
       console.log(
-        `[IntelligentRAG] Query: "${query.query}" → Normalized: "${normalized}"`
+        `[IntelligentRAG] Query: "${query.query}" → Normalized: "${normalized}"`,
       );
       console.log(`[IntelligentRAG] Entities:`, entities);
       console.log(`[IntelligentRAG] Variants:`, variants);
@@ -275,7 +275,7 @@ export class IntelligentRAGSearch {
 
     result.searchStats.processingTimeMs = Date.now() - startTime;
     console.log(
-      `[IntelligentRAG] Completed in ${result.searchStats.processingTimeMs}ms, found ${result.totalFound} docs`
+      `[IntelligentRAG] Completed in ${result.searchStats.processingTimeMs}ms, found ${result.totalFound} docs`,
     );
 
     return result;
@@ -295,11 +295,12 @@ export class IntelligentRAGSearch {
     const variants: string[] = [query];
 
     // Wykryj i znormalizuj numery sesji (rzymskie → arabskie)
+    // Tolerancja na literówki: sesja, sesji, sesję, sesjie, sesje
     const sessionPatterns = [
-      /sesj[iaęy]\s+(?:nr\.?\s*)?([IVXLC]+)/gi,
-      /sesj[iaęy]\s+(?:nr\.?\s*)?(\d+)/gi,
-      /(?:nr\.?\s*)([IVXLC]+)\s+sesj/gi,
-      /([IVXLC]+)\s+sesj[iaęy]/gi,
+      /sesj[iaęye]{1,2}\s+(?:nr\.?\s*)?([IVXLC]+)/gi,
+      /sesj[iaęye]{1,2}\s+(?:nr\.?\s*)?(\d+)/gi,
+      /(?:nr\.?\s*|numer\s*)([IVXLC]+)/gi,
+      /([IVXLC]+)\s+sesj[iaęye]{1,2}/gi,
     ];
 
     for (const pattern of sessionPatterns) {
@@ -326,7 +327,7 @@ export class IntelligentRAGSearch {
             // Dodaj warianty z obiema formami numeru
             const arabicVariant = normalized.replace(
               new RegExp(value, "gi"),
-              arabicNum.toString()
+              arabicNum.toString(),
             );
             if (!variants.includes(arabicVariant)) {
               variants.push(arabicVariant);
@@ -346,7 +347,7 @@ export class IntelligentRAGSearch {
             // Dodaj wariant z numerem rzymskim
             const romanVariant = normalized.replace(
               new RegExp(value, "g"),
-              romanNum
+              romanNum,
             );
             if (!variants.includes(romanVariant)) {
               variants.push(romanVariant);
@@ -390,7 +391,7 @@ export class IntelligentRAGSearch {
         // Zamień numer rzymski na arabski dla lepszego matchingu
         normalized = normalized.replace(
           new RegExp(`\\b${entity.value}\\b`, "gi"),
-          entity.normalized
+          entity.normalized,
         );
       }
     }
@@ -430,7 +431,7 @@ export class IntelligentRAGSearch {
     };
     return str.replace(
       /[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]/g,
-      (char) => diacriticsMap[char] || char
+      (char) => diacriticsMap[char] || char,
     );
   }
 
@@ -440,11 +441,11 @@ export class IntelligentRAGSearch {
 
   private async semanticSearch(
     query: string,
-    options: SearchQuery
+    options: SearchQuery,
   ): Promise<SearchResult[]> {
     if (!this.embeddingsClient) {
       console.log(
-        "[IntelligentRAG] No embeddings client, falling back to keyword search"
+        "[IntelligentRAG] No embeddings client, falling back to keyword search",
       );
       return [];
     }
@@ -469,7 +470,7 @@ export class IntelligentRAGSearch {
           match_count: options.maxResults || 50,
           filter_user_id: this.userId,
           filter_types: options.documentType ? [options.documentType] : null,
-        }
+        },
       );
 
       if (error) {
@@ -478,7 +479,7 @@ export class IntelligentRAGSearch {
       }
 
       return (documents || []).map((doc: any) =>
-        this.transformDocument(doc, "semantic")
+        this.transformDocument(doc, "semantic"),
       );
     } catch (error) {
       console.error("[IntelligentRAG] Semantic search error:", error);
@@ -492,7 +493,7 @@ export class IntelligentRAGSearch {
 
   private async keywordSearch(
     query: string,
-    options: SearchQuery
+    options: SearchQuery,
   ): Promise<SearchResult[]> {
     try {
       // Wyodrębnij słowa kluczowe
@@ -547,7 +548,7 @@ export class IntelligentRAGSearch {
   // ============================================================================
 
   private async findRelatedDocuments(
-    documentId: string
+    documentId: string,
   ): Promise<RelatedDocument[]> {
     try {
       // Szukaj w document_graph
@@ -559,7 +560,7 @@ export class IntelligentRAGSearch {
           target_document:target_document_id (
             id, title, document_type
           )
-        `
+        `,
         )
         .eq("source_document_id", documentId)
         .limit(5);
@@ -585,7 +586,7 @@ export class IntelligentRAGSearch {
   }
 
   private async findSimilarDocuments(
-    documentId: string
+    documentId: string,
   ): Promise<RelatedDocument[]> {
     try {
       // Pobierz dokument źródłowy
@@ -606,7 +607,7 @@ export class IntelligentRAGSearch {
           match_count: 6,
           filter_user_id: this.userId,
           filter_types: null,
-        }
+        },
       );
 
       if (!similar) return [];
@@ -633,7 +634,7 @@ export class IntelligentRAGSearch {
 
   private transformDocument(
     doc: any,
-    matchType: "semantic" | "keyword" | "fuzzy"
+    matchType: "semantic" | "keyword" | "fuzzy",
   ): SearchResult {
     return {
       id: doc.id,
@@ -747,16 +748,16 @@ export class IntelligentRAGSearch {
       recommendations.push(
         `${
           (totalDocs || 0) - (docsWithEmbedding || 0)
-        } dokumentów nie ma embeddingów - uruchom regenerację`
+        } dokumentów nie ma embeddingów - uruchom regenerację`,
       );
     }
 
     if (searchResults.totalFound === 0) {
       recommendations.push(
-        "Brak wyników - sprawdź czy zapytanie zawiera właściwe słowa kluczowe"
+        "Brak wyników - sprawdź czy zapytanie zawiera właściwe słowa kluczowe",
       );
       recommendations.push(
-        "Spróbuj użyć numerów arabskich zamiast rzymskich (np. '23' zamiast 'XXIII')"
+        "Spróbuj użyć numerów arabskich zamiast rzymskich (np. '23' zamiast 'XXIII')",
       );
     }
 
@@ -765,7 +766,7 @@ export class IntelligentRAGSearch {
       searchResults.searchStats.keywordMatches > 0
     ) {
       recommendations.push(
-        "Wyszukiwanie semantyczne nie zwróciło wyników - sprawdź model embeddingów"
+        "Wyszukiwanie semantyczne nie zwróciło wyników - sprawdź model embeddingów",
       );
     }
 

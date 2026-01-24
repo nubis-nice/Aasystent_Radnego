@@ -13,6 +13,7 @@ import type {
   TranscriptionJobData,
   TranscriptionJobResult,
 } from "./transcription-queue.js";
+import { wsHub } from "./websocket-hub.js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -70,6 +71,14 @@ export async function initializeTranscriptionWorker(): Promise<void> {
 
     worker.on("completed", (job) => {
       console.log(`[TranscriptionWorker] Job ${job.id} completed successfully`);
+      // Powiadom przez WebSocket
+      const userId = job.data.userId;
+      if (userId) {
+        wsHub.updateTask(userId, `transcription-${job.id}`, {
+          status: "completed",
+          description: "Transkrypcja zakończona pomyślnie",
+        });
+      }
     });
 
     worker.on("failed", (job, error) => {
@@ -77,6 +86,31 @@ export async function initializeTranscriptionWorker(): Promise<void> {
         `[TranscriptionWorker] Job ${job?.id} failed:`,
         error.message,
       );
+      // Powiadom przez WebSocket
+      const userId = job?.data.userId;
+      if (userId && job) {
+        wsHub.updateTask(userId, `transcription-${job.id}`, {
+          status: "failed",
+          description: `Błąd transkrypcji: ${error.message}`,
+          error: error.message,
+        });
+      }
+    });
+
+    worker.on("active", (job) => {
+      console.log(`[TranscriptionWorker] Job ${job.id} started`);
+      // Powiadom przez WebSocket - zadanie uruchomione
+      const userId = job.data.userId;
+      if (userId) {
+        wsHub.registerTask(userId, {
+          id: `transcription-${job.id}`,
+          type: "transcription",
+          status: "running",
+          title: "Transkrypcja YouTube",
+          description: `Przetwarzanie: ${job.data.videoUrl}`,
+          startedAt: new Date().toISOString(),
+        });
+      }
     });
 
     worker.on("error", (error) => {

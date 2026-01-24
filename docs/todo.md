@@ -1,4 +1,4 @@
-# TODO (produkt + technologia)
+# ~~bez~~RADNY - TODO (produkt + technologia)
 
 ## Stan aktualny (2026-01-24)
 
@@ -18,7 +18,7 @@
 ### Krytyczne
 
 - [ ] **Adaptery API produkcyjne**: ISAP, WSA/NSA, RIO (obecnie placeholdery)
-- [ ] **Testy E2E czatu** na realnych dokumentach (Drawno)
+- [ ] **Testy E2E czatu** na realnych dokumentach
 - [ ] **System uprawnień**: role użytkowników, RLS scenariusze
 
 ### Ważne

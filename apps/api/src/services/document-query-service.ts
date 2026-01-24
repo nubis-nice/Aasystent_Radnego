@@ -184,12 +184,12 @@ export class DocumentQueryService {
       this.embeddingModel = embConfig.modelName;
 
       console.log(
-        `[DocumentQueryService] Initialized: provider=${embConfig.provider}, model=${this.embeddingModel}`
+        `[DocumentQueryService] Initialized: provider=${embConfig.provider}, model=${this.embeddingModel}`,
       );
     } catch (error) {
       console.warn(
         "[DocumentQueryService] Failed to initialize embeddings client:",
-        error
+        error,
       );
     }
   }
@@ -286,11 +286,12 @@ export class DocumentQueryService {
     const lowerMessage = message.toLowerCase();
 
     // Wzorce wykrywania numeru sesji
+    // Tolerancja na literówki: sesja, sesji, sesję, sesjie, sesje, seje, itd.
     const sessionPatterns = [
-      /sesj[aięy]\s*(?:nr|numer|rady)?\s*\.?\s*([IVXLCDM]+|\d+)/i,
-      /([IVXLCDM]+|\d+)\s*sesj[aięy]/i,
-      /streszcz(?:enie)?\s*(?:.*?)sesj[aięy]\s*(?:nr)?\s*\.?\s*([IVXLCDM]+|\d+)/i,
-      /sesj[aięy]\s*(?:rady\s*(?:miejskiej|gminnej|gminy|miasta)?)?\s*(?:nr)?\s*\.?\s*([IVXLCDM]+|\d+)/i,
+      /sesj[aięye]{1,2}\s*(?:nr|numer|rady)?\s*\.?\s*([IVXLCDM]+|\d+)/i,
+      /([IVXLCDM]+|\d+)\s*sesj[aięye]{1,2}/i,
+      /streszcz(?:enie)?\s*(?:.*?)sesj[aięye]{1,2}\s*(?:nr)?\s*\.?\s*([IVXLCDM]+|\d+)/i,
+      /sesj[aięye]{1,2}\s*(?:rady\s*(?:miejskiej|gminnej|gminy|miasta|miajsta)?)?\s*(?:nr|numer)?\s*\.?\s*([IVXLCDM]+|\d+)/i,
     ];
 
     let sessionNumber = 0;
@@ -328,7 +329,7 @@ export class DocumentQueryService {
     }
 
     console.log(
-      `[DocumentQuery] Detected session intent: session=${sessionNumber}, type=${requestType}`
+      `[DocumentQuery] Detected session intent: session=${sessionNumber}, type=${requestType}`,
     );
 
     return {
@@ -359,7 +360,7 @@ export class DocumentQueryService {
     ];
 
     console.log(
-      `[DocumentQuery] Searching for session ${sessionNumber} (${romanNumber}) documents`
+      `[DocumentQuery] Searching for session ${sessionNumber} (${romanNumber}) documents`,
     );
 
     // Szukaj w bazie - PRIORYTET: tytuł przed treścią
@@ -370,7 +371,7 @@ export class DocumentQueryService {
       const { data: titleMatches } = await supabase
         .from("processed_documents")
         .select(
-          "id, title, document_type, publish_date, summary, source_url, content"
+          "id, title, document_type, publish_date, summary, source_url, content",
         )
         .eq("user_id", this.userId)
         .ilike("title", `%${pattern}%`)
@@ -398,7 +399,7 @@ export class DocumentQueryService {
         const { data: contentMatches } = await supabase
           .from("processed_documents")
           .select(
-            "id, title, document_type, publish_date, summary, source_url, content"
+            "id, title, document_type, publish_date, summary, source_url, content",
           )
           .eq("user_id", this.userId)
           .ilike("content", `%${pattern}%`)
@@ -428,7 +429,7 @@ export class DocumentQueryService {
       const semanticQuery = `Sesja rady miejskiej numer ${sessionNumber} ${romanNumber}`;
       const semanticMatches = await this.findDocumentsSemantic(
         semanticQuery,
-        5
+        5,
       );
 
       for (const match of semanticMatches) {
@@ -439,7 +440,7 @@ export class DocumentQueryService {
     }
 
     console.log(
-      `[DocumentQuery] Found ${allMatches.length} documents for session ${sessionNumber}`
+      `[DocumentQuery] Found ${allMatches.length} documents for session ${sessionNumber}`,
     );
 
     return allMatches;
@@ -506,11 +507,11 @@ export class DocumentQueryService {
    */
   async findDocumentsSemantic(
     query: string,
-    limit: number = 5
+    limit: number = 5,
   ): Promise<DocumentMatch[]> {
     if (!this.embeddingsClient) {
       console.log(
-        "[DocumentQuery] No OpenAI client - skipping semantic search"
+        "[DocumentQuery] No OpenAI client - skipping semantic search",
       );
       return [];
     }
@@ -555,7 +556,7 @@ export class DocumentQueryService {
           summary: doc.summary,
           sourceUrl: doc.source_url,
           similarity: doc.similarity,
-        })
+        }),
       );
     } catch (err) {
       console.error("[DocumentQuery] Semantic search error:", err);
@@ -574,7 +575,7 @@ export class DocumentQueryService {
     const references = this.detectDocumentReferences(message);
 
     console.log(
-      `[DocumentQuery] Detected ${references.length} references in message`
+      `[DocumentQuery] Detected ${references.length} references in message`,
     );
 
     // Jeśli nie wykryto referencji - semantic search po całej wiadomości
@@ -663,7 +664,7 @@ export class DocumentQueryService {
    */
   async getDocumentContext(
     documentId: string,
-    queryForChunks?: string
+    queryForChunks?: string,
   ): Promise<DocumentContext | null> {
     // Pobierz metadane dokumentu
     const doc = await this.findDocumentById(documentId);
@@ -680,7 +681,7 @@ export class DocumentQueryService {
           {
             model: this.embeddingModel,
             input: queryForChunks,
-          }
+          },
         );
 
         const queryEmbedding = embeddingResponse.data[0].embedding;
@@ -694,7 +695,7 @@ export class DocumentQueryService {
             match_count: 10,
             filter_user_id: this.userId,
             filter_types: null,
-          }
+          },
         );
 
         if (chunks) {
@@ -702,7 +703,7 @@ export class DocumentQueryService {
           relevantChunks = chunks
             .filter(
               (c: { id: string }) =>
-                c.id === documentId || c.id.startsWith(documentId)
+                c.id === documentId || c.id.startsWith(documentId),
             )
             .slice(0, 5)
             .map((c: { content: string; similarity: number }) => ({
@@ -735,7 +736,7 @@ export class DocumentQueryService {
    * Pobiera powiązane dokumenty z Document Graph
    */
   private async getRelatedDocuments(
-    documentId: string
+    documentId: string,
   ): Promise<DocumentMatch[]> {
     try {
       const { data, error } = await supabase.rpc("get_related_documents", {
@@ -763,7 +764,7 @@ export class DocumentQueryService {
             documentType: doc.document_type,
             publishDate: doc.publish_date,
             similarity: doc.relation_strength,
-          })
+          }),
         );
     } catch {
       return [];
@@ -782,7 +783,7 @@ export class DocumentQueryService {
           target_document:target_document_id (
             id, title, document_type, publish_date
           )
-        `
+        `,
         )
         .eq("source_document_id", documentId)
         .eq("relation_type", "attachment");
@@ -823,7 +824,7 @@ export class DocumentQueryService {
               publishDate: target.publish_date,
               similarity: 1.0,
             };
-          }
+          },
         )
         .filter(Boolean) as DocumentMatch[];
     } catch {
@@ -847,7 +848,7 @@ export class DocumentQueryService {
       const normalizedTitle = m.title.toLowerCase().trim().replace(/\s+/g, " ");
       if (seenTitles.has(normalizedTitle)) {
         console.log(
-          `[DocumentQuery] Removing duplicate by title: "${m.title}"`
+          `[DocumentQuery] Removing duplicate by title: "${m.title}"`,
         );
         return false;
       }

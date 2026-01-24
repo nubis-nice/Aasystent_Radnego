@@ -394,6 +394,100 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
     }
   });
 
+  // POST /api/data-sources/scrape-all - Dodaj wszystkie źródła non-API do kolejki
+  fastify.post<{
+    Body: {
+      sourceIds?: string[];
+      excludeApiSources?: boolean;
+    };
+  }>("/data-sources/scrape-all", async (request, reply) => {
+    try {
+      const userId = request.headers["x-user-id"] as string;
+      if (!userId) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const { sourceIds, excludeApiSources = true } = request.body || {};
+
+      // Typy źródeł API (nie wymagają scrapingu)
+      const API_SOURCE_TYPES = [
+        "youtube",
+        "youtube_channel",
+        "api",
+        "statistical",
+        "legal",
+        "registry",
+        "environmental",
+        "funding",
+        "spatial",
+      ];
+
+      // Pobierz źródła użytkownika
+      let query = supabase
+        .from("data_sources")
+        .select("id, type, last_scraped_at, metadata, scraping_enabled")
+        .eq("user_id", userId);
+
+      if (sourceIds && sourceIds.length > 0) {
+        query = query.in("id", sourceIds);
+      }
+
+      const { data: sources, error } = await query;
+
+      if (error) {
+        request.log.error({ err: error }, "Failed to fetch sources");
+        return reply.status(500).send({ error: "Failed to fetch sources" });
+      }
+
+      // Filtruj źródła non-API jeśli włączone
+      let sourcesToScrape = sources || [];
+      if (excludeApiSources) {
+        sourcesToScrape = sourcesToScrape.filter(
+          (s) => !API_SOURCE_TYPES.includes(s.type),
+        );
+      }
+
+      // Filtruj tylko aktywne źródła
+      sourcesToScrape = sourcesToScrape.filter(
+        (s) => s.scraping_enabled !== false,
+      );
+
+      if (sourcesToScrape.length === 0) {
+        return reply.send({
+          message: "No sources to scrape",
+          queued: 0,
+          skipped: 0,
+        });
+      }
+
+      // Dodaj do kolejki
+      const queueManager = ScrapingQueueManager.getInstance();
+      const result = await queueManager.enqueueBulk(
+        sourcesToScrape.map((s) => ({
+          sourceId: s.id,
+          userId,
+          sourceType: s.type,
+        })),
+      );
+
+      request.log.info(
+        { queued: result.totalQueued, skipped: result.skipped.length },
+        "Bulk scraping enqueued",
+      );
+
+      return reply.send({
+        message: `Queued ${result.totalQueued} sources for scraping`,
+        queued: result.totalQueued,
+        skipped: result.skipped.length,
+        jobIds: result.queued,
+        status: "queued",
+      });
+    } catch (error) {
+      request.log.error({ err: error }, "Bulk scrape error");
+      return reply.status(500).send({ error: "Internal server error" });
+    }
+  });
+
   // GET /api/data-sources/queue/stats - Statystyki kolejki scrapingu
   fastify.get("/data-sources/queue/stats", async (request, reply) => {
     try {

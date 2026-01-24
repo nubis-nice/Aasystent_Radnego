@@ -1,8 +1,8 @@
-# Asystent Radnego – Gmina Drawno (MVP 2026-01-14)
+# ~~bez~~RADNY (v1.0.0)
 
 ## Misja produktu
 
-Agent „Windsurf” dostarcza radnym i urzędnikom kompletny obraz dokumentów samorządowych:
+Agent ~~bez~~RADNY dostarcza radnym i urzędnikom kompletny obraz dokumentów samorządowych:
 
 - automatycznie zbiera materiały z BIP, ISAP, RIO, WSA/NSA, Dzienników Wojewódzkich oraz z uploadów;
 - wykonuje ekstrakcję, normalizację oraz analizę prawną/budżetową;
@@ -34,5 +34,6 @@ System **nie zastępuje** prawnika – generuje audytowalne wnioski i cytaty.
 ## Priorytety rozwoju
 
 1. Produkcyjne uruchomienie adapterów ISAP/WSA/RIO + ePUAP live sync.
-2. Automatyczne testy czatu na realnych dokumentach (scenariusze Drawno).
+2. Automatyczne testy E2E czatu na realnych dokumentach.
 3. Raporty cykliczne (tygodniowe/miesięczne) i alerty o krytycznych ryzykach.
+4. Publikacja open source na GitHub.

@@ -123,7 +123,7 @@ export class IntelligentScraper {
     baseUrl: string,
     userId: string,
     sourceId: string,
-    customConfig?: Partial<IntelligentScrapingConfig>
+    customConfig?: Partial<IntelligentScrapingConfig>,
   ) {
     this.baseUrl = this.normalizeUrl(baseUrl);
     this.userId = userId;
@@ -151,12 +151,12 @@ export class IntelligentScraper {
       const llmConfig = await getAIConfig(this.userId, "llm");
       this.llmModel = llmConfig.modelName;
       console.log(
-        `[IntelligentScraper] Initialized AI clients: provider=${llmConfig.provider}, model=${this.llmModel}`
+        `[IntelligentScraper] Initialized AI clients: provider=${llmConfig.provider}, model=${this.llmModel}`,
       );
     } catch (error) {
       console.warn(
         "[IntelligentScraper] Failed to initialize AI clients:",
-        error
+        error,
       );
       // Fallback do zmiennych środowiskowych jest obsługiwany przez AIClientFactory
     }
@@ -168,7 +168,7 @@ export class IntelligentScraper {
 
   async generateSiteMap(): Promise<SiteMapNode[]> {
     console.log(
-      `[IntelligentScraper] Generating site map for: ${this.baseUrl}`
+      `[IntelligentScraper] Generating site map for: ${this.baseUrl}`,
     );
 
     const queue: { url: string; depth: number }[] = [
@@ -226,13 +226,13 @@ export class IntelligentScraper {
         this.errors.push(
           `Site map error for ${url}: ${
             error instanceof Error ? error.message : "Unknown"
-          }`
+          }`,
         );
       }
     }
 
     console.log(
-      `[IntelligentScraper] Site map generated: ${this.siteMap.size} pages`
+      `[IntelligentScraper] Site map generated: ${this.siteMap.size} pages`,
     );
     return Array.from(this.siteMap.values());
   }
@@ -287,7 +287,7 @@ export class IntelligentScraper {
   private classifyPageType(
     $: cheerio.CheerioAPI,
     url: string,
-    title: string
+    title: string,
   ): SiteMapNode["contentType"] {
     const urlLower = url.toLowerCase();
     const titleLower = title.toLowerCase();
@@ -342,7 +342,7 @@ export class IntelligentScraper {
   private calculatePriority(
     url: string,
     title: string,
-    contentType: SiteMapNode["contentType"]
+    contentType: SiteMapNode["contentType"],
   ): number {
     let priority = 50;
 
@@ -427,7 +427,7 @@ export class IntelligentScraper {
   async analyzeContentWithLLM(
     url: string,
     title: string,
-    content: string
+    content: string,
   ): Promise<LLMAnalysisResult | null> {
     if (!this.config.enableLLMAnalysis || !this.llmClient) {
       return null;
@@ -481,7 +481,7 @@ Odpowiedz w formacie JSON:
     } catch (error) {
       console.error(
         `[IntelligentScraper] LLM analysis error for ${url}:`,
-        error
+        error,
       );
       return null;
     }
@@ -514,11 +514,11 @@ Odpowiedz w formacie JSON:
 
   private async scrapeYouTubeChannel(
     result: IntelligentScrapeResult,
-    startTime: number
+    startTime: number,
   ): Promise<IntelligentScrapeResult> {
     try {
       console.log(
-        `[IntelligentScraper] Scraping YouTube channel: ${this.baseUrl}`
+        `[IntelligentScraper] Scraping YouTube channel: ${this.baseUrl}`,
       );
 
       const youtubeService = new YouTubeSessionService();
@@ -531,7 +531,7 @@ Odpowiedz w formacie JSON:
       // Użyj searchWithContext z nazwą gminy
       const searchResult = await youtubeService.searchWithContext(
         `${this.config.councilLocation} sesja rady`,
-        { title: channelUrl }
+        { title: channelUrl },
       );
 
       if (!searchResult.success || searchResult.sessions.length === 0) {
@@ -542,7 +542,7 @@ Odpowiedz w formacie JSON:
       }
 
       console.log(
-        `[IntelligentScraper] Found ${searchResult.sessions.length} YouTube sessions`
+        `[IntelligentScraper] Found ${searchResult.sessions.length} YouTube sessions`,
       );
 
       // Zapisz każde wideo jako dokument z analizą tytułu
@@ -565,11 +565,11 @@ Odpowiedz w formacie JSON:
 
           // Analizuj tytuł wideo i wyodrębnij numer sesji
           const titleAnalysis = await youtubeService.analyzeVideoTitle(
-            video.title
+            video.title,
           );
 
           console.log(
-            `[IntelligentScraper] Video "${video.title}" → Session ${titleAnalysis.sessionNumber} (confidence: ${titleAnalysis.confidence}%)`
+            `[IntelligentScraper] Video "${video.title}" → Session ${titleAnalysis.sessionNumber} (confidence: ${titleAnalysis.confidence}%)`,
           );
 
           // Zapisz do scraped_content z metadanymi
@@ -607,7 +607,7 @@ Odpowiedz w formacie JSON:
         } catch (err) {
           console.error(
             `[IntelligentScraper] Error saving YouTube video:`,
-            err
+            err,
           );
         }
       }
@@ -618,7 +618,7 @@ Odpowiedz w formacie JSON:
       result.errors.push(
         `YouTube scraping error: ${
           error instanceof Error ? error.message : "Unknown"
-        }`
+        }`,
       );
     }
 
@@ -652,7 +652,7 @@ Odpowiedz w formacie JSON:
         this.baseUrl.includes("youtu.be")
       ) {
         console.log(
-          "[IntelligentScraper] Detected YouTube source, using YouTubeSessionService..."
+          "[IntelligentScraper] Detected YouTube source, using YouTubeSessionService...",
         );
         return await this.scrapeYouTubeChannel(result, startTime);
       }
@@ -670,13 +670,13 @@ Odpowiedz w formacie JSON:
         .sort((a, b) => b.priority - a.priority);
 
       console.log(
-        `[IntelligentScraper] Phase 2: Analyzing ${prioritizedPages.length} priority pages...`
+        `[IntelligentScraper] Phase 2: Analyzing ${prioritizedPages.length} priority pages...`,
       );
 
       // PHASE 3: Analiza i scraping - RÓWNOLEGLE
       const maxParallel = this.config.maxPagesParallel || 1; // Domyślnie sekwencyjnie
       console.log(
-        `[IntelligentScraper] Phase 3: Processing with parallelism=${maxParallel}`
+        `[IntelligentScraper] Phase 3: Processing with parallelism=${maxParallel}`,
       );
 
       // Przetwarzaj strony w partiach (batch processing)
@@ -693,7 +693,7 @@ Odpowiedz w formacie JSON:
               if (this.config.incrementalMode && node.contentHash) {
                 const hasChanged = await this.checkIfContentChanged(
                   node.url,
-                  node.contentHash
+                  node.contentHash,
                 );
                 if (!hasChanged) {
                   result.skippedDocuments++;
@@ -715,7 +715,7 @@ Odpowiedz w formacie JSON:
                 llmAnalysis = await this.analyzeContentWithLLM(
                   node.url,
                   node.title,
-                  content
+                  content,
                 );
                 if (llmAnalysis) {
                   result.llmAnalyses++;
@@ -738,7 +738,7 @@ Odpowiedz w formacie JSON:
                 node,
                 content,
                 pdfLinks,
-                llmAnalysis
+                llmAnalysis,
               );
               if (savedDoc) {
                 result.documentsProcessed++;
@@ -748,10 +748,10 @@ Odpowiedz w formacie JSON:
               result.errors.push(
                 `Error processing ${node.url}: ${
                   error instanceof Error ? error.message : "Unknown"
-                }`
+                }`,
               );
             }
-          })
+          }),
         );
 
         // Delay między partiami (nie między pojedynczymi stronami)
@@ -766,24 +766,24 @@ Odpowiedz w formacie JSON:
 
       // PHASE 5: Przetwarzanie załączników PDF (z OCR dla skanów)
       console.log(
-        "[IntelligentScraper] Phase 5: Processing PDF attachments with OCR..."
+        "[IntelligentScraper] Phase 5: Processing PDF attachments with OCR...",
       );
       const pdfProcessed = await this.processPDFAttachments();
       console.log(
-        `[IntelligentScraper] Processed ${pdfProcessed} PDF attachments`
+        `[IntelligentScraper] Processed ${pdfProcessed} PDF attachments`,
       );
 
       result.success = true;
       result.errors = [...this.errors, ...result.errors];
     } catch (error) {
       result.errors.push(
-        `Fatal error: ${error instanceof Error ? error.message : "Unknown"}`
+        `Fatal error: ${error instanceof Error ? error.message : "Unknown"}`,
       );
     }
 
     result.processingTimeMs = Date.now() - startTime;
     console.log(
-      `[IntelligentScraper] Completed in ${result.processingTimeMs}ms`
+      `[IntelligentScraper] Completed in ${result.processingTimeMs}ms`,
     );
 
     return result;
@@ -792,7 +792,7 @@ Odpowiedz w formacie JSON:
   private extractMainContent($: cheerio.CheerioAPI): string {
     // Usuń niepotrzebne elementy
     $(
-      "script, style, nav, header, footer, .menu, .sidebar, .advertisement"
+      "script, style, nav, header, footer, .menu, .sidebar, .advertisement",
     ).remove();
 
     // Priorytetowe selektory dla treści
@@ -851,7 +851,7 @@ Odpowiedz w formacie JSON:
     node: SiteMapNode,
     content: string,
     pdfLinks: string[],
-    llmAnalysis: LLMAnalysisResult | null
+    llmAnalysis: LLMAnalysisResult | null,
   ): Promise<boolean> {
     try {
       const { error } = await supabase.from("scraped_content").upsert(
@@ -882,13 +882,13 @@ Odpowiedz w formacie JSON:
         },
         {
           onConflict: "source_id,url",
-        }
+        },
       );
 
       if (error) {
         console.error(
           `[IntelligentScraper] Save error for ${node.url}:`,
-          error
+          error,
         );
         return false;
       }
@@ -897,7 +897,7 @@ Odpowiedz w formacie JSON:
     } catch (error) {
       console.error(
         `[IntelligentScraper] Save exception for ${node.url}:`,
-        error
+        error,
       );
       return false;
     }
@@ -917,7 +917,7 @@ Odpowiedz w formacie JSON:
     console.log(
       `[IntelligentScraper] ${
         unprocessedContent?.length || 0
-      } documents to process for RAG`
+      } documents to process for RAG`,
     );
 
     if (!unprocessedContent || unprocessedContent.length === 0) {
@@ -931,7 +931,7 @@ Odpowiedz w formacie JSON:
 
     if (!this.embeddingsClient) {
       console.warn(
-        "[IntelligentScraper] No embeddings client available, skipping embeddings"
+        "[IntelligentScraper] No embeddings client available, skipping embeddings",
       );
       return 0;
     }
@@ -956,7 +956,7 @@ Odpowiedz w formacie JSON:
         // Określ typ dokumentu
         const documentType = this.classifyDocumentType(
           content.title || "",
-          content.raw_content
+          content.raw_content,
         );
 
         // Generuj embedding
@@ -967,7 +967,7 @@ Odpowiedz w formacie JSON:
               model: embeddingModel,
               input: `${content.title || ""}\n\n${content.raw_content.substring(
                 0,
-                5000
+                5000,
               )}`,
             });
           embedding = embeddingResponse.data[0]?.embedding ?? null;
@@ -979,7 +979,7 @@ Odpowiedz w formacie JSON:
         // Wyciągnij słowa kluczowe
         const keywords = this.extractKeywords(
           content.title || "",
-          content.raw_content
+          content.raw_content,
         );
 
         // Użyj podsumowania z LLM jeśli dostępne
@@ -994,7 +994,14 @@ Odpowiedz w formacie JSON:
             scraped_content_id: content.id,
             user_id: this.userId,
             document_type: documentType,
-            title: content.title || "Bez tytułu",
+            // Znormalizuj tytuł (zamień angielskie nazwy na polskie)
+            title: (content.title || "Bez tytułu")
+              .replace(/\bresolution\s+nr\b/gi, "Uchwała nr")
+              .replace(/\bresolution\b/gi, "Uchwała")
+              .replace(/\bprotocol\b/gi, "Protokół")
+              .replace(/\bdraft\b/gi, "Projekt")
+              .replace(/\battachment\b/gi, "Załącznik")
+              .trim(),
             content: content.raw_content,
             summary,
             keywords,
@@ -1007,14 +1014,14 @@ Odpowiedz w formacie JSON:
             processed_at: new Date().toISOString(),
           })
           .select(
-            "id, user_id, title, document_type, content, session_number, normalized_publish_date, source_url"
+            "id, user_id, title, document_type, content, session_number, normalized_publish_date, source_url",
           )
           .single();
 
         if (!error && insertedDoc) {
           processedCount++;
           console.log(
-            `[IntelligentScraper] Processed: ${content.title || content.url}`
+            `[IntelligentScraper] Processed: ${content.title || content.url}`,
           );
 
           // Auto-import do kalendarza dla dokumentów sesji/komisji
@@ -1023,7 +1030,7 @@ Odpowiedz w formacie JSON:
           } catch (calendarError) {
             console.error(
               "[IntelligentScraper] Calendar auto-import failed:",
-              calendarError
+              calendarError,
             );
           }
         }
@@ -1033,7 +1040,7 @@ Odpowiedz w formacie JSON:
     }
 
     console.log(
-      `[IntelligentScraper] Processed ${processedCount} documents to RAG`
+      `[IntelligentScraper] Processed ${processedCount} documents to RAG`,
     );
     return processedCount;
   }
@@ -1139,7 +1146,7 @@ Odpowiedz w formacie JSON:
       this.errors.push(
         `Fetch error for ${url}: ${
           error instanceof Error ? error.message : "Unknown"
-        }`
+        }`,
       );
       return null;
     }
@@ -1180,7 +1187,7 @@ Odpowiedz w formacie JSON:
     }
 
     console.log(
-      `[IntelligentScraper] Found ${allPdfLinks.length} unique PDF links to process`
+      `[IntelligentScraper] Found ${allPdfLinks.length} unique PDF links to process`,
     );
 
     if (allPdfLinks.length === 0) return 0;
@@ -1192,7 +1199,7 @@ Odpowiedz w formacie JSON:
     } catch (error) {
       console.error(
         "[IntelligentScraper] Failed to initialize DocumentProcessor:",
-        error
+        error,
       );
       return 0;
     }
@@ -1228,7 +1235,7 @@ Odpowiedz w formacie JSON:
 
         if (!response.ok) {
           console.warn(
-            `[IntelligentScraper] Failed to download PDF: ${response.status}`
+            `[IntelligentScraper] Failed to download PDF: ${response.status}`,
           );
           continue;
         }
@@ -1239,23 +1246,23 @@ Odpowiedz w formacie JSON:
         // Wyciągnij nazwę pliku z URL
         const urlParts = pdfUrl.split("/");
         const fileName = decodeURIComponent(
-          urlParts[urlParts.length - 1] || "document.pdf"
+          urlParts[urlParts.length - 1] || "document.pdf",
         );
 
         console.log(
-          `[IntelligentScraper] Processing PDF: ${fileName} (${pdfBuffer.length} bytes)`
+          `[IntelligentScraper] Processing PDF: ${fileName} (${pdfBuffer.length} bytes)`,
         );
 
         // Przetwórz PDF - DocumentProcessor automatycznie wykryje czy to skan i użyje OCR
         const result = await processor.processFile(
           pdfBuffer,
           fileName,
-          "application/pdf"
+          "application/pdf",
         );
 
         if (!result.success) {
           console.warn(
-            `[IntelligentScraper] PDF processing failed: ${fileName} - ${result.error}`
+            `[IntelligentScraper] PDF processing failed: ${fileName} - ${result.error}`,
           );
           continue;
         }
@@ -1267,7 +1274,7 @@ Odpowiedz w formacie JSON:
 
         console.log(
           `[IntelligentScraper] Extracted ${result.text.length} chars from ${fileName} ` +
-            `(method: ${result.metadata.processingMethod})`
+            `(method: ${result.metadata.processingMethod})`,
         );
 
         // Zapisz do RAG
@@ -1276,7 +1283,7 @@ Odpowiedz w formacie JSON:
           result.text,
           fileName.replace(".pdf", "").replace(/_/g, " "),
           fileName,
-          "pdf_attachment"
+          "pdf_attachment",
         );
 
         if (saveResult.success) {
@@ -1285,7 +1292,7 @@ Odpowiedz w formacie JSON:
             `[IntelligentScraper] Saved PDF to RAG: ${fileName} ` +
               `(ID: ${saveResult.documentId}, OCR: ${
                 result.metadata.processingMethod === "ocr"
-              })`
+              })`,
           );
         }
 
@@ -1294,7 +1301,7 @@ Odpowiedz w formacie JSON:
       } catch (error) {
         console.error(
           `[IntelligentScraper] Error processing PDF ${pdfUrl}:`,
-          error
+          error,
         );
       }
     }
@@ -1310,10 +1317,10 @@ Odpowiedz w formacie JSON:
 export async function intelligentScrapeDataSource(
   sourceId: string,
   userId: string,
-  customConfig?: Partial<IntelligentScrapingConfig>
+  customConfig?: Partial<IntelligentScrapingConfig>,
 ): Promise<IntelligentScrapeResult> {
   console.log(
-    `[IntelligentScraper] Starting intelligent scrape for source: ${sourceId}`
+    `[IntelligentScraper] Starting intelligent scrape for source: ${sourceId}`,
   );
 
   // Pobierz konfigurację źródła
@@ -1405,7 +1412,7 @@ export async function processDeepResearchLinks(
   options?: {
     minRelevanceScore?: number;
     maxLinks?: number;
-  }
+  },
 ): Promise<{
   success: boolean;
   processed: number;
@@ -1423,7 +1430,7 @@ export async function processDeepResearchLinks(
     .slice(0, maxLinks);
 
   console.log(
-    `[DeepResearchLinks] Processing ${filteredLinks.length} links (min score: ${minScore})`
+    `[DeepResearchLinks] Processing ${filteredLinks.length} links (min score: ${minScore})`,
   );
 
   const processor = new DocumentProcessor();
@@ -1432,7 +1439,7 @@ export async function processDeepResearchLinks(
   for (const link of filteredLinks) {
     try {
       console.log(
-        `[DeepResearchLinks] Fetching: ${link.title} (score: ${link.relevanceScore})`
+        `[DeepResearchLinks] Fetching: ${link.title} (score: ${link.relevanceScore})`,
       );
 
       const response = await fetch(link.url, {
@@ -1462,7 +1469,7 @@ export async function processDeepResearchLinks(
           buffer,
           fileName,
           contentType,
-          buffer.length
+          buffer.length,
         );
         if (result.success) {
           text = result.text;
@@ -1494,13 +1501,13 @@ export async function processDeepResearchLinks(
           documentType: "research",
           sourceUrl: link.url,
         },
-        userId
+        userId,
       );
 
       if (saveResult.success) {
         saved++;
         console.log(
-          `[DeepResearchLinks] Saved: ${link.title} (${text.length} chars)`
+          `[DeepResearchLinks] Saved: ${link.title} (${text.length} chars)`,
         );
       } else {
         errors.push(`Save failed: ${link.url}`);
@@ -1511,13 +1518,13 @@ export async function processDeepResearchLinks(
       errors.push(
         `Error: ${link.url} - ${
           error instanceof Error ? error.message : "Unknown"
-        }`
+        }`,
       );
     }
   }
 
   console.log(
-    `[DeepResearchLinks] Completed: processed=${processed}, saved=${saved}, errors=${errors.length}`
+    `[DeepResearchLinks] Completed: processed=${processed}, saved=${saved}, errors=${errors.length}`,
   );
 
   return {

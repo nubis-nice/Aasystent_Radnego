@@ -1,4 +1,4 @@
-# Architektura: Asystent Radnego (Gmina Drawno)
+# Architektura: ~~bez~~RADNY
 
 ## 1. Cel systemu
 
@@ -29,10 +29,10 @@ Projekt jest utrzymywany jako monorepo (**npm workspaces**) z osobnymi aplikacja
 
 ## 4. Moduły i odpowiedzialności
 
-### 4.0. System źródeł danych (Data Sources) - Agent Winsdurf
+### 4.0. System źródeł danych (Data Sources)
 
 **Założenia strategiczne:**
-Agent AI "Winsdurf" oparty na aktualnych, zewnętrznych źródłach prawa zamiast lokalnego kontekstu MCP.
+Agent AI ~~bez~~RADNY oparty na aktualnych, zewnętrznych źródłach prawa zamiast lokalnego kontekstu MCP.
 
 **Architektura API-first:**
 
