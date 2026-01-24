@@ -35,7 +35,7 @@ export default function AppearancePage() {
   };
 
   const handleFontSizeChange = async (
-    newSize: "small" | "medium" | "large"
+    newSize: "small" | "medium" | "large",
   ) => {
     try {
       await setFontSizeContext(newSize);
@@ -119,17 +119,19 @@ export default function AppearancePage() {
             onClick={() => handleThemeChange("dark")}
             className={`p-6 rounded-2xl border-2 transition-all duration-200 ${
               theme === "dark"
-                ? "border-primary-500 bg-primary-50"
-                : "border-border hover:border-secondary-300"
+                ? "border-primary-500 bg-secondary-900 text-text-dark"
+                : "border-border hover:border-secondary-300 dark:hover:border-secondary-600"
             }`}
           >
             <div className="flex flex-col items-center gap-3">
-              <div className="h-16 w-16 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg">
+              <div className="h-16 w-16 rounded-xl bg-gradient-to-br from-slate-800 to-slate-900 flex items-center justify-center shadow-lg">
                 <Moon className="h-8 w-8 text-white" />
               </div>
               <div className="text-center">
-                <p className="font-bold text-text">Ciemny</p>
-                <p className="text-sm text-text-secondary">
+                <p className="font-bold text-text dark:text-text-dark">
+                  Ciemny
+                </p>
+                <p className="text-sm text-text-secondary dark:text-text-dark-secondary">
                   Oszczędza wzrok w nocy
                 </p>
               </div>
@@ -175,7 +177,7 @@ export default function AppearancePage() {
               checked={fontSize === "small"}
               onChange={(e) =>
                 handleFontSizeChange(
-                  e.target.value as "small" | "medium" | "large"
+                  e.target.value as "small" | "medium" | "large",
                 )
               }
               className="h-5 w-5 text-primary-500"
@@ -195,7 +197,7 @@ export default function AppearancePage() {
               checked={fontSize === "medium"}
               onChange={(e) =>
                 handleFontSizeChange(
-                  e.target.value as "small" | "medium" | "large"
+                  e.target.value as "small" | "medium" | "large",
                 )
               }
               className="h-5 w-5 text-primary-500"
@@ -215,7 +217,7 @@ export default function AppearancePage() {
               checked={fontSize === "large"}
               onChange={(e) =>
                 handleFontSizeChange(
-                  e.target.value as "small" | "medium" | "large"
+                  e.target.value as "small" | "medium" | "large",
                 )
               }
               className="h-5 w-5 text-primary-500"

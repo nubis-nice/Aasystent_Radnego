@@ -8,6 +8,14 @@ import {
   type DocumentPriority,
 } from "../services/document-scorer.js";
 import { DocumentAnalysisService } from "../services/document-analysis-service.js";
+import {
+  addDocumentProcessJob,
+  getUserDocumentJobs,
+  getDocumentJob,
+  deleteDocumentJob,
+  retryDocumentJob,
+  getDocumentQueueStats,
+} from "../services/document-process-queue.js";
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -129,7 +137,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.log.error(error);
         return reply.status(500).send({ error: "Internal server error" });
       }
-    }
+    },
   );
 
   // POST /documents - Upload nowego dokumentu
@@ -177,7 +185,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.log.error(error);
         return reply.status(500).send({ error: "Internal server error" });
       }
-    }
+    },
   );
 
   // DELETE /documents/:id - Usunięcie dokumentu z RAG
@@ -225,7 +233,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.log.error(error);
         return reply.status(500).send({ error: "Internal server error" });
       }
-    }
+    },
   );
 
   // DELETE /documents/bulk - Usunięcie wielu dokumentów z RAG
@@ -309,7 +317,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       console.log(
-        `[Documents] Deleted ALL ${totalCount} documents for user ${userId}`
+        `[Documents] Deleted ALL ${totalCount} documents for user ${userId}`,
       );
       return reply.status(200).send({
         success: true,
@@ -362,7 +370,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Filtruj dokumenty z treścią < 50 znaków
       const shortContentDocs = (shortDocs || []).filter(
-        (doc) => doc.content && doc.content.length < 50
+        (doc) => doc.content && doc.content.length < 50,
       );
 
       const allEmptyDocs = [
@@ -414,7 +422,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         }
 
         console.log(
-          `[Documents] Repairing document: ${doc.title} from ${doc.source_url}`
+          `[Documents] Repairing document: ${doc.title} from ${doc.source_url}`,
         );
 
         // Usuń stary dokument
@@ -476,7 +484,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
               documentType: doc.document_type,
               sourceUrl: doc.source_url,
             },
-            userId
+            userId,
           );
 
           return reply.send({
@@ -492,7 +500,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
           buffer,
           fileName,
           contentType,
-          buffer.length
+          buffer.length,
         );
 
         if (!result.success || result.text.length < 50) {
@@ -511,11 +519,11 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
             documentType: doc.document_type,
             sourceUrl: doc.source_url,
           },
-          userId
+          userId,
         );
 
         console.log(
-          `[Documents] Repaired document: ${doc.title} (${result.text.length} chars)`
+          `[Documents] Repaired document: ${doc.title} (${result.text.length} chars)`,
         );
 
         return reply.send({
@@ -531,7 +539,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
             error instanceof Error ? error.message : "Internal server error",
         });
       }
-    }
+    },
   );
 
   // POST /documents/search - Wyszukiwanie semantyczne
@@ -568,7 +576,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.log.error(error);
         return reply.status(500).send({ error: "Internal server error" });
       }
-    }
+    },
   );
 
   // POST /documents/:id/analyze - Profesjonalna analiza dokumentu z kontekstem RAG
@@ -590,7 +598,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         // Zbuduj pełny kontekst analizy (dokument + druki + załączniki z RAG)
         const analysisContext = await analysisService.buildAnalysisContext(
           userId,
-          id
+          id,
         );
 
         if (!analysisContext) {
@@ -646,7 +654,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.log.error(error);
         return reply.status(500).send({ error: "Internal server error" });
       }
-    }
+    },
   );
 
   // POST /documents/process - Przetwarzanie pliku z OCR
@@ -692,7 +700,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       if (fileBuffer.length > MAX_FILE_SIZE) {
         return reply.status(400).send({
           error: `Plik jest zbyt duży (${Math.round(
-            fileBuffer.length / 1024 / 1024
+            fileBuffer.length / 1024 / 1024,
           )}MB). Maksymalny rozmiar to 10MB.`,
         });
       }
@@ -704,7 +712,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       const result = await processor.processFile(
         fileBuffer,
         filename,
-        mimetype
+        mimetype,
       );
 
       if (!result.success) {
@@ -766,7 +774,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         body.text,
         body.title,
         body.sourceFileName,
-        body.documentType
+        body.documentType,
       );
 
       if (!result.success) {
@@ -853,7 +861,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       if (fileBuffer.length > maxSize) {
         return reply.status(400).send({
           error: `Plik jest zbyt duży (${Math.round(
-            fileBuffer.length / 1024 / 1024
+            fileBuffer.length / 1024 / 1024,
           )}MB). Maksymalny rozmiar to 25MB.`,
         });
       }
@@ -865,7 +873,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       const result = await transcriber.transcribe(
         fileBuffer,
         filename,
-        mimetype
+        mimetype,
       );
 
       if (!result.success) {
@@ -936,8 +944,8 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
           doc.document_type === "transkrypcja"
             ? "transcription"
             : doc.document_type === "ocr"
-            ? "ocr"
-            : "other",
+              ? "ocr"
+              : "other",
         sourceFileName: doc.source_url?.replace("file://", "") || doc.title,
         sourceUrl: doc.source_url,
         mimeType: doc.metadata?.mimeType || "application/octet-stream",
@@ -1015,8 +1023,8 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
               doc.document_type === "transkrypcja"
                 ? "transcription"
                 : doc.document_type === "ocr"
-                ? "ocr"
-                : "other",
+                  ? "ocr"
+                  : "other",
             sourceFileName: doc.source_url?.replace("file://", "") || doc.title,
             sourceUrl: doc.source_url,
             mimeType: doc.metadata?.mimeType || "application/octet-stream",
@@ -1037,7 +1045,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
               : "Błąd pobierania dokumentu",
         });
       }
-    }
+    },
   );
 
   // DELETE /documents/processed/:id - Usuń przetworzony dokument
@@ -1082,7 +1090,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
             error instanceof Error ? error.message : "Błąd usuwania dokumentu",
         });
       }
-    }
+    },
   );
 
   // POST /documents/processed/:id/analyze-sentiment - Analiza sentymentu
@@ -1152,7 +1160,7 @@ Format odpowiedzi (tylko JSON, bez markdown):
         let sentiment;
         try {
           sentiment = JSON.parse(
-            sentimentText.replace(/```json\n?|\n?```/g, "")
+            sentimentText.replace(/```json\n?|\n?```/g, ""),
           );
         } catch {
           sentiment = {
@@ -1184,7 +1192,7 @@ Format odpowiedzi (tylko JSON, bez markdown):
             error instanceof Error ? error.message : "Błąd analizy sentymentu",
         });
       }
-    }
+    },
   );
 
   // POST /documents/processed/:id/format - Profesjonalne formatowanie dokumentu
@@ -1286,48 +1294,8 @@ Zawrzyj:
               : "Błąd formatowania dokumentu",
         });
       }
-    }
+    },
   );
-
-  // GET /documents/jobs - Lista zadań przetwarzania
-  fastify.get("/documents/jobs", async (request, reply) => {
-    try {
-      const authHeader = request.headers.authorization;
-      if (!authHeader?.startsWith("Bearer ")) {
-        return reply.status(401).send({ error: "Unauthorized" });
-      }
-
-      const token = authHeader.substring(7);
-      const { createClient } = await import("@supabase/supabase-js");
-      const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
-      const {
-        data: { user },
-        error: authError,
-      } = await supabaseAuth.auth.getUser(token);
-
-      if (authError || !user) {
-        return reply.status(401).send({ error: "Invalid token" });
-      }
-
-      // Pobierz zadania z serwisu (in-memory queue)
-      const { DocumentProcessingJobService } = await import(
-        "../services/document-processing-job-service.js"
-      );
-      const jobService = new DocumentProcessingJobService(user.id);
-      const jobs = jobService.getUserJobs();
-
-      return reply.send({
-        success: true,
-        jobs,
-      });
-    } catch (error) {
-      fastify.log.error(error);
-      return reply.send({
-        success: true,
-        jobs: [], // Zwróć pustą listę jeśli serwis nie istnieje
-      });
-    }
-  });
 
   // POST /documents/process-async - Asynchroniczne przetwarzanie dokumentu
   fastify.post("/documents/process-async", async (request, reply) => {
@@ -1374,9 +1342,8 @@ Zawrzyj:
         data.fields?.formatAsProfessional?.toString() !== "false";
 
       // Utwórz zadanie asynchroniczne
-      const { DocumentProcessingJobService } = await import(
-        "../services/document-processing-job-service.js"
-      );
+      const { DocumentProcessingJobService } =
+        await import("../services/document-processing-job-service.js");
       const jobService = new DocumentProcessingJobService(user.id);
 
       const job = await jobService.createJob({
@@ -1434,9 +1401,8 @@ Zawrzyj:
 
       const body = bodySchema.parse(request.body);
 
-      const { IntelligentRAGSearch } = await import(
-        "../services/intelligent-rag-search.js"
-      );
+      const { IntelligentRAGSearch } =
+        await import("../services/intelligent-rag-search.js");
 
       const ragSearch = new IntelligentRAGSearch(user.id);
       const diagnostics = await ragSearch.runDiagnostics(body.query);
@@ -1478,9 +1444,8 @@ Zawrzyj:
 
       const body = bodySchema.parse(request.body);
 
-      const { IntelligentRAGSearch } = await import(
-        "../services/intelligent-rag-search.js"
-      );
+      const { IntelligentRAGSearch } =
+        await import("../services/intelligent-rag-search.js");
 
       const ragSearch = new IntelligentRAGSearch(userId);
       const results = await ragSearch.search(body);
@@ -1540,9 +1505,8 @@ Zawrzyj:
       }
 
       // Pobierz klienta embeddingów
-      const { getEmbeddingsClient, getAIConfig } = await import(
-        "../ai/index.js"
-      );
+      const { getEmbeddingsClient, getAIConfig } =
+        await import("../ai/index.js");
       const embeddingsClient = await getEmbeddingsClient(user.id);
       const embConfig = await getAIConfig(user.id, "embeddings");
 
@@ -1585,6 +1549,314 @@ Zawrzyj:
       fastify.log.error(error);
       return reply.status(500).send({
         error: error instanceof Error ? error.message : "Błąd regeneracji",
+      });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // DOCUMENT JOBS - Kolejkowanie zadań OCR/transkrypcji w Redis
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // POST /documents/jobs - Dodaj plik do kolejki przetwarzania
+  fastify.post("/documents/jobs", async (request, reply) => {
+    try {
+      const authHeader = request.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const token = authHeader.substring(7);
+      const { createClient } = await import("@supabase/supabase-js");
+      const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+      const {
+        data: { user },
+        error: authError,
+      } = await supabaseAuth.auth.getUser(token);
+
+      if (authError || !user) {
+        return reply.status(401).send({ error: "Invalid token" });
+      }
+
+      const data = await request.file();
+      if (!data) {
+        return reply.status(400).send({ error: "Nie przesłano pliku" });
+      }
+
+      const { filename, mimetype } = data;
+      const fileBuffer = await data.toBuffer();
+
+      if (!ALLOWED_MIME_TYPES.includes(mimetype)) {
+        return reply.status(400).send({
+          error: `Nieobsługiwany format pliku: ${mimetype}`,
+        });
+      }
+
+      if (fileBuffer.length > MAX_FILE_SIZE) {
+        return reply.status(400).send({
+          error: `Plik jest zbyt duży (max 10MB)`,
+        });
+      }
+
+      // Dodaj do kolejki Redis
+      const { jobId, recordId } = await addDocumentProcessJob({
+        userId: user.id,
+        fileName: filename,
+        fileBuffer: fileBuffer.toString("base64"),
+        mimeType: mimetype,
+        fileSize: fileBuffer.length,
+      });
+
+      return reply.status(202).send({
+        success: true,
+        jobId,
+        recordId,
+        message: "Zadanie dodane do kolejki",
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        error:
+          error instanceof Error ? error.message : "Błąd dodawania do kolejki",
+      });
+    }
+  });
+
+  // GET /documents/jobs - Lista zadań użytkownika
+  fastify.get("/documents/jobs", async (request, reply) => {
+    try {
+      const authHeader = request.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const token = authHeader.substring(7);
+      const { createClient } = await import("@supabase/supabase-js");
+      const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+      const {
+        data: { user },
+        error: authError,
+      } = await supabaseAuth.auth.getUser(token);
+
+      if (authError || !user) {
+        return reply.status(401).send({ error: "Invalid token" });
+      }
+
+      const querySchema = z.object({
+        limit: z.coerce.number().min(1).max(100).default(20),
+      });
+      const { limit } = querySchema.parse(request.query);
+
+      const jobs = await getUserDocumentJobs(user.id, limit);
+
+      return reply.send({ jobs });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        error: error instanceof Error ? error.message : "Błąd pobierania zadań",
+      });
+    }
+  });
+
+  // GET /documents/jobs/:jobId - Status pojedynczego zadania
+  fastify.get<{ Params: { jobId: string } }>(
+    "/documents/jobs/:jobId",
+    async (request, reply) => {
+      try {
+        const authHeader = request.headers.authorization;
+        if (!authHeader?.startsWith("Bearer ")) {
+          return reply.status(401).send({ error: "Unauthorized" });
+        }
+
+        const token = authHeader.substring(7);
+        const { createClient } = await import("@supabase/supabase-js");
+        const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+        const {
+          data: { user },
+          error: authError,
+        } = await supabaseAuth.auth.getUser(token);
+
+        if (authError || !user) {
+          return reply.status(401).send({ error: "Invalid token" });
+        }
+
+        const { jobId } = request.params;
+        const job = await getDocumentJob(jobId, user.id);
+
+        if (!job) {
+          return reply.status(404).send({ error: "Zadanie nie znalezione" });
+        }
+
+        return reply.send({ job });
+      } catch (error) {
+        fastify.log.error(error);
+        return reply.status(500).send({
+          error:
+            error instanceof Error ? error.message : "Błąd pobierania zadania",
+        });
+      }
+    },
+  );
+
+  // DELETE /documents/jobs/:jobId - Usuń zadanie
+  fastify.delete<{ Params: { jobId: string } }>(
+    "/documents/jobs/:jobId",
+    async (request, reply) => {
+      try {
+        const authHeader = request.headers.authorization;
+        if (!authHeader?.startsWith("Bearer ")) {
+          return reply.status(401).send({ error: "Unauthorized" });
+        }
+
+        const token = authHeader.substring(7);
+        const { createClient } = await import("@supabase/supabase-js");
+        const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+        const {
+          data: { user },
+          error: authError,
+        } = await supabaseAuth.auth.getUser(token);
+
+        if (authError || !user) {
+          return reply.status(401).send({ error: "Invalid token" });
+        }
+
+        const { jobId } = request.params;
+        const deleted = await deleteDocumentJob(jobId, user.id);
+
+        if (!deleted) {
+          return reply.status(404).send({ error: "Zadanie nie znalezione" });
+        }
+
+        return reply.send({ success: true });
+      } catch (error) {
+        fastify.log.error(error);
+        return reply.status(500).send({
+          error:
+            error instanceof Error ? error.message : "Błąd usuwania zadania",
+        });
+      }
+    },
+  );
+
+  // POST /documents/jobs/:jobId/retry - Ponów przetwarzanie
+  fastify.post<{ Params: { jobId: string } }>(
+    "/documents/jobs/:jobId/retry",
+    async (request, reply) => {
+      try {
+        const authHeader = request.headers.authorization;
+        if (!authHeader?.startsWith("Bearer ")) {
+          return reply.status(401).send({ error: "Unauthorized" });
+        }
+
+        const token = authHeader.substring(7);
+        const { createClient } = await import("@supabase/supabase-js");
+        const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+        const {
+          data: { user },
+          error: authError,
+        } = await supabaseAuth.auth.getUser(token);
+
+        if (authError || !user) {
+          return reply.status(401).send({ error: "Invalid token" });
+        }
+
+        const { jobId } = request.params;
+        const retried = await retryDocumentJob(jobId, user.id);
+
+        if (!retried) {
+          return reply.status(400).send({ error: "Nie można ponowić zadania" });
+        }
+
+        return reply.send({ success: true });
+      } catch (error) {
+        fastify.log.error(error);
+        return reply.status(500).send({
+          error:
+            error instanceof Error ? error.message : "Błąd ponawiania zadania",
+        });
+      }
+    },
+  );
+
+  // POST /documents/jobs/:jobId/save-rag - Zapisz wynik do RAG
+  fastify.post<{ Params: { jobId: string } }>(
+    "/documents/jobs/:jobId/save-rag",
+    async (request, reply) => {
+      try {
+        const authHeader = request.headers.authorization;
+        if (!authHeader?.startsWith("Bearer ")) {
+          return reply.status(401).send({ error: "Unauthorized" });
+        }
+
+        const token = authHeader.substring(7);
+        const { createClient } = await import("@supabase/supabase-js");
+        const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+        const {
+          data: { user },
+          error: authError,
+        } = await supabaseAuth.auth.getUser(token);
+
+        if (authError || !user) {
+          return reply.status(401).send({ error: "Invalid token" });
+        }
+
+        const bodySchema = z.object({
+          title: z.string().min(1),
+        });
+        const { title } = bodySchema.parse(request.body);
+
+        const { jobId } = request.params;
+        const job = await getDocumentJob(jobId, user.id);
+
+        if (!job) {
+          return reply.status(404).send({ error: "Zadanie nie znalezione" });
+        }
+
+        if (job.status !== "completed" || !job.result?.text) {
+          return reply
+            .status(400)
+            .send({ error: "Zadanie nie jest ukończone lub brak tekstu" });
+        }
+
+        // Zapisz do RAG
+        const processor = new DocumentProcessor();
+        await processor.initializeWithUserConfig(user.id);
+
+        const ragResult = await processor.saveToRAG(
+          user.id,
+          job.result.text,
+          title,
+          job.file_name,
+          "uploaded",
+        );
+
+        return reply.send({
+          success: true,
+          documentId: ragResult.documentId,
+        });
+      } catch (error) {
+        fastify.log.error(error);
+        return reply.status(500).send({
+          error: error instanceof Error ? error.message : "Błąd zapisu do RAG",
+        });
+      }
+    },
+  );
+
+  // GET /documents/jobs/stats - Statystyki kolejki
+  fastify.get("/documents/jobs/stats", async (request, reply) => {
+    try {
+      const authHeader = request.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const stats = await getDocumentQueueStats();
+      return reply.send({ stats });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        error:
+          error instanceof Error ? error.message : "Błąd pobierania statystyk",
       });
     }
   });

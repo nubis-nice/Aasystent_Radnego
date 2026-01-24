@@ -3,7 +3,7 @@
  * Agent AI "Winsdurf" - Deep Internet Researcher
  * Main service coordinating multi-provider research with AI synthesis
  */
-import type { DeepResearchRequest, DeepResearchReport } from "@aasystent-radnego/shared";
+import type { DeepResearchRequest, DeepResearchReport, ResearchResult } from "@aasystent-radnego/shared";
 export declare class DeepResearchService {
     private providers;
     private openai;
@@ -83,6 +83,9 @@ export declare class DeepResearchService {
     /**
      * Verify a claim using multi-source research
      */
-    verifyClaim(claim: string): Promise<any>;
+    verifyClaim(claim: string): Promise<{
+        verified: boolean;
+        evidence: ResearchResult[];
+    }>;
 }
 //# sourceMappingURL=deep-research-service.d.ts.map

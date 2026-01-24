@@ -1,4 +1,4 @@
-# Architektura — źródło prawdy (MVP 2026-01-14)
+# Architektura — źródło prawdy (MVP 2026-01-24)
 
 ## Monorepo i główne komponenty
 
@@ -56,6 +56,20 @@ Pipeline:
 - **Session Discovery Service + YouTubeSessionService** – odnajdywanie i transkrypcja nagrań sesji (auto-trigger według reguł relevancji).
 - **Intelligent Scraper / Scraper V2** – crawling + filtracja AI (`checkDocumentRelevance` + regexy).
 
+## Transkrypcja YouTube (Redis/BullMQ)
+
+- **TranscriptionQueue** – persystencja zadań w Redis, retry mechanism (3 próby).
+- **TranscriptionWorker** – dedykowany worker z pipeline: download → preprocess → transcribe → analyze → save.
+- **TranscriptionRecovery** – auto-recovery utkniętych zadań co godzinę, timeout 3h.
+- **Detailed Progress UI** – 5 kroków z real-time updates w frontend.
+
+## Voice Command System (Stefan 2.0)
+
+- Wake word: "Hej Stefan" z trybami: `off` → `standby` → `active` → `processing`.
+- **VoiceActionService** obsługuje akcje: kalendarz, zadania, alerty, dokumenty, QuickTools, nawigacja.
+- **VoiceIntentDetector** wykrywa intencje z transkrypcji.
+- Słowo wykonania: "wykonaj", "tak", "potwierdź".
+
 ## Interfejs użytkownika i API
 
 - Fastify rejestruje trasy w `apps/api/src/routes/*.ts`. `authMiddleware` chroni większość `/api/*`.
@@ -66,8 +80,9 @@ Pipeline:
 
 - **Supabase** (PostgreSQL + pgvector, auth, storage) – jedyna baza danych. Migracje SQL w `apps/api/migrations`.
 - **Redis 7 (Docker)** – cache + kolejki BullMQ.
-- **Faster-Whisper Server (Docker)** – fallback STT on-prem.
+- **Speaches (Docker)** – lokalny STT server (faster-whisper).
 - **Adminer (dev-only)** – podgląd DB.
+- **42 migracje SQL** w `apps/api/migrations/`.
 - Pliki `.env` per aplikacja (API/Frontend/Worker) definiują adresy Supabase, klucze OpenAI, porty itp. Wszystkie sekrety przechowujemy poza repo.
 - Logging: `pino-pretty` (API), śledzenie `traceId`, czasy przetwarzania i nazwy narzędzi.
 

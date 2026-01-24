@@ -8,6 +8,7 @@ import {
   Database,
   Activity,
 } from "lucide-react";
+import { SystemStatusLinks } from "@/components/SystemStatusLinks";
 
 export default function Home() {
   return (
@@ -104,12 +105,12 @@ export default function Home() {
                   <Search className="h-6 w-6" />
                 </div>
                 <h3 className="text-xl font-semibold mb-2 text-text">
-                  Inteligentne Wyszukiwanie
+                  Hybrydowe wyszukiwanie RAG
                 </h3>
                 <p className="text-secondary">
-                  Błyskawicznie przeszukuj tysiące uchwał i protokołów. Znajdź
-                  dokładnie to, czego szukasz dzięki semantycznemu zrozumieniu
-                  zapytań.
+                  Łączy fulltext, wektory i źródła zewnętrzne (ISAP, BIP,
+                  Youtube sesji) w jednym zapytaniu. Cytuje konkretny fragment
+                  źródła.
                 </p>
               </div>
 
@@ -119,12 +120,11 @@ export default function Home() {
                   <FileText className="h-6 w-6" />
                 </div>
                 <h3 className="text-xl font-semibold mb-2 text-text">
-                  Automatyczna Analiza
+                  Automatyczna analiza dokumentów
                 </h3>
                 <p className="text-secondary">
-                  Otrzymuj automatyczne streszczenia długich dokumentów.
-                  Wyciągaj kluczowe wnioski bez konieczności czytania setek
-                  stron.
+                  Streszczenia, klasyfikacja, wyciąganie referencji i embeddingi
+                  do pgvector. Wsparcie dla skanów (OCR + Vision) i długich PDF.
                 </p>
               </div>
 
@@ -134,11 +134,56 @@ export default function Home() {
                   <MessageSquare className="h-6 w-6" />
                 </div>
                 <h3 className="text-xl font-semibold mb-2 text-text">
-                  Czat z Dokumentami
+                  Czat z dokumentami i sesjami
                 </h3>
                 <p className="text-secondary">
-                  Zadawaj pytania do dokumentów w naturalnym języku. Otrzymuj
-                  odpowiedzi poparte konkretnymi cytatami źródłowymi.
+                  Pytaj naturalnie, otrzymuj odpowiedzi z cytatem. Rozpoznaje
+                  numer sesji, druki, protokoły i załączniki, podpowiada źródła.
+                </p>
+              </div>
+
+              {/* Feature 4 */}
+              <div className="p-6 rounded-xl border border-border bg-surface hover:shadow-md transition-shadow">
+                <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-lg flex items-center justify-center mb-4">
+                  <Database className="h-6 w-6" />
+                </div>
+                <h3 className="text-xl font-semibold mb-2 text-text">
+                  Integracje i źródła danych
+                </h3>
+                <p className="text-secondary">
+                  BIP, ISAP, RIO, GUS/BDL, KRS/CEIDG, Geoportal, EU Fundusze,
+                  YouTube sesji. Automatyczny scraping i import kalendarza
+                  sesji.
+                </p>
+              </div>
+
+              {/* Feature 5 */}
+              <div className="p-6 rounded-xl border border-border bg-surface hover:shadow-md transition-shadow">
+                <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-lg flex items-center justify-center mb-4">
+                  <ShieldCheck className="h-6 w-6" />
+                </div>
+                <h3 className="text-xl font-semibold mb-2 text-text">
+                  Narzędzia AI dla radnego
+                </h3>
+                <p className="text-secondary">
+                  Kreatory interpelacji, pism, wystąpień, protokołów i analiz
+                  budżetu. Orkiestrator narzędzi dobiera odpowiedni tryb (RAG,
+                  deep research, reasoning).
+                </p>
+              </div>
+
+              {/* Feature 6 */}
+              <div className="p-6 rounded-xl border border-border bg-surface hover:shadow-md transition-shadow">
+                <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-lg flex items-center justify-center mb-4">
+                  <Activity className="h-6 w-6" />
+                </div>
+                <h3 className="text-xl font-semibold mb-2 text-text">
+                  Kalendarz, zadania, głos i alerty
+                </h3>
+                <p className="text-secondary">
+                  Widżet kalendarza z auto-importem sesji i komisji, lista
+                  zadań, powiadomienia o błędach, sterowanie głosowe Stefanem
+                  (dodaj spotkanie, pokaż zadania, nawiguj po aplikacji).
                 </p>
               </div>
             </div>
@@ -148,34 +193,10 @@ export default function Home() {
         {/* Tech/Dev Section */}
         <section className="py-12 border-t border-border bg-surface/50">
           <div className="container mx-auto px-4">
-            <div className="flex flex-col md:flex-row items-center justify-between gap-6 opacity-75">
-              <div className="flex items-center gap-4">
-                <span className="text-sm font-semibold text-secondary uppercase tracking-wider">
-                  Status systemów:
-                </span>
-                <a
-                  href="http://localhost:3001/health"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 text-sm text-secondary hover:text-primary transition-colors"
-                >
-                  <Activity className="h-4 w-4" />
-                  API Health
-                </a>
-                <a
-                  href="http://localhost:8080"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 text-sm text-secondary hover:text-primary transition-colors"
-                >
-                  <Database className="h-4 w-4" />
-                  Baza Danych
-                </a>
-              </div>
-              <div className="text-sm text-secondary flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4" />
-                <span>Bezpieczne połączenie SSL</span>
-              </div>
+            <SystemStatusLinks />
+            <div className="text-sm text-secondary flex items-center gap-2 opacity-75 mt-4 md:mt-0">
+              <ShieldCheck className="h-4 w-4" />
+              <span>Bezpieczny dostęp do danych publicznych i urzędowych</span>
             </div>
           </div>
         </section>

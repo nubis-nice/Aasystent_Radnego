@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { DocumentJobsList } from "@/components/documents/DocumentJobsList";
 import {
   ArrowLeft,
   Paperclip,
@@ -55,6 +56,8 @@ export default function DocumentProcessPage() {
   const [documentType, setDocumentType] = useState<string>("uploaded");
   const [savingToRag, setSavingToRag] = useState(false);
   const [savedToRag, setSavedToRag] = useState(false);
+  const [jobsRefreshTrigger, setJobsRefreshTrigger] = useState(0);
+  const [useQueue, setUseQueue] = useState(true); // Użyj kolejki Redis
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -128,7 +131,7 @@ export default function DocumentProcessPage() {
 
       if (isAudioVideo) {
         setProcessingStage(
-          "🎙️ Transkrypcja audio/video (może potrwać kilka minut)..."
+          "🎙️ Transkrypcja audio/video (może potrwać kilka minut)...",
         );
       } else if (isImage) {
         setProcessingStage("🔍 Analiza obrazu i OCR...");
@@ -138,35 +141,59 @@ export default function DocumentProcessPage() {
         setProcessingStage("📝 Ekstrakcja tekstu...");
       }
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-      const response = await fetch(`${apiUrl}/api/documents/process`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: formData,
-      });
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
 
-      const data = await response.json();
-      const processingTimeMs = Date.now() - startTime;
+      if (useQueue) {
+        // Użyj kolejki Redis (asynchronicznie)
+        setProcessingStage("📤 Dodawanie do kolejki przetwarzania...");
+        const response = await fetch(`${apiUrl}/api/documents/jobs`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: formData,
+        });
 
-      if (!response.ok) {
-        throw new Error(data.error || "Błąd przetwarzania pliku");
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "Błąd dodawania do kolejki");
+        }
+
+        setProcessingStage("");
+        setFile(null);
+        // Odśwież listę zadań
+        setJobsRefreshTrigger((prev) => prev + 1);
+      } else {
+        // Bezpośrednie przetwarzanie (synchronicznie)
+        const response = await fetch(`${apiUrl}/api/documents/process`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: formData,
+        });
+
+        const data = await response.json();
+        const processingTimeMs = Date.now() - startTime;
+
+        if (!response.ok) {
+          throw new Error(data.error || "Błąd przetwarzania pliku");
+        }
+
+        setResult({
+          success: true,
+          text: data.text,
+          transcription: data.transcription,
+          metadata: {
+            ...data.metadata,
+            processingTimeMs,
+          },
+        });
+        setProcessingStage("");
+        setDocumentTitle(file.name.replace(/\.[^/.]+$/, ""));
+        setSavedToRag(false);
       }
-
-      setResult({
-        success: true,
-        text: data.text,
-        transcription: data.transcription,
-        metadata: {
-          ...data.metadata,
-          processingTimeMs,
-        },
-      });
-      setProcessingStage("");
-      // Ustaw domyślny tytuł na nazwę pliku
-      setDocumentTitle(file.name.replace(/\.[^/.]+$/, ""));
-      setSavedToRag(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Błąd przetwarzania");
       setProcessingStage("");
@@ -199,7 +226,7 @@ export default function DocumentProcessPage() {
         throw new Error("Brak autoryzacji - zaloguj się ponownie");
       }
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
       const response = await fetch(`${apiUrl}/api/documents/save-to-rag`, {
         method: "POST",
         headers: {
@@ -288,6 +315,21 @@ export default function DocumentProcessPage() {
               </div>
             </div>
 
+            {/* Tryb przetwarzania */}
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="use-queue"
+                checked={useQueue}
+                onChange={(e) => setUseQueue(e.target.checked)}
+                className="w-4 h-4 text-primary-600 rounded focus:ring-primary-500"
+              />
+              <label htmlFor="use-queue" className="text-sm text-slate-600">
+                Użyj kolejki (zalecane dla dużych plików - nie zgubi się przy
+                zamknięciu przeglądarki)
+              </label>
+            </div>
+
             {error && (
               <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700">
                 {error}
@@ -360,7 +402,7 @@ export default function DocumentProcessPage() {
                     </div>
                     <p className="font-semibold text-slate-800 text-sm">
                       {getProcessingMethodLabel(
-                        result.metadata.processingMethod
+                        result.metadata.processingMethod,
                       )}
                     </p>
                   </div>
@@ -531,6 +573,25 @@ export default function DocumentProcessPage() {
               )}
             </div>
           )}
+        </div>
+
+        {/* Lista zadań w kolejce */}
+        <div className="mt-8 bg-white rounded-2xl shadow-xl border border-slate-200 p-6">
+          <DocumentJobsList
+            refreshTrigger={jobsRefreshTrigger}
+            onViewResult={(job) => {
+              if (job.result?.text) {
+                setResult({
+                  success: true,
+                  text: job.result.text,
+                  metadata: job.result
+                    .metadata as unknown as ProcessingMetadata,
+                });
+                setDocumentTitle(job.file_name.replace(/\.[^/.]+$/, ""));
+                setSavedToRag(false);
+              }
+            }}
+          />
         </div>
       </div>
     </div>

@@ -20,7 +20,7 @@ import { TranscriptionProgressTracker } from "./transcription-progress.js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
 // ============================================================================
@@ -53,7 +53,7 @@ interface TranscriptSegment {
 // ============================================================================
 
 export async function processTranscription(
-  job: Job<TranscriptionJobData>
+  job: Job<TranscriptionJobData>,
 ): Promise<TranscriptionJobResult> {
   const {
     id,
@@ -75,13 +75,13 @@ export async function processTranscription(
     // 1. KROK: Download
     await progressTracker.startStep(
       "download",
-      "Pobieranie audio z YouTube..."
+      "Pobieranie audio z YouTube...",
     );
     await updateJobStatus(
       id,
       "downloading",
       10,
-      "Pobieranie audio z YouTube..."
+      "Pobieranie audio z YouTube...",
     );
 
     // Pobieranie audio
@@ -94,7 +94,7 @@ export async function processTranscription(
     if (!downloadResult.success || !downloadResult.audioPath) {
       await progressTracker.failStep(
         "download",
-        downloadResult.error || "Błąd pobierania audio"
+        downloadResult.error || "Błąd pobierania audio",
       );
       throw new Error(downloadResult.error || "Błąd pobierania audio");
     }
@@ -105,25 +105,25 @@ export async function processTranscription(
     });
 
     console.log(
-      `[TranscriptionWorker] Audio downloaded: ${downloadResult.audioPath}`
+      `[TranscriptionWorker] Audio downloaded: ${downloadResult.audioPath}`,
     );
 
     // 2. KROK: Transcription (zawiera preprocessing)
     await progressTracker.updateStep(
       "preprocessing",
       50,
-      "Przygotowanie do transkrypcji..."
+      "Przygotowanie do transkrypcji...",
     );
 
     await progressTracker.startStep(
       "transcription",
-      "Transkrypcja audio (może potrwać kilka minut)..."
+      "Transkrypcja audio (może potrwać kilka minut)...",
     );
     await updateJobStatus(
       id,
       "transcribing",
       35,
-      "Transkrypcja audio (może potrwać kilka minut)..."
+      "Transkrypcja audio (może potrwać kilka minut)...",
     );
 
     const videoIdMatch = videoUrl.match(/(?:v=|\/)([\w-]{11})(?:\?|&|$)/);
@@ -136,7 +136,7 @@ export async function processTranscription(
       {
         model: "whisper-1",
         language: "pl",
-      }
+      },
     );
 
     const transcriptionResult = await downloader.transcribeAndAnalyze(
@@ -144,13 +144,13 @@ export async function processTranscription(
       videoId,
       videoTitle,
       videoUrl,
-      true // enablePreprocessing
+      false, // enablePreprocessing - wyłączone (problemy z FFmpeg)
     );
 
     if (!transcriptionResult.success) {
       await progressTracker.failStep(
         "transcription",
-        transcriptionResult.error || "Błąd transkrypcji"
+        transcriptionResult.error || "Błąd transkrypcji",
       );
       throw new Error(transcriptionResult.error || "Błąd transkrypcji");
     }
@@ -175,13 +175,13 @@ export async function processTranscription(
     // 4. KROK: Analysis
     await progressTracker.startStep(
       "analysis",
-      "Identyfikacja mówców i analiza sentymentu..."
+      "Identyfikacja mówców i analiza sentymentu...",
     );
     await updateJobStatus(
       id,
       "analyzing",
       60,
-      "Identyfikacja mówców i analiza sentymentu..."
+      "Identyfikacja mówców i analiza sentymentu...",
     );
 
     let enhancedTranscript = transcriptionResult.formattedTranscript;
@@ -191,7 +191,7 @@ export async function processTranscription(
       await progressTracker.updateStep(
         "analysis",
         30,
-        "Identyfikacja mówców..."
+        "Identyfikacja mówców...",
       );
 
       const councilMembers = await getCouncilMembers(userId);
@@ -199,7 +199,7 @@ export async function processTranscription(
         userId,
         transcriptionResult.rawTranscript,
         transcriptionResult.segments,
-        councilMembers
+        councilMembers,
       );
       enhancedSegments = identified.segments;
 
@@ -211,7 +211,7 @@ export async function processTranscription(
         transcriptionResult.summary,
         videoTitle,
         videoUrl,
-        includeSentiment
+        includeSentiment,
       );
     }
 
@@ -228,7 +228,7 @@ export async function processTranscription(
     await progressTracker.updateStep(
       "saving",
       30,
-      "Generowanie embeddingów..."
+      "Generowanie embeddingów...",
     );
 
     const documentId = await saveToRAG(
@@ -238,7 +238,7 @@ export async function processTranscription(
       videoUrl,
       sessionId,
       transcriptionResult.summary,
-      enhancedSegments
+      enhancedSegments,
     );
 
     console.log(`[TranscriptionWorker] Saved to RAG: ${documentId}`);
@@ -246,14 +246,14 @@ export async function processTranscription(
     await progressTracker.updateStep(
       "saving",
       70,
-      "Aktualizacja bazy danych..."
+      "Aktualizacja bazy danych...",
     );
 
     // 6. Aktualizuj status transkrypcji w scraped_content
     await updateScrapedContentTranscriptionStatus(
       videoUrl,
       "completed",
-      documentId
+      documentId,
     );
 
     // Zakończ krok saving
@@ -265,14 +265,14 @@ export async function processTranscription(
       "completed",
       100,
       "Transkrypcja zakończona i zapisana do bazy wiedzy!",
-      undefined
+      undefined,
     );
 
     const processingTime = Date.now() - startTime;
     console.log(
       `[TranscriptionWorker] Job ${id} completed in ${(
         processingTime / 1000
-      ).toFixed(1)}s`
+      ).toFixed(1)}s`,
     );
 
     return {
@@ -305,7 +305,7 @@ async function updateJobStatus(
   status: string,
   progress: number,
   progressMessage: string,
-  error?: string
+  error?: string,
 ): Promise<void> {
   try {
     await supabase
@@ -354,7 +354,7 @@ async function identifySpeakers_internal(
   userId: string,
   rawTranscript: string,
   segments: TranscriptSegment[],
-  councilMembers: CouncilMember[]
+  councilMembers: CouncilMember[],
 ): Promise<{ segments: TranscriptSegment[] }> {
   try {
     const llmClient = await getLLMClient(userId);
@@ -395,12 +395,12 @@ Odpowiedz w formacie JSON:
           role: "user",
           content: `Transkrypcja:\n${rawTranscript.slice(
             0,
-            10000
+            10000,
           )}\n\nSegmenty do identyfikacji:\n${JSON.stringify(
             segments.slice(0, 20).map((s) => ({
               speaker: s.speaker,
               text: s.text.slice(0, 100),
-            }))
+            })),
           )}`,
         },
       ],
@@ -450,7 +450,7 @@ function formatEnhancedTranscript(
   },
   videoTitle: string,
   videoUrl: string,
-  includeSentiment: boolean
+  includeSentiment: boolean,
 ): string {
   const date = new Date().toLocaleDateString("pl-PL", {
     year: "numeric",
@@ -472,7 +472,7 @@ function formatEnhancedTranscript(
 
   if (includeSentiment) {
     md += `| 🎭 Dominujący nastrój | ${translateSentiment(
-      summary.dominantSentiment
+      summary.dominantSentiment,
     )} |\n`;
     md += `| ⚡ Średnie napięcie | ${
       summary.averageTension?.toFixed(1) || "N/A"
@@ -558,14 +558,14 @@ async function saveToRAG(
     speakerCount: number;
     duration: string;
   },
-  segments: TranscriptSegment[]
+  segments: TranscriptSegment[],
 ): Promise<string> {
   const embeddingsClient = await getEmbeddingsClient(userId);
   const embeddingsConfig = await getAIConfig(userId, "embeddings");
 
   const embeddingText = `${videoTitle}\n\n${formattedTranscript.slice(
     0,
-    8000
+    8000,
   )}`;
   const embeddingResponse = await embeddingsClient.embeddings.create({
     model: embeddingsConfig.modelName,
@@ -619,7 +619,7 @@ async function saveToRAG(
 async function linkToSession(
   userId: string,
   documentId: string,
-  sessionId: string
+  sessionId: string,
 ): Promise<void> {
   try {
     await supabase.from("document_relations").insert({
@@ -637,7 +637,7 @@ async function linkToSession(
 async function updateScrapedContentTranscriptionStatus(
   videoUrl: string,
   status: "pending" | "completed" | "failed",
-  transcriptionDocumentId?: string
+  transcriptionDocumentId?: string,
 ): Promise<void> {
   try {
     const { data: existing } = await supabase
@@ -661,13 +661,13 @@ async function updateScrapedContentTranscriptionStatus(
         .eq("content_type", "youtube_video");
 
       console.log(
-        `[TranscriptionWorker] Updated transcription status to '${status}'`
+        `[TranscriptionWorker] Updated transcription status to '${status}'`,
       );
     }
   } catch (error) {
     console.error(
       "[TranscriptionWorker] Error updating scraped_content:",
-      error
+      error,
     );
   }
 }

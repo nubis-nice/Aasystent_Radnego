@@ -104,7 +104,7 @@ export function ConfigurationModal({
     try {
       const response = await fetch(
         `${
-          process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"
+          process.env.NEXT_PUBLIC_API_URL || ""
         }/api/fetch-models`,
         {
           method: "POST",

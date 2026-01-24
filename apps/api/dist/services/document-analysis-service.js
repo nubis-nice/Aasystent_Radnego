@@ -99,9 +99,49 @@ export class DocumentAnalysisService {
         const updatedRefs = [...references];
         for (const ref of updatedRefs) {
             try {
-                // Buduj zapytanie wyszukiwania
+                // ============================================================================
+                // KROK 1: Szukaj najpierw po URL (najszybsze i najdokładniejsze)
+                // ============================================================================
+                const urlPatterns = this.buildUrlPatterns(ref);
+                const { data: urlMatches } = await supabase
+                    .from("processed_documents")
+                    .select("id, title, content, source_url")
+                    .eq("user_id", userId)
+                    .or(urlPatterns.map((p) => `source_url.ilike.%${p}%`).join(","))
+                    .limit(1);
+                if (urlMatches && urlMatches.length > 0) {
+                    const match = urlMatches[0];
+                    ref.found = true;
+                    ref.title = match.title;
+                    ref.content = match.content?.substring(0, 2000);
+                    ref.sourceUrl = match.source_url;
+                    console.log(`[DocumentAnalysis] ✓ Found ${ref.type} ${ref.number} by URL: ${match.source_url}`);
+                    continue;
+                }
+                // ============================================================================
+                // KROK 2: Szukaj po metadanych (referenceNumber)
+                // ============================================================================
+                const { data: metaMatches } = await supabase
+                    .from("processed_documents")
+                    .select("id, title, content, source_url")
+                    .eq("user_id", userId)
+                    .eq("metadata->>referenceType", ref.type)
+                    .eq("metadata->>referenceNumber", ref.number)
+                    .limit(1);
+                if (metaMatches && metaMatches.length > 0) {
+                    const match = metaMatches[0];
+                    ref.found = true;
+                    ref.title = match.title;
+                    ref.content = match.content?.substring(0, 2000);
+                    ref.sourceUrl = match.source_url;
+                    console.log(`[DocumentAnalysis] ✓ Found ${ref.type} ${ref.number} by metadata`);
+                    continue;
+                }
+                // ============================================================================
+                // KROK 3: Szukaj semantycznie przez embeddingi (fallback)
+                // ============================================================================
                 const searchQuery = this.buildSearchQuery(ref);
-                console.log(`[DocumentAnalysis] RAG search query for ${ref.type} ${ref.number}: "${searchQuery}"`);
+                console.log(`[DocumentAnalysis] RAG semantic search for ${ref.type} ${ref.number}: "${searchQuery}"`);
                 // Generuj embedding dla zapytania
                 const embeddingResponse = await this.embeddingsClient.embeddings.create({
                     model: this.embeddingModel,
@@ -166,6 +206,25 @@ export class DocumentAnalysisService {
             default:
                 return `${ref.type} ${ref.number}`;
         }
+    }
+    // Buduj wzorce URL do wyszukiwania
+    buildUrlPatterns(ref) {
+        const num = ref.number;
+        const patterns = [];
+        switch (ref.type) {
+            case "druk":
+                patterns.push(`druk-nr-${num}`, `druk_nr_${num}`, `druk-${num}`, `druk_${num}`, `druk${num}`, `/druk/${num}`, `projekt-${num}`);
+                break;
+            case "resolution":
+                patterns.push(`uchwala-${num}`, `uchwala_${num}`, `uchwala/${num}`, num.replace(/\//g, "-"), num.replace(/\//g, "_"));
+                break;
+            case "attachment":
+                patterns.push(`zalacznik-${num}`, `zalacznik_${num}`, `zalacznik-nr-${num}`, `attachment-${num}`);
+                break;
+            default:
+                patterns.push(`${ref.type}-${num}`, `${ref.type}_${num}`);
+        }
+        return patterns;
     }
     matchesReference(doc, ref) {
         const title = (doc.title || "").toLowerCase();
@@ -350,9 +409,115 @@ export class DocumentAnalysisService {
         }
         return null;
     }
+    // Sprawdź czy dokument o danym URL już istnieje w bazie
+    async checkExistingDocument(userId, url) {
+        try {
+            const { data, error } = await supabase
+                .from("processed_documents")
+                .select("id, content, title")
+                .eq("user_id", userId)
+                .eq("source_url", url)
+                .maybeSingle();
+            if (error) {
+                console.error("[DocumentAnalysis] Check existing document error:", error);
+                return null;
+            }
+            return data;
+        }
+        catch (err) {
+            console.error("[DocumentAnalysis] Check existing document exception:", err);
+            return null;
+        }
+    }
+    // Zapisz pobrany załącznik do bazy i wygeneruj embeddingi
+    async saveAttachmentToDatabase(userId, url, content, ref, title) {
+        try {
+            const fileName = url.split("/").pop() || "attachment";
+            // Określ typ dokumentu na podstawie referencji
+            const documentType = ref.type === "druk"
+                ? "draft"
+                : ref.type === "resolution"
+                    ? "resolution"
+                    : ref.type === "attachment"
+                        ? "attachment"
+                        : "other";
+            // Zapisz do processed_documents
+            const { data: doc, error: docError } = await supabase
+                .from("processed_documents")
+                .insert({
+                user_id: userId,
+                title: title || `${ref.type} nr ${ref.number}`,
+                content: content,
+                document_type: documentType,
+                source_url: url,
+                metadata: {
+                    referenceType: ref.type,
+                    referenceNumber: ref.number,
+                    fileName: fileName,
+                    autoProcessed: true,
+                    processedAt: new Date().toISOString(),
+                },
+            })
+                .select("id")
+                .single();
+            if (docError) {
+                console.error("[DocumentAnalysis] Save document error:", docError);
+                return null;
+            }
+            console.log(`[DocumentAnalysis] ✓ Saved ${ref.type} ${ref.number} to database: ${doc.id}`);
+            // Wygeneruj embeddingi dla dokumentu
+            await this.generateEmbeddingsForDocument(userId, doc.id, content, title);
+            return doc.id;
+        }
+        catch (err) {
+            console.error("[DocumentAnalysis] Save attachment exception:", err);
+            return null;
+        }
+    }
+    // Generuj embedding dla dokumentu i zapisz do processed_documents
+    async generateEmbeddingsForDocument(userId, documentId, content, title) {
+        try {
+            if (!this.embeddingsClient) {
+                console.warn("[DocumentAnalysis] Embeddings client not initialized, skipping embeddings");
+                return;
+            }
+            // Wygeneruj embedding dla całego dokumentu (użyj początku treści dla lepszego dopasowania)
+            const textForEmbedding = `${title}\n\n${content.substring(0, 4000)}`;
+            const embResponse = await this.embeddingsClient.embeddings.create({
+                model: this.embeddingModel,
+                input: textForEmbedding,
+            });
+            const embedding = embResponse.data[0].embedding;
+            // Zaktualizuj dokument z embeddingiem
+            const { error } = await supabase
+                .from("processed_documents")
+                .update({ embedding: embedding })
+                .eq("id", documentId);
+            if (error) {
+                console.error(`[DocumentAnalysis] Update embedding error:`, error);
+            }
+            else {
+                console.log(`[DocumentAnalysis] ✓ Generated embedding for document ${documentId}`);
+            }
+        }
+        catch (err) {
+            console.error("[DocumentAnalysis] Generate embeddings error:", err);
+        }
+    }
     async fetchAndProcessAttachment(userId, url, ref) {
         try {
-            console.log(`[DocumentAnalysis] Fetching attachment: ${url}`);
+            // ============================================================================
+            // KROK 1: Sprawdź czy dokument już istnieje w bazie (DEDUPLIKACJA)
+            // ============================================================================
+            const existing = await this.checkExistingDocument(userId, url);
+            if (existing) {
+                console.log(`[DocumentAnalysis] ✓ Found existing document for ${ref.type} ${ref.number}: ${existing.id}`);
+                return existing.content?.substring(0, 3000) || null;
+            }
+            console.log(`[DocumentAnalysis] Fetching NEW attachment: ${url}`);
+            // ============================================================================
+            // KROK 2: Pobierz i przetwórz nowy dokument
+            // ============================================================================
             const response = await fetch(url, {
                 signal: AbortSignal.timeout(30000),
                 headers: {
@@ -371,6 +536,11 @@ export class DocumentAnalysisService {
             const result = await processor.processFile(buffer, url.split("/").pop() || "document", contentType);
             if (result.success && result.text) {
                 console.log(`[DocumentAnalysis] Successfully processed ${ref.type} ${ref.number}: ${result.text.length} chars`);
+                // ============================================================================
+                // KROK 3: Zapisz do bazy i wygeneruj embeddingi (dla przyszłych wyszukiwań)
+                // ============================================================================
+                const title = `${ref.type === "druk" ? "Druk" : ref.type} nr ${ref.number}`;
+                await this.saveAttachmentToDatabase(userId, url, result.text, ref, title);
                 return result.text.substring(0, 3000); // Pierwsze 3000 znaków
             }
             return null;

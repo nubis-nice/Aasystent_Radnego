@@ -7,6 +7,7 @@ import { ApiDataFetcher } from "./data-fetchers/api-fetcher.js";
 import { ScraperDataFetcher } from "./data-fetchers/scraper-fetcher.js";
 import { DocumentProcessor } from "./document-processor.js";
 import OpenAI from "openai";
+import { autoImportToCalendar } from "./calendar-auto-import.js";
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 export class UnifiedDataService {
     sourceId;
@@ -208,7 +209,9 @@ export class UnifiedDataService {
                     continue;
                 }
                 const keywords = this.extractKeywords(doc.title, doc.content);
-                const { error } = await supabase.from("processed_documents").insert({
+                const { data: insertedDoc, error } = await supabase
+                    .from("processed_documents")
+                    .insert({
                     user_id: this.userId,
                     document_type: documentType,
                     title: doc.title,
@@ -224,9 +227,19 @@ export class UnifiedDataService {
                         fetchMethod: doc.fetchMethod,
                         legalClassification: doc.legalClassification,
                     },
-                });
-                if (!error)
+                })
+                    .select("id, user_id, title, document_type, content, session_number, normalized_publish_date, source_url")
+                    .single();
+                if (!error && insertedDoc) {
                     processedCount++;
+                    // Auto-import do kalendarza
+                    try {
+                        await autoImportToCalendar(insertedDoc);
+                    }
+                    catch (calendarError) {
+                        console.error("[UnifiedDataService] Calendar auto-import failed:", calendarError);
+                    }
+                }
             }
             catch (error) {
                 console.error("[UnifiedDataService] Error processing document:", error);

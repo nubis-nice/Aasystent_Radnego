@@ -34,6 +34,7 @@ export declare class DocumentAnalysisService {
     extractReferences(content: string): DocumentReference[];
     searchReferencesInRAG(userId: string, references: DocumentReference[]): Promise<DocumentReference[]>;
     private buildSearchQuery;
+    private buildUrlPatterns;
     private matchesReference;
     getDocument(userId: string, documentId: string): Promise<{
         id: string;
@@ -48,6 +49,9 @@ export declare class DocumentAnalysisService {
     searchSourcePageForAttachments(userId: string, sourceUrl: string | undefined, references: DocumentReference[]): Promise<DocumentReference[]>;
     private crawlSourcePageDeep;
     private findMatchingAttachment;
+    private checkExistingDocument;
+    private saveAttachmentToDatabase;
+    private generateEmbeddingsForDocument;
     private fetchAndProcessAttachment;
     searchMissingWithDeepResearch(userId: string, references: DocumentReference[]): Promise<DocumentReference[]>;
     buildAnalysisContext(userId: string, documentId: string, useDeepResearch?: boolean): Promise<AnalysisContext | null>;

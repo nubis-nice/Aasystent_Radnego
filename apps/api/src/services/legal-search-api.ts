@@ -16,7 +16,7 @@ import { getEmbeddingsClient, getAIConfig } from "../ai/index.js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
 export class LegalSearchAPI {
@@ -54,15 +54,23 @@ export class LegalSearchAPI {
   }
 
   private async fulltextSearch(
-    query: LegalSearchQuery
+    query: LegalSearchQuery,
   ): Promise<LegalSearchResult[]> {
     console.log("[LegalSearchAPI] Fulltext search");
+
+    const escapeLike = (value: string) =>
+      value
+        .replace(/[%_]/g, "\\$&") // escape wildcardy
+        .replace(/,/g, " ") // przecinki psują parser OR
+        .trim();
+
+    const pattern = `%${escapeLike(query.query)}%`;
 
     let dbQuery = supabase
       .from("processed_documents")
       .select("*")
       .eq("user_id", this.userId)
-      .or(`title.ilike.%${query.query}%,content.ilike.%${query.query}%`);
+      .or(`title.ilike.${pattern},content.ilike.${pattern}`);
 
     dbQuery = this.applyFilters(dbQuery, query.filters);
 
@@ -80,7 +88,7 @@ export class LegalSearchAPI {
   }
 
   private async semanticSearch(
-    query: LegalSearchQuery
+    query: LegalSearchQuery,
   ): Promise<LegalSearchResult[]> {
     console.log("[LegalSearchAPI] Semantic search");
 
@@ -110,7 +118,7 @@ export class LegalSearchAPI {
         match_threshold: threshold,
         match_count: limit,
         filter_user_id: this.userId,
-      }
+      },
     );
 
     if (error) {
@@ -122,7 +130,7 @@ export class LegalSearchAPI {
   }
 
   private async hybridSearch(
-    query: LegalSearchQuery
+    query: LegalSearchQuery,
   ): Promise<LegalSearchResult[]> {
     console.log("[LegalSearchAPI] Hybrid search");
 
@@ -147,7 +155,7 @@ export class LegalSearchAPI {
 
   private applyFilters(
     dbQuery: any,
-    filters?: LegalSearchQuery["filters"]
+    filters?: LegalSearchQuery["filters"],
   ): any {
     if (!filters) return dbQuery;
 
@@ -199,7 +207,7 @@ export class LegalSearchAPI {
 
   private formatSemanticResults(
     documents: any[],
-    query: string
+    query: string,
   ): LegalSearchResult[] {
     return documents.map((doc) => {
       const excerpt = this.generateExcerpt(doc.content, query);
@@ -223,7 +231,7 @@ export class LegalSearchAPI {
   private generateExcerpt(
     content: string,
     query: string,
-    maxLength: number = 300
+    maxLength: number = 300,
   ): string {
     const queryWords = query.toLowerCase().split(/\s+/);
     const sentences = content.split(/[.!?]+/);
@@ -234,7 +242,7 @@ export class LegalSearchAPI {
     for (const sentence of sentences) {
       const lowerSentence = sentence.toLowerCase();
       const matches = queryWords.filter((word) =>
-        lowerSentence.includes(word)
+        lowerSentence.includes(word),
       ).length;
 
       if (matches > maxMatches) {
@@ -253,7 +261,7 @@ export class LegalSearchAPI {
   private generateHighlights(
     content: string,
     query: string,
-    maxHighlights: number = 3
+    maxHighlights: number = 3,
   ): string[] {
     const queryWords = query
       .toLowerCase()
@@ -289,7 +297,7 @@ export class LegalSearchAPI {
     }
 
     const keywordMatches = (doc.keywords || []).filter((k: string) =>
-      queryWords.some((w) => k.toLowerCase().includes(w))
+      queryWords.some((w) => k.toLowerCase().includes(w)),
     ).length;
     score += keywordMatches * 1.5;
 
@@ -297,7 +305,7 @@ export class LegalSearchAPI {
   }
 
   private deduplicateResults(
-    results: LegalSearchResult[]
+    results: LegalSearchResult[],
   ): LegalSearchResult[] {
     const seen = new Set<string>();
     const unique: LegalSearchResult[] = [];

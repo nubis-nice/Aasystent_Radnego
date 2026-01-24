@@ -305,7 +305,13 @@ export class SemanticDocumentDiscovery {
                 response_format: { type: "json_object" },
                 max_completion_tokens: 1000,
             });
-            const result = JSON.parse(response.choices[0]?.message?.content || "{}");
+            // Usuń markdown code fence jeśli model zwrócił ```json ... ```
+            let jsonContent = response.choices[0]?.message?.content || "{}";
+            jsonContent = jsonContent
+                .replace(/^```(?:json)?\s*/i, "")
+                .replace(/\s*```$/i, "")
+                .trim();
+            const result = JSON.parse(jsonContent);
             if (result.scores) {
                 for (const score of result.scores) {
                     const doc = documents[score.idx];

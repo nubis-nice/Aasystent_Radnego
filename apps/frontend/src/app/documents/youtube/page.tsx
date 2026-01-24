@@ -37,6 +37,7 @@ import {
   cancelTranscriptionJob,
   deleteTranscriptionJob,
   retryTranscriptionJob,
+  cleanupTranscriptionJobs,
   type YouTubeVideo,
   type YouTubeTranscriptionResult,
   type TranscriptionJob,
@@ -47,7 +48,7 @@ export default function YouTubeTranscriptionPage() {
   const [sessions, setSessions] = useState<YouTubeVideo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selectedSession, setSelectedSession] = useState<YouTubeVideo | null>(
-    null
+    null,
   );
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcriptionProgress, setTranscriptionProgress] = useState("");
@@ -81,7 +82,7 @@ export default function YouTubeTranscriptionPage() {
 
   // Rozwijanie sesji (minimalizacja)
   const [expandedSessionId, setExpandedSessionId] = useState<string | null>(
-    null
+    null,
   );
 
   // Modal powiązań dla RAG
@@ -99,7 +100,7 @@ export default function YouTubeTranscriptionPage() {
   // Polling dla aktywnych zadań
   useEffect(() => {
     const activeJobs = jobs.filter(
-      (j) => !["completed", "failed"].includes(j.status)
+      (j) => !["completed", "failed"].includes(j.status),
     );
     if (activeJobs.length === 0) return;
 
@@ -145,7 +146,7 @@ export default function YouTubeTranscriptionPage() {
       });
     } catch (err) {
       setJobDocumentError(
-        err instanceof Error ? err.message : "Błąd pobierania transkrypcji"
+        err instanceof Error ? err.message : "Błąd pobierania transkrypcji",
       );
     } finally {
       setJobDocumentLoading(false);
@@ -168,7 +169,7 @@ export default function YouTubeTranscriptionPage() {
       await loadJobs();
     } catch (err) {
       alert(
-        "❌ Błąd: " + (err instanceof Error ? err.message : "Nieznany błąd")
+        "❌ Błąd: " + (err instanceof Error ? err.message : "Nieznany błąd"),
       );
     }
   };
@@ -182,7 +183,7 @@ export default function YouTubeTranscriptionPage() {
       await loadJobs();
     } catch (err) {
       alert(
-        "❌ Błąd: " + (err instanceof Error ? err.message : "Nieznany błąd")
+        "❌ Błąd: " + (err instanceof Error ? err.message : "Nieznany błąd"),
       );
     }
   };
@@ -194,7 +195,22 @@ export default function YouTubeTranscriptionPage() {
       await loadJobs();
     } catch (err) {
       alert(
-        "❌ Błąd: " + (err instanceof Error ? err.message : "Nieznany błąd")
+        "❌ Błąd: " + (err instanceof Error ? err.message : "Nieznany błąd"),
+      );
+    }
+  };
+
+  const handleCleanupJobs = async () => {
+    if (!confirm("Czy na pewno chcesz usunąć wszystkie niedziałające zadania?"))
+      return;
+
+    try {
+      const result = await cleanupTranscriptionJobs();
+      alert(`✅ ${result.message}`);
+      await loadJobs();
+    } catch (err) {
+      alert(
+        "❌ Błąd: " + (err instanceof Error ? err.message : "Nieznany błąd"),
       );
     }
   };
@@ -235,7 +251,7 @@ export default function YouTubeTranscriptionPage() {
           {
             includeSentiment,
             identifySpeakers,
-          }
+          },
         );
 
         if (jobResult.success) {
@@ -247,7 +263,7 @@ export default function YouTubeTranscriptionPage() {
           alert(
             "✅ Zadanie transkrypcji zostało utworzone!\n\n" +
               "Transkrypcja będzie przetwarzana w tle i automatycznie zapisana do bazy wiedzy.\n" +
-              "Możesz kontynuować pracę - status zadania znajdziesz w panelu po prawej stronie."
+              "Możesz kontynuować pracę - status zadania znajdziesz w panelu po prawej stronie.",
           );
         } else {
           setError("Błąd tworzenia zadania");
@@ -259,7 +275,7 @@ export default function YouTubeTranscriptionPage() {
         const result = await transcribeYouTubeVideo(
           selectedSession.url,
           selectedSession.title,
-          includeSentiment
+          includeSentiment,
         );
 
         setTranscriptionProgress("Transkrypcja zakończona!");
@@ -276,7 +292,7 @@ export default function YouTubeTranscriptionPage() {
       if (errorMsg.includes("yt-dlp")) {
         setError(
           "yt-dlp nie jest zainstalowany na serwerze. " +
-            "Administrator musi wykonać: pip install yt-dlp"
+            "Administrator musi wykonać: pip install yt-dlp",
         );
       } else {
         setError(errorMsg);
@@ -358,7 +374,7 @@ export default function YouTubeTranscriptionPage() {
     }
 
     alert(
-      `✅ Sesja "${session.title}" dodana do kontekstu chata!\n\nPrzejdź do chata aby użyć jej w rozmowie.`
+      `✅ Sesja "${session.title}" dodana do kontekstu chata!\n\nPrzejdź do chata aby użyć jej w rozmowie.`,
     );
   };
 
@@ -547,7 +563,7 @@ export default function YouTubeTranscriptionPage() {
                           .includes(searchQuery.toLowerCase()) ||
                         session.description
                           ?.toLowerCase()
-                          .includes(searchQuery.toLowerCase())
+                          .includes(searchQuery.toLowerCase()),
                     );
 
                     filteredSessions = [...filteredSessions].sort((a, b) => {
@@ -559,12 +575,12 @@ export default function YouTubeTranscriptionPage() {
                     });
 
                     const totalPages = Math.ceil(
-                      filteredSessions.length / ITEMS_PER_PAGE
+                      filteredSessions.length / ITEMS_PER_PAGE,
                     );
                     const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
                     const paginatedSessions = filteredSessions.slice(
                       startIndex,
-                      startIndex + ITEMS_PER_PAGE
+                      startIndex + ITEMS_PER_PAGE,
                     );
 
                     return (
@@ -584,8 +600,8 @@ export default function YouTubeTranscriptionPage() {
                                 selectedSession?.id === session.id
                                   ? "border-red-500 bg-red-50"
                                   : expandedSessionId === session.id
-                                  ? "border-blue-400 bg-blue-50/50"
-                                  : "border-secondary-200 hover:border-red-300"
+                                    ? "border-blue-400 bg-blue-50/50"
+                                    : "border-secondary-200 hover:border-red-300"
                               }`}
                             >
                               {/* Nagłówek - zawsze widoczny, klikalny do rozwinięcia */}
@@ -594,7 +610,7 @@ export default function YouTubeTranscriptionPage() {
                                   setExpandedSessionId(
                                     expandedSessionId === session.id
                                       ? null
-                                      : session.id
+                                      : session.id,
                                   )
                                 }
                                 className="w-full flex items-center gap-3 p-3 text-left hover:bg-red-50/30 transition-colors"
@@ -701,7 +717,7 @@ export default function YouTubeTranscriptionPage() {
                               <button
                                 onClick={() =>
                                   setCurrentPage((p) =>
-                                    Math.min(totalPages, p + 1)
+                                    Math.min(totalPages, p + 1),
                                   )
                                 }
                                 disabled={currentPage === totalPages}
@@ -893,7 +909,7 @@ export default function YouTubeTranscriptionPage() {
                         <span className="text-text-secondary">Napięcie:</span>
                         <p className="font-medium">
                           {transcriptionResult.summary.averageTension.toFixed(
-                            1
+                            1,
                           )}
                           /10
                         </p>
@@ -951,12 +967,21 @@ export default function YouTubeTranscriptionPage() {
                 <Loader2 className="h-5 w-5" />
                 Zadania transkrypcji
               </h2>
-              <button
-                onClick={() => setShowJobsPanel(false)}
-                className="text-slate-400 hover:text-slate-600"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCleanupJobs}
+                  className="text-xs px-2 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200 transition-colors"
+                  title="Usuń wszystkie niedziałające zadania"
+                >
+                  🗑️ Wyczyść
+                </button>
+                <button
+                  onClick={() => setShowJobsPanel(false)}
+                  className="text-slate-400 hover:text-slate-600"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             <div className="space-y-3">
@@ -976,23 +1001,23 @@ export default function YouTubeTranscriptionPage() {
                           job.status === "completed"
                             ? "bg-green-200 text-green-800"
                             : job.status === "failed"
-                            ? "bg-red-200 text-red-800"
-                            : "bg-blue-200 text-blue-800"
+                              ? "bg-red-200 text-red-800"
+                              : "bg-blue-200 text-blue-800"
                         }`}
                       >
                         {job.status === "completed"
                           ? "✅ Zakończone"
                           : job.status === "failed"
-                          ? "❌ Błąd"
-                          : job.status === "downloading"
-                          ? "📥 Pobieranie"
-                          : job.status === "transcribing"
-                          ? "🎤 Transkrypcja"
-                          : job.status === "analyzing"
-                          ? "🔍 Analiza"
-                          : job.status === "saving"
-                          ? "💾 Zapisywanie"
-                          : "⏳ Oczekuje"}
+                            ? "❌ Błąd"
+                            : job.status === "downloading"
+                              ? "📥 Pobieranie"
+                              : job.status === "transcribing"
+                                ? "🎤 Transkrypcja"
+                                : job.status === "analyzing"
+                                  ? "🔍 Analiza"
+                                  : job.status === "saving"
+                                    ? "💾 Zapisywanie"
+                                    : "⏳ Oczekuje"}
                       </span>
                       {!["completed", "failed"].includes(job.status) && (
                         <>
@@ -1056,14 +1081,14 @@ export default function YouTubeTranscriptionPage() {
                                   elapsed / (job.progress / 100);
                                 const remaining = Math.max(
                                   0,
-                                  estimatedTotal - elapsed
+                                  estimatedTotal - elapsed,
                                 );
                                 if (remaining < 60)
                                   return `${Math.ceil(remaining)}s`;
                                 if (remaining < 3600)
                                   return `${Math.ceil(remaining / 60)} min`;
                                 return `${Math.floor(
-                                  remaining / 3600
+                                  remaining / 3600,
                                 )}h ${Math.ceil((remaining % 3600) / 60)}min`;
                               })()}
                             </p>
@@ -1078,15 +1103,15 @@ export default function YouTubeTranscriptionPage() {
                             job.progress > 15
                               ? "text-green-600 font-medium"
                               : job.progress > 0
-                              ? "text-blue-600 font-semibold"
-                              : "text-slate-400"
+                                ? "text-blue-600 font-semibold"
+                                : "text-slate-400"
                           }
                         >
                           {job.progress > 15
                             ? "✓"
                             : job.progress > 0
-                            ? "→"
-                            : ""}{" "}
+                              ? "→"
+                              : ""}{" "}
                           Download
                         </span>
                         <span className="text-slate-300">•</span>
@@ -1095,15 +1120,15 @@ export default function YouTubeTranscriptionPage() {
                             job.progress > 25
                               ? "text-green-600 font-medium"
                               : job.progress > 15
-                              ? "text-blue-600 font-semibold"
-                              : "text-slate-400"
+                                ? "text-blue-600 font-semibold"
+                                : "text-slate-400"
                           }
                         >
                           {job.progress > 25
                             ? "✓"
                             : job.progress > 15
-                            ? "→"
-                            : ""}{" "}
+                              ? "→"
+                              : ""}{" "}
                           Preprocessing
                         </span>
                         <span className="text-slate-300">•</span>
@@ -1112,15 +1137,15 @@ export default function YouTubeTranscriptionPage() {
                             job.progress > 65
                               ? "text-green-600 font-medium"
                               : job.progress > 25
-                              ? "text-blue-600 font-semibold"
-                              : "text-slate-400"
+                                ? "text-blue-600 font-semibold"
+                                : "text-slate-400"
                           }
                         >
                           {job.progress > 65
                             ? "✓"
                             : job.progress > 25
-                            ? `→ ${job.progress}%`
-                            : ""}{" "}
+                              ? `→ ${job.progress}%`
+                              : ""}{" "}
                           Transcription
                         </span>
                         <span className="text-slate-300">•</span>
@@ -1129,15 +1154,15 @@ export default function YouTubeTranscriptionPage() {
                             job.progress > 85
                               ? "text-green-600 font-medium"
                               : job.progress > 65
-                              ? "text-blue-600 font-semibold"
-                              : "text-slate-400"
+                                ? "text-blue-600 font-semibold"
+                                : "text-slate-400"
                           }
                         >
                           {job.progress > 85
                             ? "✓"
                             : job.progress > 65
-                            ? "→"
-                            : ""}{" "}
+                              ? "→"
+                              : ""}{" "}
                           Analysis
                         </span>
                         <span className="text-slate-300">•</span>
@@ -1146,38 +1171,55 @@ export default function YouTubeTranscriptionPage() {
                             job.progress >= 100
                               ? "text-green-600 font-medium"
                               : job.progress > 85
-                              ? "text-blue-600 font-semibold"
-                              : "text-slate-400"
+                                ? "text-blue-600 font-semibold"
+                                : "text-slate-400"
                           }
                         >
                           {job.progress >= 100
                             ? "✓"
                             : job.progress > 85
-                            ? "→"
-                            : ""}{" "}
+                              ? "→"
+                              : ""}{" "}
                           Saving
                         </span>
                       </div>
                     </>
                   )}
 
-                  {job.status === "completed" && job.resultDocumentId && (
+                  {job.status === "completed" && (
                     <div className="mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                       <p className="text-xs text-green-700">
-                        ✅ Zapisano do bazy RAG (kategoria: transkrypcje)
+                        {job.resultDocumentId
+                          ? "✅ Zapisano do bazy RAG (kategoria: transkrypcje)"
+                          : "⚠️ Zakończono (transkrypcja nie została zapisana do RAG)"}
                       </p>
                       <div className="flex flex-wrap gap-2">
+                        {job.resultDocumentId && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleShowJobDocument(job);
+                            }}
+                            className="px-3 py-1.5 text-xs font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors"
+                          >
+                            Podgląd transkrypcji
+                          </button>
+                        )}
                         <button
-                          onClick={() => handleShowJobDocument(job)}
-                          className="px-3 py-1.5 text-xs font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedJobId(job.id);
+                          }}
+                          className="px-3 py-1.5 text-xs font-medium rounded-lg border border-blue-300 text-blue-700 hover:bg-blue-50 transition-colors"
                         >
-                          Podgląd transkrypcji
+                          Szczegóły
                         </button>
                         {job.videoUrl && (
                           <a
                             href={job.videoUrl}
                             target="_blank"
                             rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
                             className="px-3 py-1.5 text-xs font-medium rounded-lg border border-green-300 text-green-700 hover:bg-green-50 transition-colors"
                           >
                             Otwórz nagranie
@@ -1197,6 +1239,26 @@ export default function YouTubeTranscriptionPage() {
                         }}
                         className="ml-2 px-3 py-1.5 text-xs font-medium rounded-lg bg-orange-500 text-white hover:bg-orange-600 transition-colors flex items-center gap-1"
                         title="Ponów zadanie"
+                      >
+                        <RotateCw className="h-3 w-3" />
+                        Ponów
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Przycisk ponów dla utkniętych zadań (pending/downloading bez postępu) */}
+                  {job.status === "pending" && (
+                    <div className="mt-2 flex items-center justify-between">
+                      <p className="text-xs text-amber-700">
+                        Zadanie oczekuje - jeśli nie startuje, kliknij Ponów
+                      </p>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRetryJob(job);
+                        }}
+                        className="ml-2 px-3 py-1.5 text-xs font-medium rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-colors flex items-center gap-1"
+                        title="Ponów utknięte zadanie"
                       >
                         <RotateCw className="h-3 w-3" />
                         Ponów

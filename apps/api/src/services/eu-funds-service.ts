@@ -119,7 +119,11 @@ export class EUFundsService {
     region?: string;
     category?: string;
   }): Promise<EUCompetition[]> {
-    console.log("[EU Funds] Getting active competitions:", params);
+    const safeParams = params || {};
+    console.log(
+      "[EU Funds] Getting active competitions",
+      Object.keys(safeParams).length === 0 ? "(no filters)" : safeParams,
+    );
 
     const competitions: EUCompetition[] = [
       {
@@ -167,14 +171,21 @@ export class EUFundsService {
       },
     ];
 
-    return competitions.filter((c) => {
+    const filtered = competitions.filter((c) => {
       if (
-        params?.program &&
-        !c.program.toLowerCase().includes(params.program.toLowerCase())
+        safeParams.program &&
+        !c.program.toLowerCase().includes(safeParams.program.toLowerCase())
       )
         return false;
       return true;
     });
+
+    console.log(
+      `[EU Funds] Active competitions returned: ${filtered.length}`,
+      Object.keys(safeParams).length === 0 ? "(no filters)" : safeParams,
+    );
+
+    return filtered;
   }
 
   async getCompetitivenessOffers(params?: {
@@ -280,8 +291,8 @@ export class EUFundsService {
       keywords.some(
         (kw) =>
           c.title.toLowerCase().includes(kw.toLowerCase()) ||
-          c.description?.toLowerCase().includes(kw.toLowerCase())
-      )
+          c.description?.toLowerCase().includes(kw.toLowerCase()),
+      ),
     );
 
     const relatedPrograms = [

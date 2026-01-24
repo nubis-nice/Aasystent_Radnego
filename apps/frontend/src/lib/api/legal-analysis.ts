@@ -5,7 +5,7 @@
 
 import { supabase } from "../supabase/client";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 async function getAuthHeaders(accessToken?: string) {
   let token = accessToken;

@@ -40,7 +40,7 @@ export function EndpointConfig({
   const fetchDefaults = async () => {
     try {
       setLoading(true);
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
       const response = await fetch(
         `${apiUrl}/api/providers/${provider}/defaults`
       );

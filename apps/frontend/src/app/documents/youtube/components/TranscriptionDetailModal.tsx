@@ -82,7 +82,7 @@ export function TranscriptionDetailModal({
       setError(
         err instanceof Error
           ? err.message
-          : "Błąd pobierania szczegółów zadania"
+          : "Błąd pobierania szczegółów zadania",
       );
     } finally {
       setLoading(false);
@@ -123,7 +123,7 @@ export function TranscriptionDetailModal({
     if (seconds < 3600)
       return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
     return `${Math.floor(seconds / 3600)}h ${Math.floor(
-      (seconds % 3600) / 60
+      (seconds % 3600) / 60,
     )}m`;
   };
 
@@ -133,7 +133,7 @@ export function TranscriptionDetailModal({
     if (seconds < 60) return `~${Math.ceil(seconds)}s`;
     if (seconds < 3600) return `~${Math.ceil(seconds / 60)} min`;
     return `~${Math.floor(seconds / 3600)}h ${Math.ceil(
-      (seconds % 3600) / 60
+      (seconds % 3600) / 60,
     )}min`;
   };
 
@@ -273,7 +273,7 @@ export function TranscriptionDetailModal({
               <div
                 key={step.name}
                 className={`border-2 rounded-xl p-4 transition-all duration-300 ${getStepClass(
-                  step.status
+                  step.status,
                 )}`}
               >
                 <div className="flex items-start gap-3">
@@ -299,8 +299,8 @@ export function TranscriptionDetailModal({
                             step.status === "completed"
                               ? "bg-green-500"
                               : step.status === "active"
-                              ? "bg-blue-500"
-                              : "bg-red-500"
+                                ? "bg-blue-500"
+                                : "bg-red-500"
                           }`}
                           style={{ width: `${step.progress}%` }}
                         />
@@ -375,13 +375,28 @@ export function TranscriptionDetailModal({
                   Rozpoczęto: {new Date(job.createdAt).toLocaleString("pl-PL")}
                 </span>
               )}
+              {job.status === "completed" && !job.resultDocumentId && (
+                <span className="ml-2 text-amber-600">
+                  (Transkrypcja nie została zapisana do RAG)
+                </span>
+              )}
             </div>
-            <button
-              onClick={onClose}
-              className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition-colors font-medium"
-            >
-              Zamknij
-            </button>
+            <div className="flex items-center gap-2">
+              {job.status === "completed" && job.resultDocumentId && (
+                <a
+                  href={`/documents/youtube?viewDocument=${job.resultDocumentId}`}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-medium"
+                >
+                  Podgląd transkrypcji
+                </a>
+              )}
+              <button
+                onClick={onClose}
+                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition-colors font-medium"
+              >
+                Zamknij
+              </button>
+            </div>
           </div>
         </div>
       </div>

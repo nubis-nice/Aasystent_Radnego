@@ -21,6 +21,7 @@
     "axios": "^1.13.2",
     "cheerio": "^1.1.2",
     "dotenv": "^16.4.5",
+    "fast-xml-parser": "^5.3.3",
     "fastify": "^5.2.1",
     "mammoth": "^1.11.0",
     "node-poppler": "^9.1.0",

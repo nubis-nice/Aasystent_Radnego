@@ -27,7 +27,7 @@ export async function authMiddleware(request, reply) {
         request.headers["x-user-id"] = user.id;
     }
     catch (error) {
-        request.log.error({ error: error.message }, "Auth middleware error:");
+        request.log.error({ err: error }, "Auth middleware error");
         return reply.status(500).send({ error: "Authentication failed" });
     }
 }

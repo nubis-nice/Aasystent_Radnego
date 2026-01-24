@@ -6,7 +6,7 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 export async function authMiddleware(
   request: FastifyRequest,
-  reply: FastifyReply
+  reply: FastifyReply,
 ) {
   try {
     // Pobierz token z headera Authorization
@@ -14,13 +14,13 @@ export async function authMiddleware(
 
     request.log.info(
       { authHeader: authHeader ? "present" : "missing" },
-      "[AUTH] Authorization header"
+      "[AUTH] Authorization header",
     );
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       request.log.warn(
         { message: "Missing or invalid authorization header" },
-        "[AUTH] Missing or invalid authorization header"
+        "[AUTH] Missing or invalid authorization header",
       );
       return reply
         .status(401)
@@ -30,13 +30,13 @@ export async function authMiddleware(
     const token = authHeader.substring(7); // Usuń "Bearer "
     request.log.info(
       { tokenLength: token.length, tokenStart: token.substring(0, 20) },
-      "[AUTH] Token received"
+      "[AUTH] Token received",
     );
 
     // Weryfikuj token w Supabase
     request.log.info(
       { supabaseUrl, hasServiceKey: !!supabaseServiceKey },
-      "[AUTH] Supabase config"
+      "[AUTH] Supabase config",
     );
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -48,7 +48,7 @@ export async function authMiddleware(
     if (error || !user) {
       request.log.error(
         { error: error?.message, errorCode: error?.code },
-        "[AUTH] Token verification failed"
+        "[AUTH] Token verification failed",
       );
       return reply.status(401).send({ error: "Invalid or expired token" });
     }
@@ -58,7 +58,7 @@ export async function authMiddleware(
     // Dodaj user_id do headers dla kolejnych handlerów
     request.headers["x-user-id"] = user.id;
   } catch (error) {
-    request.log.error({ error: error.message }, "Auth middleware error:");
+    request.log.error({ err: error }, "Auth middleware error");
     return reply.status(500).send({ error: "Authentication failed" });
   }
 }

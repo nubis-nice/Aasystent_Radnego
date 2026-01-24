@@ -219,7 +219,7 @@ export default function ApiSettingsPage() {
     try {
       const response = await fetch(
         `${
-          process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"
+          process.env.NEXT_PUBLIC_API_URL || ""
         }/api/fetch-models`,
         {
           method: "POST",
@@ -620,7 +620,7 @@ export default function ApiSettingsPage() {
         return;
       }
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
       const response = await fetch(`${apiUrl}/api/test/connection`, {
         method: "POST",
         headers: {

@@ -12,6 +12,7 @@
 export interface NormalizedDocumentMetadata {
     documentType: DocumentType;
     documentSubtype?: string;
+    hierarchyLevel: 1 | 2 | 3 | 4 | 5;
     sessionInfo?: {
         sessionNumber: number;
         sessionType?: SessionType;
@@ -39,7 +40,7 @@ export interface NormalizedDocumentMetadata {
     };
     extra?: Record<string, unknown>;
 }
-export type DocumentType = "resolution" | "protocol" | "transcription" | "session_materials" | "announcement" | "report" | "opinion" | "motion" | "video" | "other";
+export type DocumentType = "budget_act" | "resolution" | "session_order" | "resolution_project" | "protocol" | "interpellation" | "transcription" | "video" | "committee_opinion" | "justification" | "session_materials" | "order" | "announcement" | "attachment" | "reference_material" | "news" | "report" | "opinion" | "motion" | "other";
 export type SessionType = "ordinary" | "extraordinary" | "budget" | "constituent";
 export declare class DocumentNormalizer {
     private llmClient;

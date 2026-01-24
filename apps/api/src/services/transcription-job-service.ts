@@ -16,7 +16,7 @@ import OpenAI from "openai";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
 type TranscriptionJobRow = {
@@ -108,7 +108,7 @@ export class TranscriptionJobService {
       sessionId?: string;
       includeSentiment?: boolean;
       identifySpeakers?: boolean;
-    } = {}
+    } = {},
   ): Promise<TranscriptionJob> {
     const jobId = `job_${Date.now()}_${Math.random()
       .toString(36)
@@ -234,14 +234,14 @@ export class TranscriptionJobService {
         videoId,
         job.videoTitle,
         job.videoUrl,
-        true // enablePreprocessing
+        downloadResult.parts, // Precomputed parts z downloadAudio()
       );
 
       // Zapisz wykryte problemy z audio
       if (transcriptionResult.audioAnalysis?.issues) {
         this.updateJob(jobId, {
           audioIssues: transcriptionResult.audioAnalysis.issues.map(
-            (i) => i.type
+            (i) => i.type,
           ),
         });
       }
@@ -265,7 +265,7 @@ export class TranscriptionJobService {
         const identified = await this.identifySpeakers(
           transcriptionResult.rawTranscript,
           transcriptionResult.segments,
-          councilMembers
+          councilMembers,
         );
         enhancedSegments = identified.segments;
         enhancedTranscript = this.formatEnhancedTranscript(
@@ -274,7 +274,7 @@ export class TranscriptionJobService {
           transcriptionResult.summary,
           job.videoTitle,
           job.videoUrl,
-          job.includeSentiment
+          job.includeSentiment,
         );
       }
 
@@ -291,14 +291,14 @@ export class TranscriptionJobService {
         job.videoUrl,
         job.sessionId,
         transcriptionResult.summary,
-        enhancedSegments
+        enhancedSegments,
       );
 
       // 4.5. Aktualizuj status transkrypcji w scraped_content
       await this.updateScrapedContentTranscriptionStatus(
         job.videoUrl,
         "completed",
-        documentId
+        documentId,
       );
 
       // 5. Zakończenie
@@ -311,7 +311,7 @@ export class TranscriptionJobService {
       });
 
       console.log(
-        `[TranscriptionJob] Job ${jobId} completed, document ID: ${documentId}`
+        `[TranscriptionJob] Job ${jobId} completed, document ID: ${documentId}`,
       );
     } catch (error) {
       console.error(`[TranscriptionJob] Job ${jobId} error:`, error);
@@ -423,7 +423,7 @@ export class TranscriptionJobService {
       credibility: number;
       credibilityEmoji: string;
     }>,
-    councilMembers: CouncilMember[]
+    councilMembers: CouncilMember[],
   ): Promise<{
     segments: Array<{
       timestamp: string;
@@ -478,12 +478,12 @@ Odpowiedz w formacie JSON:
             role: "user",
             content: `Transkrypcja:\n${rawTranscript.slice(
               0,
-              10000
+              10000,
             )}\n\nSegmenty do identyfikacji:\n${JSON.stringify(
               segments.slice(0, 20).map((s) => ({
                 speaker: s.speaker,
                 text: s.text.slice(0, 100),
-              }))
+              })),
             )}`,
           },
         ],
@@ -548,7 +548,7 @@ Odpowiedz w formacie JSON:
     },
     videoTitle: string,
     videoUrl: string,
-    includeSentiment: boolean
+    includeSentiment: boolean,
   ): string {
     const date = new Date().toLocaleDateString("pl-PL", {
       year: "numeric",
@@ -570,7 +570,7 @@ Odpowiedz w formacie JSON:
 
     if (includeSentiment) {
       md += `| 🎭 Dominujący nastrój | ${this.translateSentiment(
-        summary.dominantSentiment
+        summary.dominantSentiment,
       )} |\n`;
       md += `| ⚡ Średnie napięcie | ${
         summary.averageTension?.toFixed(1) || "N/A"
@@ -673,7 +673,7 @@ Odpowiedz w formacie JSON:
       tension: number;
       credibility: number;
       credibilityEmoji: string;
-    }>
+    }>,
   ): Promise<string> {
     if (!this.embeddingsClient) {
       throw new Error("Embeddings client not initialized");
@@ -682,7 +682,7 @@ Odpowiedz w formacie JSON:
     // Generuj embedding dla wyszukiwania semantycznego
     const embeddingText = `${videoTitle}\n\n${formattedTranscript.slice(
       0,
-      8000
+      8000,
     )}`;
     const embeddingResponse = await this.embeddingsClient.embeddings.create({
       model: this.embeddingModel,
@@ -742,7 +742,7 @@ Odpowiedz w formacie JSON:
    */
   private async linkToSession(
     documentId: string,
-    sessionId: string
+    sessionId: string,
   ): Promise<void> {
     try {
       // Sprawdź czy tabela document_relations istnieje
@@ -757,7 +757,7 @@ Odpowiedz w formacie JSON:
       if (error) {
         console.warn(
           "[TranscriptionJob] Could not link to session:",
-          error.message
+          error.message,
         );
       }
     } catch {
@@ -771,7 +771,7 @@ Odpowiedz w formacie JSON:
   private async updateScrapedContentTranscriptionStatus(
     videoUrl: string,
     status: "pending" | "completed" | "failed",
-    transcriptionDocumentId?: string
+    transcriptionDocumentId?: string,
   ): Promise<void> {
     try {
       const updateData: Record<string, unknown> = {
@@ -803,18 +803,18 @@ Odpowiedz w formacie JSON:
         if (error) {
           console.error(
             "[TranscriptionJob] Failed to update scraped_content:",
-            error
+            error,
           );
         } else {
           console.log(
-            `[TranscriptionJob] Updated transcription status to '${status}' for ${videoUrl}`
+            `[TranscriptionJob] Updated transcription status to '${status}' for ${videoUrl}`,
           );
         }
       }
     } catch (error) {
       console.error(
         "[TranscriptionJob] Error updating scraped_content:",
-        error
+        error,
       );
     }
   }
@@ -853,7 +853,7 @@ Odpowiedz w formacie JSON:
       .toLowerCase()
       .split(/\s+/)
       .filter(
-        (w) => w.length > 3 && !["sesja", "rady", "miejskiej"].includes(w)
+        (w) => w.length > 3 && !["sesja", "rady", "miejskiej"].includes(w),
       );
 
     return [...new Set([...found, ...titleWords])].slice(0, 20);
@@ -864,7 +864,7 @@ Odpowiedz w formacie JSON:
 const jobServices: Map<string, TranscriptionJobService> = new Map();
 
 export async function getTranscriptionJobService(
-  userId: string
+  userId: string,
 ): Promise<TranscriptionJobService> {
   let service = jobServices.get(userId);
   if (!service) {

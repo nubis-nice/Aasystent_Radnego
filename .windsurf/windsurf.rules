@@ -4,12 +4,12 @@
 
 Działasz jako **Senior Software Architect & Backend Engineer**.
 
-Tworzysz i utrzymujesz **Agenta AI Windsurf** (analiza prawna, budżetowa, porównawcza JST).
+Tworzysz i utrzymujesz **Agenta AI bezRadny** (analiza prawna, budżetowa, porównawcza JST).
 
 System opiera się wyłącznie na **publicznych, bezpłatnych API i scraperach** (ISAP, CBOSA, RIO, BIP, Dzienniki Urzędowe).
 
 **Brak MCP. Brak zgadywania prawa.**
-
+MCP używasz tylko jako narżedzi do poprawy działania programu jako support programowania.
 ---
 
 ## 0. PERSONALIZACJA AGENTA (GLOBALNE ZASADY)
@@ -38,7 +38,7 @@ interface UserLocaleSettings {
 
 - Pobiera imię użytkownika z `user_profiles.full_name`
 - Zwraca się do użytkownika **po imieniu** (pierwsza część `full_name`)
-- Przykład: "Cześć Marcin, przeanalizowałem dokument..."
+- Przykład: "Cześć Marcin, przeanalizowałem dokument...", "Czesć" - zwracasz sie tylko na początku pierwszej odpowiedzi. Następnie przykład "Witam ponownie Marcin" 
 
 ```typescript
 // Wyciągnij imię z pełnego imienia i nazwiska

@@ -199,7 +199,7 @@ function parseNaturalDate(dateStr: string): Date | null {
     return new Date(
       parseInt(euMatch[3]),
       parseInt(euMatch[2]) - 1,
-      parseInt(euMatch[1])
+      parseInt(euMatch[1]),
     );
   }
 
@@ -234,7 +234,7 @@ export class VoiceActionService {
    */
   async processVoiceCommand(
     command: string,
-    context?: { pendingActionId?: string }
+    context?: { pendingActionId?: string },
   ): Promise<VoiceActionResult> {
     await this.initialize();
 
@@ -388,7 +388,7 @@ export class VoiceActionService {
    * Wykonaj oczekującą akcję
    */
   private async executePendingAction(
-    actionId?: string
+    actionId?: string,
   ): Promise<VoiceActionResult> {
     // Znajdź ostatnią oczekującą akcję
     let pending: PendingAction | undefined;
@@ -437,7 +437,7 @@ export class VoiceActionService {
    * Dodaj wydarzenie do kalendarza
    */
   private async handleCalendarAdd(
-    entities: Record<string, unknown>
+    entities: Record<string, unknown>,
   ): Promise<VoiceActionResult> {
     const title = entities.eventTitle as string;
     const date = entities.eventDate as string;
@@ -475,16 +475,19 @@ export class VoiceActionService {
 
       // Zapisz do bazy
       const { data, error } = await supabase
-        .from("calendar_events")
+        .from("user_calendar_events")
         .insert({
           user_id: this.userId,
           title,
           start_date: eventDate.toISOString(),
           end_date: new Date(
-            eventDate.getTime() + 60 * 60 * 1000
+            eventDate.getTime() + 60 * 60 * 1000,
           ).toISOString(), // +1h
           location: location || null,
           description: `Utworzone głosowo przez Stefana`,
+          event_type: "meeting",
+          all_day: false,
+          color: "primary",
         })
         .select()
         .single();
@@ -495,7 +498,7 @@ export class VoiceActionService {
         success: true,
         actionType: "calendar_add",
         message: `Dodałem do kalendarza: "${title}" na ${this.formatDate(
-          eventDate
+          eventDate,
         )}${time ? ` o ${time}` : ""}`,
         data,
         uiAction: {
@@ -527,7 +530,7 @@ export class VoiceActionService {
       const weekLater = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
 
       const { data, error } = await supabase
-        .from("calendar_events")
+        .from("user_calendar_events")
         .select("*")
         .eq("user_id", this.userId)
         .gte("start_date", today.toISOString())
@@ -551,7 +554,7 @@ export class VoiceActionService {
         .map((e) => {
           const date = new Date(e.start_date);
           return `• ${e.title} - ${this.formatDate(
-            date
+            date,
           )} o ${date.toLocaleTimeString("pl-PL", {
             hour: "2-digit",
             minute: "2-digit",
@@ -583,7 +586,7 @@ export class VoiceActionService {
    * Dodaj zadanie
    */
   private async handleTaskAdd(
-    entities: Record<string, unknown>
+    entities: Record<string, unknown>,
   ): Promise<VoiceActionResult> {
     const title = entities.taskTitle as string;
     const priority = (entities.taskPriority as string) || "medium";
@@ -681,7 +684,7 @@ export class VoiceActionService {
    * Oznacz zadanie jako ukończone
    */
   private async handleTaskComplete(
-    entities: Record<string, unknown>
+    entities: Record<string, unknown>,
   ): Promise<VoiceActionResult> {
     const taskTitle = entities.taskTitle as string;
 
@@ -792,7 +795,7 @@ export class VoiceActionService {
    * Wyszukaj dokument
    */
   private async handleDocumentSearch(
-    entities: Record<string, unknown>
+    entities: Record<string, unknown>,
   ): Promise<VoiceActionResult> {
     const query = entities.documentQuery as string;
 
@@ -819,7 +822,7 @@ export class VoiceActionService {
    * Uruchom szybkie narzędzie
    */
   private async handleQuickTool(
-    entities: Record<string, unknown>
+    entities: Record<string, unknown>,
   ): Promise<VoiceActionResult> {
     const toolName = (entities.toolName as string)?.toLowerCase();
 
@@ -856,6 +859,41 @@ export class VoiceActionService {
         name: "Projekt uchwały",
         path: "/chat?tool=resolution",
         description: "Generator projektów uchwał",
+      },
+      wystąpienie: {
+        name: "Wystąpienie na sesji",
+        path: "/chat?tool=speech",
+        description: "Przygotuj projekt wystąpienia radnego na sesji",
+      },
+      wystapienie: {
+        name: "Wystąpienie na sesji",
+        path: "/chat?tool=speech",
+        description: "Przygotuj projekt wystąpienia radnego na sesji",
+      },
+      przemówienie: {
+        name: "Wystąpienie na sesji",
+        path: "/chat?tool=speech",
+        description: "Przygotuj projekt wystąpienia radnego na sesji",
+      },
+      speech: {
+        name: "Wystąpienie na sesji",
+        path: "/chat?tool=speech",
+        description: "Przygotuj projekt wystąpienia radnego na sesji",
+      },
+      raport: {
+        name: "Szablon raportu",
+        path: "/chat?tool=report",
+        description: "Generator szablonów raportów kontroli",
+      },
+      report: {
+        name: "Szablon raportu",
+        path: "/chat?tool=report",
+        description: "Generator szablonów raportów kontroli",
+      },
+      szablon: {
+        name: "Szablon raportu",
+        path: "/chat?tool=report",
+        description: "Generator szablonów raportów kontroli",
       },
     };
 
@@ -897,7 +935,7 @@ export class VoiceActionService {
    * Nawigacja w aplikacji
    */
   private async handleNavigation(
-    entities: Record<string, unknown>
+    entities: Record<string, unknown>,
   ): Promise<VoiceActionResult> {
     const target = (entities.targetPage as string)?.toLowerCase();
 
@@ -976,7 +1014,7 @@ export class VoiceActionService {
   storePendingAction(
     type: VoiceActionType,
     params: Record<string, unknown>,
-    description: string
+    description: string,
   ): PendingAction {
     const action: PendingAction = {
       id: `pending_${Date.now()}`,

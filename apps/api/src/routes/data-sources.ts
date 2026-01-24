@@ -1,6 +1,5 @@
 import { FastifyInstance } from "fastify";
 import { createClient } from "@supabase/supabase-js";
-import { intelligentScrapeDataSource } from "../services/intelligent-scraper.js";
 import { semanticDocumentSearch } from "../services/semantic-document-discovery.js";
 import {
   ScrapingQueueManager,
@@ -8,12 +7,11 @@ import {
 } from "../services/scraping-queue.js";
 import OpenAI from "openai";
 
-/* eslint-disable no-undef */
 declare const Buffer: typeof globalThis.Buffer;
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
 export async function dataSourcesRoutes(fastify: FastifyInstance) {
@@ -32,7 +30,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
         .order("created_at", { ascending: false });
 
       if (error) {
-        request.log.error("Error fetching data sources:", error);
+        request.log.error({ err: error }, "Error fetching data sources");
         return reply
           .status(500)
           .send({ error: "Failed to fetch data sources" });
@@ -88,12 +86,12 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
             documents_count: docsCount || 0,
             last_scrape: lastLog || null,
           };
-        })
+        }),
       );
 
       return reply.send({ sources: sourcesWithCounts });
     } catch (error) {
-      request.log.error("Data sources error:", error);
+      request.log.error({ err: error }, "Data sources error");
       return reply.status(500).send({ error: "Internal server error" });
     }
   });
@@ -131,10 +129,10 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
 
         return reply.send({ source, logs: logs || [] });
       } catch (error) {
-        request.log.error("Data source details error:", error);
+        request.log.error({ err: error }, "Data source details error");
         return reply.status(500).send({ error: "Internal server error" });
       }
-    }
+    },
   );
 
   // POST /api/data-sources - Dodaj nowe źródło
@@ -179,7 +177,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
       if (error) {
         request.log.error(
           { error: error.message, code: error.code, details: error.details },
-          "Error creating data source"
+          "Error creating data source",
         );
         return reply
           .status(500)
@@ -188,7 +186,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
 
       return reply.status(201).send({ source });
     } catch (error) {
-      request.log.error("Create data source error:", error);
+      request.log.error({ err: error }, "Create data source error");
       return reply.status(500).send({ error: "Internal server error" });
     }
   });
@@ -263,7 +261,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
         .single();
 
       if (error) {
-        request.log.error("Error updating data source:", JSON.stringify(error));
+        request.log.error({ err: error }, "Error updating data source");
         return reply
           .status(500)
           .send({ error: `Failed to update: ${error.message}` });
@@ -271,7 +269,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
 
       return reply.send({ source });
     } catch (error) {
-      request.log.error("Update data source error:", error);
+      request.log.error({ err: error }, "Update data source error");
       return reply.status(500).send({ error: "Internal server error" });
     }
   });
@@ -306,7 +304,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
           .eq("id", id);
 
         if (error) {
-          request.log.error("Error deleting data source:", error);
+          request.log.error({ err: error }, "Error deleting data source");
           return reply
             .status(500)
             .send({ error: "Failed to delete data source" });
@@ -314,10 +312,10 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
 
         return reply.status(204).send();
       } catch (error) {
-        request.log.error("Delete data source error:", error);
+        request.log.error({ err: error }, "Delete data source error");
         return reply.status(500).send({ error: "Internal server error" });
       }
-    }
+    },
   );
 
   // POST /api/data-sources/:id/scrape - Uruchom scraping teraz
@@ -354,7 +352,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
         minDocumentDate.setDate(minDocumentDate.getDate() - maxDocumentAgeDays);
         request.log.info(
           { maxDocumentAgeDays, minDocumentDate },
-          "Filtering documents by age"
+          "Filtering documents by age",
         );
       }
 
@@ -378,7 +376,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
 
       request.log.info(
         { sourceId: id, jobId, priority, maxDocumentAgeDays },
-        "Scraping job enqueued"
+        "Scraping job enqueued",
       );
 
       // Natychmiast zwróć odpowiedź - scraping w kolejce
@@ -391,7 +389,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
         async: true,
       });
     } catch (error) {
-      request.log.error("Trigger scraping error:", error);
+      request.log.error({ err: error }, "Trigger scraping error");
       return reply.status(500).send({ error: "Internal server error" });
     }
   });
@@ -412,7 +410,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
         config: queueManager.getParallelConfig(),
       });
     } catch (error) {
-      request.log.error("Queue stats error:", error);
+      request.log.error({ err: error }, "Queue stats error");
       return reply.status(500).send({ error: "Internal server error" });
     }
   });
@@ -442,7 +440,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
 
       return reply.send({ job });
     } catch (error) {
-      request.log.error("Job status error:", error);
+      request.log.error({ err: error }, "Job status error");
       return reply.status(500).send({ error: "Internal server error" });
     }
   });
@@ -495,7 +493,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
 
       request.log.info(
         { sourceId: id, query, enableIntelligentScraping },
-        "Starting semantic document search"
+        "Starting semantic document search",
       );
 
       const result = await semanticDocumentSearch(userId, {
@@ -516,12 +514,12 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
           totalFound: result.totalFound,
           newDocumentsProcessed: result.newDocumentsProcessed,
         },
-        "Semantic search completed"
+        "Semantic search completed",
       );
 
       return reply.send(result);
     } catch (error) {
-      request.log.error("Semantic search error:", String(error));
+      request.log.error({ err: error }, "Semantic search error");
       return reply.status(500).send({ error: "Internal server error" });
     }
   });
@@ -565,12 +563,12 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
           totalFound: result.totalFound,
           newDocumentsProcessed: result.newDocumentsProcessed,
         },
-        "Global semantic search completed"
+        "Global semantic search completed",
       );
 
       return reply.send(result);
     } catch (error) {
-      request.log.error("Global semantic search error:", String(error));
+      request.log.error({ err: error }, "Global semantic search error");
       return reply.status(500).send({ error: "Internal server error" });
     }
   });
@@ -598,7 +596,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
 
       if (query.search) {
         dbQuery = dbQuery.or(
-          `title.ilike.%${query.search}%,content.ilike.%${query.search}%`
+          `title.ilike.%${query.search}%,content.ilike.%${query.search}%`,
         );
       }
 
@@ -620,7 +618,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
       const { data: documents, error, count } = await dbQuery;
 
       if (error) {
-        request.log.error("Error fetching documents:", error);
+        request.log.error({ err: error }, "Error fetching documents");
         return reply.status(500).send({ error: "Failed to fetch documents" });
       }
 
@@ -631,7 +629,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
         offset,
       });
     } catch (error) {
-      request.log.error("Documents list error:", error);
+      request.log.error({ err: error }, "Documents list error");
       return reply.status(500).send({ error: "Internal server error" });
     }
   });
@@ -668,13 +666,17 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
         .select("document_type")
         .eq("user_id", userId);
 
-      const typeStats = (docsByType || []).reduce(
-        (acc: Record<string, number>, doc: any) => {
-          acc[doc.document_type] = (acc[doc.document_type] || 0) + 1;
-          return acc;
-        },
-        {}
-      );
+      type DocTypeRow = { document_type: string | null };
+
+      const typeStats =
+        (docsByType as DocTypeRow[] | null)?.reduce(
+          (acc: Record<string, number>, doc: DocTypeRow) => {
+            const key = doc.document_type ?? "unknown";
+            acc[key] = (acc[key] || 0) + 1;
+            return acc;
+          },
+          {} as Record<string, number>,
+        ) || {};
 
       // Pobierz źródła użytkownika z datą ostatniego scrapingu
       const { data: userSources } = await supabase
@@ -691,14 +693,14 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
 
       // Znajdź najnowszą datę scrapingu ze źródeł
       const lastScrapedSource = (userSources || []).find(
-        (s) => s.last_scraped_at
+        (s) => s.last_scraped_at,
       );
       lastScrapeDate = lastScrapedSource?.last_scraped_at || null;
 
       if (sourceIds.length > 0) {
         // Błędy w ostatnich 24h
         const yesterday = new Date(
-          Date.now() - 24 * 60 * 60 * 1000
+          Date.now() - 24 * 60 * 60 * 1000,
         ).toISOString();
         const { count } = await supabase
           .from("scraping_logs")
@@ -723,7 +725,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
         errorsLast24h: errorsCount,
       });
     } catch (error) {
-      request.log.error("Stats error:", error);
+      request.log.error({ err: error }, "Stats error");
       return reply.status(500).send({ error: "Internal server error" });
     }
   });
@@ -799,7 +801,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
       if (apiConfig) {
         const openaiApiKey = Buffer.from(
           apiConfig.api_key_encrypted,
-          "base64"
+          "base64",
         ).toString("utf-8");
         openai = new OpenAI({
           apiKey: openaiApiKey,
@@ -838,7 +840,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
             });
             embedding = embeddingResponse.data[0]?.embedding ?? null;
           } catch (e) {
-            request.log.warn("Failed to generate embedding:", e);
+            request.log.warn({ err: e }, "Failed to generate embedding");
           }
         }
 
@@ -863,7 +865,7 @@ export async function dataSourcesRoutes(fastify: FastifyInstance) {
         documentsCreated: created,
       });
     } catch (error) {
-      request.log.error("Seed test data error:", error);
+      request.log.error({ err: error }, "Seed test data error");
       return reply.status(500).send({ error: "Internal server error" });
     }
   });

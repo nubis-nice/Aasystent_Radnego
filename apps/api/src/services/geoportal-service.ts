@@ -4,6 +4,7 @@
  */
 
 import axios, { AxiosInstance } from "axios";
+import { XMLParser } from "fast-xml-parser";
 
 export interface ParcelInfo {
   id: string;
@@ -111,7 +112,7 @@ export class GeoportalService {
             id: parcelId,
             result: "teryt,voivodeship,county,commune,region,parcel,geom_wkt",
           },
-        }
+        },
       );
 
       if (response.data && response.data !== "-1") {
@@ -139,7 +140,7 @@ export class GeoportalService {
    */
   async getParcelByCoordinates(
     lat: number,
-    lon: number
+    lon: number,
   ): Promise<ParcelInfo | null> {
     const cacheKey = `parcel:coords:${lat}:${lon}`;
     const cached = this.getCached<ParcelInfo>(cacheKey);
@@ -154,7 +155,7 @@ export class GeoportalService {
             xy: `${lon},${lat}`,
             result: "teryt,voivodeship,county,commune,region,parcel,geom_wkt",
           },
-        }
+        },
       );
 
       if (response.data && response.data !== "-1") {
@@ -174,7 +175,7 @@ export class GeoportalService {
     } catch (error) {
       console.error(
         "[GeoportalService] Error fetching parcel by coordinates:",
-        error
+        error,
       );
       return null;
     }
@@ -185,7 +186,7 @@ export class GeoportalService {
    */
   async searchAddress(
     query: string,
-    limit: number = 10
+    limit: number = 10,
   ): Promise<AddressPoint[]> {
     const cacheKey = `address:${query}:${limit}`;
     const cached = this.getCached<AddressPoint[]>(cacheKey);
@@ -200,7 +201,7 @@ export class GeoportalService {
             request: "GetAddress",
             address: query,
           },
-        }
+        },
       );
 
       const results: AddressPoint[] = [];
@@ -233,7 +234,7 @@ export class GeoportalService {
    * Pobieranie granic jednostki administracyjnej (PRG WFS)
    */
   async getAdministrativeUnit(
-    code: string
+    code: string,
   ): Promise<AdministrativeUnit | null> {
     const cacheKey = `admin:${code}`;
     const cached = this.getCached<AdministrativeUnit>(cacheKey);
@@ -245,17 +246,18 @@ export class GeoportalService {
           SERVICE: "WFS",
           VERSION: "2.0.0",
           REQUEST: "GetFeature",
-          TYPENAMES: "A03_Gminy",
+          TYPENAMES: "ms:A03_Granice_gmin",
           CQL_FILTER: `JPT_KOD_JE='${code}'`,
-          OUTPUTFORMAT: "application/json",
+          OUTPUTFORMAT: "application/gml+xml; version=3.2",
         },
       });
 
-      if (response.data?.features?.length > 0) {
-        const feature = response.data.features[0];
+      const features = this.parseGmlFeatures(response.data);
+      if (features.length > 0) {
+        const feature = features[0];
         const unit: AdministrativeUnit = {
           id: feature.id,
-          name: feature.properties?.JPT_NAZWA_ || "",
+          name: feature.name || "",
           type: this.getUnitType(code),
           code: code,
           geometry: feature.geometry,
@@ -267,7 +269,7 @@ export class GeoportalService {
     } catch (error) {
       console.error(
         "[GeoportalService] Error fetching administrative unit:",
-        error
+        error,
       );
       return null;
     }
@@ -277,33 +279,45 @@ export class GeoportalService {
    * Wyszukiwanie gmin po nazwie
    */
   async searchMunicipalities(name: string): Promise<AdministrativeUnit[]> {
+    console.log(
+      `[GeoportalService] searchMunicipalities called with: "${name}"`,
+    );
     const cacheKey = `municipalities:${name}`;
     const cached = this.getCached<AdministrativeUnit[]>(cacheKey);
-    if (cached) return cached;
+    if (cached) {
+      console.log(`[GeoportalService] Returning cached result for: "${name}"`);
+      return cached;
+    }
 
     try {
+      console.log(`[GeoportalService] Fetching from PRG WFS...`);
       const response = await this.httpClient.get(GEOPORTAL_SERVICES.PRG, {
         params: {
           SERVICE: "WFS",
           VERSION: "2.0.0",
           REQUEST: "GetFeature",
-          TYPENAMES: "A03_Gminy",
+          TYPENAMES: "ms:A03_Granice_gmin",
           CQL_FILTER: `JPT_NAZWA_ LIKE '%${name}%'`,
-          OUTPUTFORMAT: "application/json",
+          OUTPUTFORMAT: "application/gml+xml; version=3.2",
           COUNT: 20,
         },
       });
 
+      console.log(
+        `[GeoportalService] PRG response received, data length: ${typeof response.data === "string" ? response.data.length : "not string"}`,
+      );
       const units: AdministrativeUnit[] = [];
-      if (response.data?.features) {
-        for (const feature of response.data.features) {
-          units.push({
-            id: feature.id,
-            name: feature.properties?.JPT_NAZWA_ || "",
-            type: "municipality",
-            code: feature.properties?.JPT_KOD_JE || "",
-          });
-        }
+      const features = this.parseGmlFeatures(response.data);
+      console.log(
+        `[GeoportalService] Parsed ${features.length} features from GML`,
+      );
+      for (const feature of features) {
+        units.push({
+          id: feature.id,
+          name: feature.name || "",
+          type: "municipality",
+          code: feature.code || "",
+        });
       }
 
       this.setCache(cacheKey, units);
@@ -311,7 +325,7 @@ export class GeoportalService {
     } catch (error) {
       console.error(
         "[GeoportalService] Error searching municipalities:",
-        error
+        error,
       );
       return [];
     }
@@ -375,7 +389,7 @@ export class GeoportalService {
       if (params.coordinates) {
         const parcel = await this.getParcelByCoordinates(
           params.coordinates.lat,
-          params.coordinates.lon
+          params.coordinates.lon,
         );
         if (parcel) results.parcels.push(parcel);
       }
@@ -384,14 +398,14 @@ export class GeoportalService {
       if (params.address || params.query) {
         results.addresses = await this.searchAddress(
           params.address || params.query || "",
-          10
+          10,
         );
       }
 
       // Wyszukaj gminy
       if (params.municipality || params.query) {
         results.units = await this.searchMunicipalities(
-          params.municipality || params.query || ""
+          params.municipality || params.query || "",
         );
       }
     } catch (error) {
@@ -420,5 +434,69 @@ export class GeoportalService {
     if (code.length === 4) return "county";
     if (code.length === 7) return "municipality";
     return "city";
+  }
+
+  /**
+   * Parsowanie odpowiedzi GML z WFS
+   */
+  private parseGmlFeatures(
+    gmlData: string,
+  ): Array<{ id: string; name: string; code: string; geometry?: unknown }> {
+    try {
+      console.log(
+        `[GeoportalService] parseGmlFeatures called, input length: ${gmlData?.length || 0}`,
+      );
+      const parser = new XMLParser({
+        ignoreAttributes: false,
+        attributeNamePrefix: "@_",
+        removeNSPrefix: true,
+      });
+      const parsed = parser.parse(gmlData);
+      console.log(
+        `[GeoportalService] XML parsed, keys: ${Object.keys(parsed).join(", ")}`,
+      );
+
+      const features: Array<{
+        id: string;
+        name: string;
+        code: string;
+        geometry?: unknown;
+      }> = [];
+
+      // Nawigacja do featureMember/featureMembers
+      const featureCollection = parsed.FeatureCollection || parsed;
+      let members =
+        featureCollection.featureMember ||
+        featureCollection.member ||
+        featureCollection.featureMembers;
+
+      if (!members) {
+        console.warn("[GeoportalService] No features found in GML response");
+        return [];
+      }
+
+      // Normalizuj do tablicy
+      if (!Array.isArray(members)) {
+        members = [members];
+      }
+
+      for (const member of members) {
+        // Szukaj A03_Granice_gmin wewnątrz member
+        const feature = member.A03_Granice_gmin || member;
+        if (feature) {
+          features.push({
+            id: feature["@_id"] || feature.id || "",
+            name: feature.JPT_NAZWA_ || feature.jpt_nazwa_ || "",
+            code: feature.JPT_KOD_JE || feature.jpt_kod_je || "",
+            geometry: feature.msGeometry || feature.geometry || undefined,
+          });
+        }
+      }
+
+      return features;
+    } catch (error) {
+      console.error("[GeoportalService] Error parsing GML:", error);
+      return [];
+    }
   }
 }

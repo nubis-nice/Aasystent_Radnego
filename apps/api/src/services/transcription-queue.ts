@@ -84,28 +84,43 @@ export interface TranscriptionJobStatus {
 export const TRANSCRIPTION_STEPS = [
   {
     name: "download",
-    label: "📥 Pobieranie audio",
-    globalProgressRange: [0, 15] as [number, number],
+    label: "📥 Pobieranie audio z YouTube",
+    globalProgressRange: [0, 10] as [number, number],
   },
   {
-    name: "preprocessing",
-    label: "🎚️ Przetwarzanie audio",
-    globalProgressRange: [15, 25] as [number, number],
+    name: "conversion",
+    label: "🔄 Konwersja do formatu Whisper",
+    globalProgressRange: [10, 18] as [number, number],
+  },
+  {
+    name: "splitting",
+    label: "✂️ Dzielenie na segmenty",
+    globalProgressRange: [18, 22] as [number, number],
   },
   {
     name: "transcription",
-    label: "🎤 Transkrypcja",
-    globalProgressRange: [25, 65] as [number, number],
+    label: "🎤 Transkrypcja Whisper",
+    globalProgressRange: [22, 60] as [number, number],
+  },
+  {
+    name: "deduplication",
+    label: "🧹 Usuwanie powtórzeń",
+    globalProgressRange: [60, 68] as [number, number],
+  },
+  {
+    name: "correction",
+    label: "✏️ Korekta językowa (LLM)",
+    globalProgressRange: [68, 78] as [number, number],
   },
   {
     name: "analysis",
-    label: "🔍 Analiza i identyfikacja",
-    globalProgressRange: [65, 85] as [number, number],
+    label: "🔍 Analiza treści",
+    globalProgressRange: [78, 88] as [number, number],
   },
   {
     name: "saving",
-    label: "💾 Zapisywanie do bazy",
-    globalProgressRange: [85, 100] as [number, number],
+    label: "💾 Zapisywanie do RAG",
+    globalProgressRange: [88, 100] as [number, number],
   },
 ] as const;
 
@@ -169,7 +184,7 @@ class TranscriptionQueueService {
             },
             timeout: 7200000, // 2 godziny timeout per job
           },
-        }
+        },
       );
 
       this.queueEvents = new QueueEvents("transcription-jobs", {
@@ -184,7 +199,7 @@ class TranscriptionQueueService {
 
       this.queueEvents.on("failed", ({ jobId, failedReason }) => {
         console.error(
-          `[TranscriptionQueue] Job ${jobId} failed: ${failedReason}`
+          `[TranscriptionQueue] Job ${jobId} failed: ${failedReason}`,
         );
         this.progressCache.delete(jobId);
       });
@@ -192,14 +207,14 @@ class TranscriptionQueueService {
       this.queueEvents.on("progress", ({ jobId, data }) => {
         const progressData = data as { progress: number; message: string };
         console.log(
-          `[TranscriptionQueue] Job ${jobId} progress: ${progressData.progress}% - ${progressData.message}`
+          `[TranscriptionQueue] Job ${jobId} progress: ${progressData.progress}% - ${progressData.message}`,
         );
         this.progressCache.set(jobId, progressData);
       });
 
       this.initialized = true;
       console.log(
-        `[TranscriptionQueue] Initialized (redis=${redisHost}:${redisPort})`
+        `[TranscriptionQueue] Initialized (redis=${redisHost}:${redisPort})`,
       );
     } catch (error) {
       console.error("[TranscriptionQueue] Failed to initialize:", error);
@@ -219,7 +234,7 @@ class TranscriptionQueueService {
       includeSentiment?: boolean;
       identifySpeakers?: boolean;
       priority?: number;
-    } = {}
+    } = {},
   ): Promise<string> {
     await this.initialize();
 
@@ -245,7 +260,7 @@ class TranscriptionQueueService {
     });
 
     console.log(
-      `[TranscriptionQueue] Added job ${jobId} (video="${videoTitle}")`
+      `[TranscriptionQueue] Added job ${jobId} (video="${videoTitle}")`,
     );
 
     return jobId;
@@ -362,12 +377,12 @@ class TranscriptionQueueService {
             createdAt: new Date(job.timestamp),
             completedAt: job.finishedOn ? new Date(job.finishedOn) : undefined,
           };
-        })
+        }),
     );
 
     // Sortuj po dacie utworzenia (najnowsze pierwsze)
     return userJobs.sort(
-      (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
     );
   }
 
@@ -376,7 +391,7 @@ class TranscriptionQueueService {
    */
   async waitForResult(
     jobId: string,
-    timeoutMs: number = 7200000 // 2 godziny
+    timeoutMs: number = 7200000, // 2 godziny
   ): Promise<TranscriptionJobResult> {
     await this.initialize();
 
@@ -543,26 +558,26 @@ export async function addTranscriptionJob(
     sessionId?: string;
     includeSentiment?: boolean;
     identifySpeakers?: boolean;
-  }
+  },
 ): Promise<string> {
   return transcriptionQueue.addJob(userId, videoUrl, videoTitle, options);
 }
 
 export async function getTranscriptionJobStatus(
-  jobId: string
+  jobId: string,
 ): Promise<TranscriptionJobStatus | null> {
   return transcriptionQueue.getJobStatus(jobId);
 }
 
 export async function getUserTranscriptionJobs(
-  userId: string
+  userId: string,
 ): Promise<TranscriptionJobStatus[]> {
   return transcriptionQueue.getUserJobs(userId);
 }
 
 export async function waitForTranscriptionResult(
   jobId: string,
-  timeoutMs?: number
+  timeoutMs?: number,
 ): Promise<TranscriptionJobResult> {
   return transcriptionQueue.waitForResult(jobId, timeoutMs);
 }

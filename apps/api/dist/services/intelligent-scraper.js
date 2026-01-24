@@ -8,6 +8,7 @@ import crypto from "crypto";
 import { DocumentProcessor } from "./document-processor.js";
 import { getLLMClient, getEmbeddingsClient, getAIConfig } from "../ai/index.js";
 import { YouTubeSessionService } from "./youtube-session-service.js";
+import { autoImportToCalendar } from "./calendar-auto-import.js";
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -310,7 +311,13 @@ Odpowiedz w formacie JSON:
                 temperature: 0.3,
                 response_format: { type: "json_object" },
             });
-            const result = JSON.parse(response.choices[0]?.message?.content || "{}");
+            // Usuń markdown code fence jeśli model zwrócił ```json ... ```
+            let jsonContent = response.choices[0]?.message?.content || "{}";
+            jsonContent = jsonContent
+                .replace(/^```(?:json)?\s*/i, "")
+                .replace(/\s*```$/i, "")
+                .trim();
+            const result = JSON.parse(jsonContent);
             return result;
         }
         catch (error) {
@@ -667,7 +674,9 @@ Odpowiedz w formacie JSON:
                 const llmAnalysis = content.metadata?.llmAnalysis;
                 const summary = llmAnalysis?.summary || content.raw_content.substring(0, 300) + "...";
                 // Zapisz przetworzony dokument
-                const { error } = await supabase.from("processed_documents").insert({
+                const { data: insertedDoc, error } = await supabase
+                    .from("processed_documents")
+                    .insert({
                     scraped_content_id: content.id,
                     user_id: this.userId,
                     document_type: documentType,
@@ -682,10 +691,19 @@ Odpowiedz w formacie JSON:
                         pdfLinks: content.pdf_links,
                     },
                     processed_at: new Date().toISOString(),
-                });
-                if (!error) {
+                })
+                    .select("id, user_id, title, document_type, content, session_number, normalized_publish_date, source_url")
+                    .single();
+                if (!error && insertedDoc) {
                     processedCount++;
                     console.log(`[IntelligentScraper] Processed: ${content.title || content.url}`);
+                    // Auto-import do kalendarza dla dokumentów sesji/komisji
+                    try {
+                        await autoImportToCalendar(insertedDoc);
+                    }
+                    catch (calendarError) {
+                        console.error("[IntelligentScraper] Calendar auto-import failed:", calendarError);
+                    }
                 }
             }
             catch (error) {

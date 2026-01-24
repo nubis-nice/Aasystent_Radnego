@@ -26,7 +26,7 @@ export class DocumentGraphService {
             const docIds = data.map((r) => r.document_id);
             const { data: docs } = await supabase
                 .from("documents")
-                .select("id, title, document_type, publish_date, summary")
+                .select("id, title, document_type, publish_date, summary, filename")
                 .in("id", docIds);
             if (docs) {
                 const docsMap = new Map(docs.map((d) => [d.id, d]));

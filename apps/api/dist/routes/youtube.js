@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { YouTubeSessionService } from "../services/youtube-session-service.js";
 import { YouTubeDownloader } from "../services/youtube-downloader.js";
-import { getTranscriptionJobService } from "../services/transcription-job-service.js";
+import { addTranscriptionJob, getTranscriptionJobStatus, getUserTranscriptionJobs, cancelTranscriptionJob, retryTranscriptionJob, } from "../services/transcription-queue.js";
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -179,18 +179,31 @@ export const youtubeRoutes = async (fastify) => {
                 return reply.status(400).send({ error: "Nieprawidłowy URL YouTube" });
             }
             fastify.log.info(`[YouTube] Creating async transcription job for: ${videoUrl}`);
-            // Utwórz zadanie asynchroniczne
-            const jobService = await getTranscriptionJobService(user.id);
-            const job = await jobService.createJob(videoUrl, videoTitle || "Sesja Rady", {
+            // Utwórz zadanie asynchroniczne w Redis queue
+            const jobId = await addTranscriptionJob(user.id, videoUrl, videoTitle || "Sesja Rady", {
                 sessionId,
                 includeSentiment: includeSentiment ?? true,
                 identifySpeakers: identifySpeakers ?? true,
             });
-            fastify.log.info(`[YouTube] Job created: ${job.id}`);
+            // Zapisz zadanie w bazie dla persystencji
+            await supabase.from("transcription_jobs").insert({
+                id: jobId,
+                user_id: user.id,
+                video_url: videoUrl,
+                video_title: videoTitle || "Sesja Rady",
+                session_id: sessionId ?? null,
+                status: "pending",
+                progress: 0,
+                progress_message: "Oczekuje w kolejce...",
+                include_sentiment: includeSentiment ?? true,
+                identify_speakers: identifySpeakers ?? true,
+                created_at: new Date().toISOString(),
+            });
+            fastify.log.info(`[YouTube] Job created: ${jobId}`);
             return reply.send({
                 success: true,
-                jobId: job.id,
-                status: job.status,
+                jobId: jobId,
+                status: "pending",
                 message: "Zadanie transkrypcji zostało utworzone. Możesz kontynuować pracę.",
             });
         }
@@ -198,6 +211,59 @@ export const youtubeRoutes = async (fastify) => {
             fastify.log.error(error);
             return reply.status(500).send({
                 error: error instanceof Error ? error.message : "Błąd tworzenia zadania",
+            });
+        }
+    });
+    // GET /api/youtube/job/:jobId/detailed - Pobierz szczegółowy status zadania
+    fastify.get("/youtube/job/:jobId/detailed", async (request, reply) => {
+        try {
+            const authHeader = request.headers.authorization;
+            if (!authHeader?.startsWith("Bearer ")) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const token = authHeader.substring(7);
+            const { data: { user }, error: authError, } = await supabase.auth.getUser(token);
+            if (authError || !user) {
+                return reply.status(401).send({ error: "Invalid token" });
+            }
+            const { jobId } = request.params;
+            // Pobierz szczegółowy status z queue
+            const job = await getTranscriptionJobStatus(jobId);
+            if (!job) {
+                return reply.status(404).send({ error: "Zadanie nie znalezione" });
+            }
+            // Weryfikuj dostęp przez bazę danych
+            const { data: dbJob } = await supabase
+                .from("transcription_jobs")
+                .select("*")
+                .eq("id", jobId)
+                .single();
+            if (!dbJob || dbJob.user_id !== user.id) {
+                return reply
+                    .status(403)
+                    .send({ error: "Brak dostępu do tego zadania" });
+            }
+            return reply.send({
+                success: true,
+                job: {
+                    id: job.id,
+                    videoTitle: dbJob.video_title,
+                    videoUrl: dbJob.video_url,
+                    status: job.status,
+                    progress: job.progress,
+                    progressMessage: job.progressMessage,
+                    detailedProgress: job.detailedProgress,
+                    createdAt: job.createdAt,
+                    completedAt: job.completedAt,
+                    error: job.error,
+                    resultDocumentId: dbJob.result_document_id,
+                },
+            });
+        }
+        catch (error) {
+            fastify.log.error(error);
+            return reply.status(500).send({
+                error: error instanceof Error ? error.message : "Błąd pobierania statusu",
             });
         }
     });
@@ -214,16 +280,28 @@ export const youtubeRoutes = async (fastify) => {
                 return reply.status(401).send({ error: "Invalid token" });
             }
             const { jobId } = request.params;
-            const jobService = await getTranscriptionJobService(user.id);
-            const job = jobService.getJob(jobId);
+            // Pobierz z queue
+            const job = await getTranscriptionJobStatus(jobId);
             if (!job) {
                 return reply.status(404).send({ error: "Zadanie nie znalezione" });
             }
-            if (job.userId !== user.id) {
+            // Weryfikuj dostęp przez bazę danych
+            const { data: dbJob } = await supabase
+                .from("transcription_jobs")
+                .select("user_id")
+                .eq("id", jobId)
+                .single();
+            if (!dbJob || dbJob.user_id !== user.id) {
                 return reply
                     .status(403)
                     .send({ error: "Brak dostępu do tego zadania" });
             }
+            // Pobierz szczegóły z bazy
+            const { data: jobDetails } = await supabase
+                .from("transcription_jobs")
+                .select("*")
+                .eq("id", jobId)
+                .single();
             return reply.send({
                 success: true,
                 job: {
@@ -231,11 +309,12 @@ export const youtubeRoutes = async (fastify) => {
                     status: job.status,
                     progress: job.progress,
                     progressMessage: job.progressMessage,
-                    videoTitle: job.videoTitle,
+                    videoTitle: jobDetails?.video_title,
+                    videoUrl: jobDetails?.video_url,
                     createdAt: job.createdAt,
                     completedAt: job.completedAt,
                     error: job.error,
-                    resultDocumentId: job.resultDocumentId,
+                    resultDocumentId: jobDetails?.result_document_id,
                 },
             });
         }
@@ -258,21 +337,40 @@ export const youtubeRoutes = async (fastify) => {
             if (authError || !user) {
                 return reply.status(401).send({ error: "Invalid token" });
             }
-            const jobService = await getTranscriptionJobService(user.id);
-            const jobs = jobService.getUserJobs();
+            // Pobierz zadania z BAZY DANYCH jako źródło prawdy
+            const { data: dbJobs, error: dbError } = await supabase
+                .from("transcription_jobs")
+                .select("*")
+                .eq("user_id", user.id)
+                .order("created_at", { ascending: false })
+                .limit(50);
+            if (dbError) {
+                throw new Error(`Database error: ${dbError.message}`);
+            }
+            // Pobierz zadania z Redis queue dla aktualnego postępu
+            const queueJobs = await getUserTranscriptionJobs(user.id);
+            const queueJobsMap = new Map(queueJobs.map((j) => [j.id, j]));
+            // Połącz dane z bazy z postępem z queue
+            const jobsWithDetails = (dbJobs || []).map((dbJob) => {
+                const queueJob = queueJobsMap.get(dbJob.id);
+                return {
+                    id: dbJob.id,
+                    status: queueJob?.status || dbJob.status,
+                    progress: queueJob?.progress ?? dbJob.progress,
+                    progressMessage: queueJob?.progressMessage || dbJob.progress_message,
+                    videoTitle: dbJob.video_title,
+                    videoUrl: dbJob.video_url,
+                    createdAt: queueJob?.createdAt || new Date(dbJob.created_at),
+                    completedAt: dbJob.completed_at
+                        ? new Date(dbJob.completed_at)
+                        : undefined,
+                    error: queueJob?.error || dbJob.error,
+                    resultDocumentId: dbJob.result_document_id,
+                };
+            });
             return reply.send({
                 success: true,
-                jobs: jobs.map((job) => ({
-                    id: job.id,
-                    status: job.status,
-                    progress: job.progress,
-                    progressMessage: job.progressMessage,
-                    videoTitle: job.videoTitle,
-                    createdAt: job.createdAt,
-                    completedAt: job.completedAt,
-                    error: job.error,
-                    resultDocumentId: job.resultDocumentId,
-                })),
+                jobs: jobsWithDetails,
             });
         }
         catch (error) {
@@ -354,6 +452,227 @@ export const youtubeRoutes = async (fastify) => {
             fastify.log.error(error);
             return reply.status(500).send({
                 error: error instanceof Error ? error.message : "Błąd dodawania do RAG",
+            });
+        }
+    });
+    // POST /api/youtube/job/:jobId/cancel - Anuluj zadanie transkrypcji
+    fastify.post("/youtube/job/:jobId/cancel", async (request, reply) => {
+        try {
+            const authHeader = request.headers.authorization;
+            if (!authHeader?.startsWith("Bearer ")) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const token = authHeader.substring(7);
+            const { data: { user }, error: authError, } = await supabase.auth.getUser(token);
+            if (authError || !user) {
+                return reply.status(401).send({ error: "Invalid token" });
+            }
+            const { jobId } = request.params;
+            // Sprawdź czy zadanie należy do użytkownika
+            const { data: dbJob } = await supabase
+                .from("transcription_jobs")
+                .select("user_id, status")
+                .eq("id", jobId)
+                .single();
+            if (!dbJob || dbJob.user_id !== user.id) {
+                return reply
+                    .status(403)
+                    .send({ error: "Brak dostępu do tego zadania" });
+            }
+            if (dbJob.status === "completed" || dbJob.status === "failed") {
+                return reply
+                    .status(400)
+                    .send({ error: "Nie można anulować zakończonego zadania" });
+            }
+            // Anuluj w Redis queue
+            const cancelled = await cancelTranscriptionJob(jobId);
+            // Zaktualizuj status w bazie
+            await supabase
+                .from("transcription_jobs")
+                .update({
+                status: "failed",
+                error: "Anulowane przez użytkownika",
+                completed_at: new Date().toISOString(),
+            })
+                .eq("id", jobId);
+            fastify.log.info(`[YouTube] Job ${jobId} cancelled by user ${user.id}`);
+            return reply.send({
+                success: true,
+                cancelled,
+                message: "Zadanie zostało anulowane",
+            });
+        }
+        catch (error) {
+            fastify.log.error(error);
+            return reply.status(500).send({
+                error: error instanceof Error ? error.message : "Błąd anulowania zadania",
+            });
+        }
+    });
+    // DELETE /api/youtube/job/:jobId - Usuń zadanie transkrypcji
+    fastify.delete("/youtube/job/:jobId", async (request, reply) => {
+        try {
+            const authHeader = request.headers.authorization;
+            if (!authHeader?.startsWith("Bearer ")) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const token = authHeader.substring(7);
+            const { data: { user }, error: authError, } = await supabase.auth.getUser(token);
+            if (authError || !user) {
+                return reply.status(401).send({ error: "Invalid token" });
+            }
+            const { jobId } = request.params;
+            // Sprawdź czy zadanie należy do użytkownika
+            const { data: dbJob } = await supabase
+                .from("transcription_jobs")
+                .select("user_id, status, result_document_id")
+                .eq("id", jobId)
+                .single();
+            if (!dbJob) {
+                return reply.status(404).send({ error: "Zadanie nie znalezione" });
+            }
+            if (dbJob.user_id !== user.id) {
+                return reply
+                    .status(403)
+                    .send({ error: "Brak dostępu do tego zadania" });
+            }
+            // Jeśli zadanie jest aktywne, anuluj je najpierw
+            if (dbJob.status !== "completed" && dbJob.status !== "failed") {
+                await cancelTranscriptionJob(jobId);
+            }
+            // Usuń z bazy danych
+            await supabase.from("transcription_jobs").delete().eq("id", jobId);
+            fastify.log.info(`[YouTube] Job ${jobId} deleted by user ${user.id}`);
+            return reply.send({
+                success: true,
+                message: "Zadanie zostało usunięte",
+            });
+        }
+        catch (error) {
+            fastify.log.error(error);
+            return reply.status(500).send({
+                error: error instanceof Error ? error.message : "Błąd usuwania zadania",
+            });
+        }
+    });
+    // POST /api/youtube/job/:jobId/retry - Ponów nieudane zadanie
+    fastify.post("/youtube/job/:jobId/retry", async (request, reply) => {
+        try {
+            const authHeader = request.headers.authorization;
+            if (!authHeader?.startsWith("Bearer ")) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const token = authHeader.substring(7);
+            const { data: { user }, error: authError, } = await supabase.auth.getUser(token);
+            if (authError || !user) {
+                return reply.status(401).send({ error: "Invalid token" });
+            }
+            const { jobId } = request.params;
+            // Sprawdź czy zadanie należy do użytkownika
+            const { data: dbJob } = await supabase
+                .from("transcription_jobs")
+                .select("*")
+                .eq("id", jobId)
+                .single();
+            if (!dbJob) {
+                return reply.status(404).send({ error: "Zadanie nie znalezione" });
+            }
+            if (dbJob.user_id !== user.id) {
+                return reply
+                    .status(403)
+                    .send({ error: "Brak dostępu do tego zadania" });
+            }
+            if (dbJob.status !== "failed") {
+                return reply
+                    .status(400)
+                    .send({ error: "Można ponowić tylko nieudane zadania" });
+            }
+            // Spróbuj retry w Redis queue
+            const retried = await retryTranscriptionJob(jobId);
+            if (retried) {
+                // Zaktualizuj status w bazie
+                await supabase
+                    .from("transcription_jobs")
+                    .update({
+                    status: "pending",
+                    progress: 0,
+                    progress_message: "Oczekuje w kolejce (ponowiona próba)...",
+                    error: null,
+                    completed_at: null,
+                })
+                    .eq("id", jobId);
+                fastify.log.info(`[YouTube] Job ${jobId} retried by user ${user.id}`);
+                return reply.send({
+                    success: true,
+                    message: "Zadanie zostało ponowione",
+                });
+            }
+            else {
+                // Utwórz nowe zadanie z tymi samymi parametrami
+                const newJobId = await addTranscriptionJob(user.id, dbJob.video_url, dbJob.video_title, {
+                    sessionId: dbJob.session_id,
+                    includeSentiment: dbJob.include_sentiment,
+                    identifySpeakers: dbJob.identify_speakers,
+                });
+                // Zapisz nowe zadanie w bazie
+                await supabase.from("transcription_jobs").insert({
+                    id: newJobId,
+                    user_id: user.id,
+                    video_url: dbJob.video_url,
+                    video_title: dbJob.video_title,
+                    session_id: dbJob.session_id,
+                    status: "pending",
+                    progress: 0,
+                    progress_message: "Oczekuje w kolejce (nowa próba)...",
+                    include_sentiment: dbJob.include_sentiment,
+                    identify_speakers: dbJob.identify_speakers,
+                    created_at: new Date().toISOString(),
+                });
+                fastify.log.info(`[YouTube] New job ${newJobId} created to replace failed job ${jobId}`);
+                return reply.send({
+                    success: true,
+                    newJobId,
+                    message: "Utworzono nowe zadanie transkrypcji",
+                });
+            }
+        }
+        catch (error) {
+            fastify.log.error(error);
+            return reply.status(500).send({
+                error: error instanceof Error ? error.message : "Błąd ponowienia zadania",
+            });
+        }
+    });
+    // GET /api/youtube/transcription/:documentId - Pobierz treść zapisanej transkrypcji
+    fastify.get("/youtube/transcription/:documentId", async (request, reply) => {
+        try {
+            const authHeader = request.headers.authorization;
+            if (!authHeader?.startsWith("Bearer ")) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const token = authHeader.substring(7);
+            const { data: { user }, error: authError, } = await supabase.auth.getUser(token);
+            if (authError || !user) {
+                return reply.status(401).send({ error: "Invalid token" });
+            }
+            const { documentId } = request.params;
+            const { data: document, error: docError } = await supabase
+                .from("processed_documents")
+                .select("id, title, content, metadata")
+                .eq("user_id", user.id)
+                .eq("id", documentId)
+                .single();
+            if (docError || !document) {
+                return reply.status(404).send({ error: "Transkrypcja nie znaleziona" });
+            }
+            return reply.send({ success: true, document });
+        }
+        catch (error) {
+            fastify.log.error(error);
+            return reply.status(500).send({
+                error: error instanceof Error
+                    ? error.message
+                    : "Błąd pobierania transkrypcji",
             });
         }
     });

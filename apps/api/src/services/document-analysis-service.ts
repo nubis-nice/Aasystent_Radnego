@@ -61,8 +61,8 @@ export class DocumentAnalysisService {
     console.log(
       `[DocumentAnalysisService] Initialized for user ${userId.substring(
         0,
-        8
-      )}...`
+        8,
+      )}...`,
     );
   }
 
@@ -132,7 +132,7 @@ export class DocumentAnalysisService {
         if (
           num &&
           !references.find(
-            (r) => r.type === "attachment" && r.number === num.trim()
+            (r) => r.type === "attachment" && r.number === num.trim(),
           )
         ) {
           references.push({
@@ -150,17 +150,17 @@ export class DocumentAnalysisService {
   // Szukaj referencji w RAG
   async searchReferencesInRAG(
     userId: string,
-    references: DocumentReference[]
+    references: DocumentReference[],
   ): Promise<DocumentReference[]> {
     if (!this.embeddingsClient) {
       console.log(
-        "[DocumentAnalysis] No embeddings client - skipping RAG search"
+        "[DocumentAnalysis] No embeddings client - skipping RAG search",
       );
       return references;
     }
 
     console.log(
-      `[DocumentAnalysis] Starting RAG search for ${references.length} references`
+      `[DocumentAnalysis] Starting RAG search for ${references.length} references`,
     );
 
     // Debug: sprawdź ile dokumentów jest w bazie dla tego użytkownika
@@ -169,7 +169,7 @@ export class DocumentAnalysisService {
       .select("*", { count: "exact", head: true })
       .eq("user_id", userId);
     console.log(
-      `[DocumentAnalysis] User has ${count} documents in RAG database`
+      `[DocumentAnalysis] User has ${count} documents in RAG database`,
     );
 
     const updatedRefs = [...references];
@@ -194,7 +194,7 @@ export class DocumentAnalysisService {
           ref.content = match.content?.substring(0, 2000);
           ref.sourceUrl = match.source_url;
           console.log(
-            `[DocumentAnalysis] ✓ Found ${ref.type} ${ref.number} by URL: ${match.source_url}`
+            `[DocumentAnalysis] ✓ Found ${ref.type} ${ref.number} by URL: ${match.source_url}`,
           );
           continue;
         }
@@ -217,7 +217,7 @@ export class DocumentAnalysisService {
           ref.content = match.content?.substring(0, 2000);
           ref.sourceUrl = match.source_url;
           console.log(
-            `[DocumentAnalysis] ✓ Found ${ref.type} ${ref.number} by metadata`
+            `[DocumentAnalysis] ✓ Found ${ref.type} ${ref.number} by metadata`,
           );
           continue;
         }
@@ -227,7 +227,7 @@ export class DocumentAnalysisService {
         // ============================================================================
         const searchQuery = this.buildSearchQuery(ref);
         console.log(
-          `[DocumentAnalysis] RAG semantic search for ${ref.type} ${ref.number}: "${searchQuery}"`
+          `[DocumentAnalysis] RAG semantic search for ${ref.type} ${ref.number}: "${searchQuery}"`,
         );
 
         // Generuj embedding dla zapytania
@@ -248,13 +248,13 @@ export class DocumentAnalysisService {
             match_count: 3,
             filter_user_id: userId,
             filter_types: null,
-          }
+          },
         );
 
         if (error) {
           console.error(
             `[DocumentAnalysis] RAG search error for ${ref.type} ${ref.number}:`,
-            error
+            error,
           );
           continue;
         }
@@ -262,7 +262,7 @@ export class DocumentAnalysisService {
         console.log(
           `[DocumentAnalysis] RAG results for ${ref.type} ${ref.number}: ${
             results?.length || 0
-          } found`
+          } found`,
         );
 
         if (results && results.length > 0) {
@@ -273,7 +273,7 @@ export class DocumentAnalysisService {
               console.log(
                 `[DocumentAnalysis]   ${i + 1}. "${
                   r.title
-                }" (similarity: ${r.similarity.toFixed(3)})`
+                }" (similarity: ${r.similarity.toFixed(3)})`,
               );
             });
 
@@ -285,14 +285,14 @@ export class DocumentAnalysisService {
                 content?: string;
                 similarity: number;
                 source_url?: string;
-              }) => this.matchesReference(r, ref)
+              }) => this.matchesReference(r, ref),
             ) || results[0];
 
           const matchesRef = this.matchesReference(bestMatch, ref);
           console.log(
             `[DocumentAnalysis] Best match: "${
               bestMatch.title
-            }" sim=${bestMatch.similarity.toFixed(3)}, matchesRef=${matchesRef}`
+            }" sim=${bestMatch.similarity.toFixed(3)}, matchesRef=${matchesRef}`,
           );
 
           if (bestMatch && bestMatch.similarity > 0.6) {
@@ -301,26 +301,26 @@ export class DocumentAnalysisService {
             ref.content = bestMatch.content?.substring(0, 2000); // Pierwsze 2000 znaków
             ref.sourceUrl = bestMatch.source_url;
             console.log(
-              `[DocumentAnalysis] ✓ Found ${ref.type} ${ref.number} in RAG`
+              `[DocumentAnalysis] ✓ Found ${ref.type} ${ref.number} in RAG`,
             );
           } else {
             console.log(
               `[DocumentAnalysis] ✗ ${ref.type} ${
                 ref.number
               } not found (similarity ${bestMatch.similarity.toFixed(
-                3
-              )} < 0.6 or no match)`
+                3,
+              )} < 0.6 or no match)`,
             );
           }
         } else {
           console.log(
-            `[DocumentAnalysis] ✗ No RAG results for ${ref.type} ${ref.number}`
+            `[DocumentAnalysis] ✗ No RAG results for ${ref.type} ${ref.number}`,
           );
         }
       } catch (err) {
         console.error(
           `[DocumentAnalysis] Error searching for ${ref.type} ${ref.number}:`,
-          err
+          err,
         );
       }
     }
@@ -331,15 +331,30 @@ export class DocumentAnalysisService {
   private buildSearchQuery(ref: DocumentReference): string {
     switch (ref.type) {
       case "druk":
-        return `druk numer ${ref.number} projekt uchwały załącznik`;
+        return `druk numer ${ref.number} projekt uchwały sesja rady miejskiej załącznik`;
       case "resolution":
-        return `uchwała numer ${ref.number}`;
+        return `uchwała rady miejskiej numer ${ref.number} sesja rady miejskiej`;
       case "protocol":
-        return `protokół sesji numer ${ref.number}`;
+        return `protokół sesji rady miejskiej numer ${ref.number}`;
       case "attachment":
-        return `załącznik numer ${ref.number}`;
+        return `załącznik do uchwały ${ref.number} sesja rady miejskiej`;
       default:
         return `${ref.type} ${ref.number}`;
+    }
+  }
+
+  private buildReferenceTitle(ref: DocumentReference): string {
+    switch (ref.type) {
+      case "resolution":
+        return `Sesja Rady Miejskiej – Uchwała nr ${ref.number}`;
+      case "druk":
+        return `Sesja Rady Miejskiej – Druk nr ${ref.number}`;
+      case "protocol":
+        return `Sesja Rady Miejskiej – Protokół nr ${ref.number}`;
+      case "attachment":
+        return `Sesja Rady Miejskiej – Załącznik nr ${ref.number}`;
+      default:
+        return `${ref.type} nr ${ref.number}`;
     }
   }
 
@@ -357,7 +372,7 @@ export class DocumentAnalysisService {
           `druk_${num}`,
           `druk${num}`,
           `/druk/${num}`,
-          `projekt-${num}`
+          `projekt-${num}`,
         );
         break;
       case "resolution":
@@ -366,7 +381,7 @@ export class DocumentAnalysisService {
           `uchwala_${num}`,
           `uchwala/${num}`,
           num.replace(/\//g, "-"),
-          num.replace(/\//g, "_")
+          num.replace(/\//g, "_"),
         );
         break;
       case "attachment":
@@ -374,7 +389,7 @@ export class DocumentAnalysisService {
           `zalacznik-${num}`,
           `zalacznik_${num}`,
           `zalacznik-nr-${num}`,
-          `attachment-${num}`
+          `attachment-${num}`,
         );
         break;
       default:
@@ -391,7 +406,7 @@ export class DocumentAnalysisService {
       similarity: number;
       source_url?: string;
     },
-    ref: DocumentReference
+    ref: DocumentReference,
   ): boolean {
     const title = (doc.title || "").toLowerCase();
     const content = (doc.content || "").toLowerCase();
@@ -415,7 +430,7 @@ export class DocumentAnalysisService {
   // Pobierz dokument główny z RAG
   async getDocument(
     userId: string,
-    documentId: string
+    documentId: string,
   ): Promise<{
     id: string;
     title: string;
@@ -448,13 +463,13 @@ export class DocumentAnalysisService {
   async searchSourcePageForAttachments(
     userId: string,
     sourceUrl: string | undefined,
-    references: DocumentReference[]
+    references: DocumentReference[],
   ): Promise<DocumentReference[]> {
     const missingRefs = references.filter((r) => !r.found);
     if (missingRefs.length === 0 || !sourceUrl) return references;
 
     console.log(
-      `[DocumentAnalysis] Searching source page for ${missingRefs.length} missing attachments: ${sourceUrl}`
+      `[DocumentAnalysis] Searching source page for ${missingRefs.length} missing attachments: ${sourceUrl}`,
     );
 
     try {
@@ -474,11 +489,11 @@ export class DocumentAnalysisService {
         foundAttachments,
         missingRefs,
         0,
-        10 // max depth
+        10, // max depth
       );
 
       console.log(
-        `[DocumentAnalysis] Source page crawl found ${foundAttachments.size} potential attachments`
+        `[DocumentAnalysis] Source page crawl found ${foundAttachments.size} potential attachments`,
       );
 
       // Dopasuj znalezione załączniki do referencji
@@ -487,14 +502,14 @@ export class DocumentAnalysisService {
         if (matchKey) {
           const attachment = foundAttachments.get(matchKey)!;
           console.log(
-            `[DocumentAnalysis] Found ${ref.type} ${ref.number} on source page: ${attachment.url}`
+            `[DocumentAnalysis] Found ${ref.type} ${ref.number} on source page: ${attachment.url}`,
           );
 
           // Pobierz i przetwórz załącznik
           const content = await this.fetchAndProcessAttachment(
             userId,
             attachment.url,
-            ref
+            ref,
           );
 
           if (content) {
@@ -508,7 +523,7 @@ export class DocumentAnalysisService {
     } catch (error) {
       console.error(
         `[DocumentAnalysis] Source page search error:`,
-        error instanceof Error ? error.message : error
+        error instanceof Error ? error.message : error,
       );
     }
 
@@ -525,7 +540,7 @@ export class DocumentAnalysisService {
     >,
     targetRefs: DocumentReference[],
     depth: number,
-    maxDepth: number
+    maxDepth: number,
   ): Promise<void> {
     if (depth > maxDepth || visitedUrls.has(url)) return;
     visitedUrls.add(url);
@@ -619,7 +634,7 @@ export class DocumentAnalysisService {
                 foundAttachments,
                 targetRefs,
                 depth + 1,
-                maxDepth
+                maxDepth,
               );
             }
           }
@@ -630,14 +645,14 @@ export class DocumentAnalysisService {
     } catch (error) {
       console.error(
         `[DocumentAnalysis] Crawl error for ${url}:`,
-        error instanceof Error ? error.message : error
+        error instanceof Error ? error.message : error,
       );
     }
   }
 
   private findMatchingAttachment(
     ref: DocumentReference,
-    attachments: Map<string, { url: string; title: string }>
+    attachments: Map<string, { url: string; title: string }>,
   ): string | null {
     const num = ref.number.toLowerCase();
 
@@ -676,7 +691,7 @@ export class DocumentAnalysisService {
   // Sprawdź czy dokument o danym URL już istnieje w bazie
   private async checkExistingDocument(
     userId: string,
-    url: string
+    url: string,
   ): Promise<{ id: string; content: string; title: string } | null> {
     try {
       const { data, error } = await supabase
@@ -689,7 +704,7 @@ export class DocumentAnalysisService {
       if (error) {
         console.error(
           "[DocumentAnalysis] Check existing document error:",
-          error
+          error,
         );
         return null;
       }
@@ -698,7 +713,7 @@ export class DocumentAnalysisService {
     } catch (err) {
       console.error(
         "[DocumentAnalysis] Check existing document exception:",
-        err
+        err,
       );
       return null;
     }
@@ -710,7 +725,7 @@ export class DocumentAnalysisService {
     url: string,
     content: string,
     ref: DocumentReference,
-    title: string
+    title: string,
   ): Promise<string | null> {
     try {
       const fileName = url.split("/").pop() || "attachment";
@@ -720,17 +735,17 @@ export class DocumentAnalysisService {
         ref.type === "druk"
           ? "draft"
           : ref.type === "resolution"
-          ? "resolution"
-          : ref.type === "attachment"
-          ? "attachment"
-          : "other";
+            ? "resolution"
+            : ref.type === "attachment"
+              ? "attachment"
+              : "other";
 
       // Zapisz do processed_documents
       const { data: doc, error: docError } = await supabase
         .from("processed_documents")
         .insert({
           user_id: userId,
-          title: title || `${ref.type} nr ${ref.number}`,
+          title: title || this.buildReferenceTitle(ref),
           content: content,
           document_type: documentType,
           source_url: url,
@@ -751,7 +766,7 @@ export class DocumentAnalysisService {
       }
 
       console.log(
-        `[DocumentAnalysis] ✓ Saved ${ref.type} ${ref.number} to database: ${doc.id}`
+        `[DocumentAnalysis] ✓ Saved ${ref.type} ${ref.number} to database: ${doc.id}`,
       );
 
       // Wygeneruj embeddingi dla dokumentu
@@ -769,12 +784,12 @@ export class DocumentAnalysisService {
     userId: string,
     documentId: string,
     content: string,
-    title: string
+    title: string,
   ): Promise<void> {
     try {
       if (!this.embeddingsClient) {
         console.warn(
-          "[DocumentAnalysis] Embeddings client not initialized, skipping embeddings"
+          "[DocumentAnalysis] Embeddings client not initialized, skipping embeddings",
         );
         return;
       }
@@ -799,7 +814,7 @@ export class DocumentAnalysisService {
         console.error(`[DocumentAnalysis] Update embedding error:`, error);
       } else {
         console.log(
-          `[DocumentAnalysis] ✓ Generated embedding for document ${documentId}`
+          `[DocumentAnalysis] ✓ Generated embedding for document ${documentId}`,
         );
       }
     } catch (err) {
@@ -810,7 +825,7 @@ export class DocumentAnalysisService {
   private async fetchAndProcessAttachment(
     userId: string,
     url: string,
-    ref: DocumentReference
+    ref: DocumentReference,
   ): Promise<string | null> {
     try {
       // ============================================================================
@@ -819,7 +834,7 @@ export class DocumentAnalysisService {
       const existing = await this.checkExistingDocument(userId, url);
       if (existing) {
         console.log(
-          `[DocumentAnalysis] ✓ Found existing document for ${ref.type} ${ref.number}: ${existing.id}`
+          `[DocumentAnalysis] ✓ Found existing document for ${ref.type} ${ref.number}: ${existing.id}`,
         );
         return existing.content?.substring(0, 3000) || null;
       }
@@ -838,7 +853,7 @@ export class DocumentAnalysisService {
 
       if (!response.ok) {
         console.error(
-          `[DocumentAnalysis] Failed to fetch ${url}: ${response.status}`
+          `[DocumentAnalysis] Failed to fetch ${url}: ${response.status}`,
         );
         return null;
       }
@@ -853,12 +868,12 @@ export class DocumentAnalysisService {
       const result = await processor.processFile(
         buffer,
         url.split("/").pop() || "document",
-        contentType
+        contentType,
       );
 
       if (result.success && result.text) {
         console.log(
-          `[DocumentAnalysis] Successfully processed ${ref.type} ${ref.number}: ${result.text.length} chars`
+          `[DocumentAnalysis] Successfully processed ${ref.type} ${ref.number}: ${result.text.length} chars`,
         );
 
         // ============================================================================
@@ -872,7 +887,7 @@ export class DocumentAnalysisService {
           url,
           result.text,
           ref,
-          title
+          title,
         );
 
         return result.text.substring(0, 3000); // Pierwsze 3000 znaków
@@ -882,7 +897,7 @@ export class DocumentAnalysisService {
     } catch (error) {
       console.error(
         `[DocumentAnalysis] Attachment processing error:`,
-        error instanceof Error ? error.message : error
+        error instanceof Error ? error.message : error,
       );
       return null;
     }
@@ -894,13 +909,13 @@ export class DocumentAnalysisService {
 
   async searchMissingWithDeepResearch(
     userId: string,
-    references: DocumentReference[]
+    references: DocumentReference[],
   ): Promise<DocumentReference[]> {
     const missingRefs = references.filter((r) => !r.found);
     if (missingRefs.length === 0) return references;
 
     console.log(
-      `[DocumentAnalysis] Searching ${missingRefs.length} missing references with Deep Research (Exa)`
+      `[DocumentAnalysis] Searching ${missingRefs.length} missing references with Deep Research (Exa)`,
     );
 
     try {
@@ -929,13 +944,13 @@ export class DocumentAnalysisService {
               report.summary?.substring(0, 1500);
             ref.sourceUrl = bestResult.url;
             console.log(
-              `[DocumentAnalysis] Found ${ref.type} ${ref.number} via Deep Research`
+              `[DocumentAnalysis] Found ${ref.type} ${ref.number} via Deep Research`,
             );
           }
         } catch (err) {
           console.error(
             `[DocumentAnalysis] Deep Research error for ${ref.type} ${ref.number}:`,
-            err
+            err,
           );
         }
       }
@@ -950,7 +965,7 @@ export class DocumentAnalysisService {
   async buildAnalysisContext(
     userId: string,
     documentId: string,
-    useDeepResearch: boolean = true
+    useDeepResearch: boolean = true,
   ): Promise<AnalysisContext | null> {
     // Pobierz dokument główny
     const mainDoc = await this.getDocument(userId, documentId);
@@ -961,7 +976,7 @@ export class DocumentAnalysisService {
     // Wyodrębnij referencje
     const references = this.extractReferences(mainDoc.content || "");
     console.log(
-      `[DocumentAnalysis] Found ${references.length} references in document`
+      `[DocumentAnalysis] Found ${references.length} references in document`,
     );
 
     // FAZA 1: Szukaj referencji w RAG
@@ -971,12 +986,12 @@ export class DocumentAnalysisService {
     let missingCount = updatedRefs.filter((r) => !r.found).length;
     if (missingCount > 0 && mainDoc.source_url) {
       console.log(
-        `[DocumentAnalysis] ${missingCount} references not found in RAG, searching source page: ${mainDoc.source_url}`
+        `[DocumentAnalysis] ${missingCount} references not found in RAG, searching source page: ${mainDoc.source_url}`,
       );
       updatedRefs = await this.searchSourcePageForAttachments(
         userId,
         mainDoc.source_url,
-        updatedRefs
+        updatedRefs,
       );
     }
 
@@ -984,11 +999,11 @@ export class DocumentAnalysisService {
     missingCount = updatedRefs.filter((r) => !r.found).length;
     if (useDeepResearch && missingCount > 0) {
       console.log(
-        `[DocumentAnalysis] ${missingCount} references still missing after source page search, trying Deep Research (Exa)...`
+        `[DocumentAnalysis] ${missingCount} references still missing after source page search, trying Deep Research (Exa)...`,
       );
       updatedRefs = await this.searchMissingWithDeepResearch(
         userId,
-        updatedRefs
+        updatedRefs,
       );
     }
 
@@ -1004,7 +1019,7 @@ export class DocumentAnalysisService {
         (r) =>
           `### ${r.type.toUpperCase()} ${r.number}${
             r.title ? ` - ${r.title}` : ""
-          }\n${r.content}`
+          }\n${r.content}`,
       );
 
     return {

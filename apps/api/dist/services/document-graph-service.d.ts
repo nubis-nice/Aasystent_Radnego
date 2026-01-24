@@ -23,6 +23,7 @@ export interface RelatedDocument {
         document_type: string;
         publish_date: string | null;
         summary: string | null;
+        filename?: string;
     };
 }
 export interface DocumentCluster {

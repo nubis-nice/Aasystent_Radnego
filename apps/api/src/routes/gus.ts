@@ -53,7 +53,7 @@ export async function gusRoutes(fastify: FastifyInstance) {
 
       return reply.send({ units });
     } catch (error) {
-      request.log.error("GUS units error:", error);
+      request.log.error({ err: error }, "GUS units error");
       return reply.status(500).send({
         error: "Failed to fetch GUS units",
         message: error instanceof Error ? error.message : "Unknown error",
@@ -94,7 +94,7 @@ export async function gusRoutes(fastify: FastifyInstance) {
 
       return reply.send({ gmina });
     } catch (error) {
-      request.log.error("GUS gmina search error:", error);
+      request.log.error({ err: error }, "GUS gmina search error");
       return reply.status(500).send({
         error: "Failed to search gmina",
         message: error instanceof Error ? error.message : "Unknown error",
@@ -127,7 +127,7 @@ export async function gusRoutes(fastify: FastifyInstance) {
 
       const stats = await gusService.getGminaStats(
         id,
-        year ? parseInt(year) : undefined
+        year ? parseInt(year) : undefined,
       );
 
       if (!stats) {
@@ -136,7 +136,7 @@ export async function gusRoutes(fastify: FastifyInstance) {
 
       return reply.send({ stats });
     } catch (error) {
-      request.log.error("GUS gmina stats error:", error);
+      request.log.error({ err: error }, "GUS gmina stats error");
       return reply.status(500).send({
         error: "Failed to fetch gmina stats",
         message: error instanceof Error ? error.message : "Unknown error",
@@ -173,7 +173,7 @@ export async function gusRoutes(fastify: FastifyInstance) {
 
       return reply.send({ variables });
     } catch (error) {
-      request.log.error("GUS variables error:", error);
+      request.log.error({ err: error }, "GUS variables error");
       return reply.status(500).send({
         error: "Failed to fetch GUS variables",
         message: error instanceof Error ? error.message : "Unknown error",
@@ -204,7 +204,7 @@ export async function gusRoutes(fastify: FastifyInstance) {
 
       return reply.send({ subjects });
     } catch (error) {
-      request.log.error("GUS subjects error:", error);
+      request.log.error({ err: error }, "GUS subjects error");
       return reply.status(500).send({
         error: "Failed to fetch GUS subjects",
         message: error instanceof Error ? error.message : "Unknown error",
@@ -247,12 +247,12 @@ export async function gusRoutes(fastify: FastifyInstance) {
       const comparison = await gusService.compareGminy(
         gminaIds,
         variableIds,
-        year
+        year,
       );
 
       return reply.send(comparison);
     } catch (error) {
-      request.log.error("GUS compare error:", error);
+      request.log.error({ err: error }, "GUS compare error");
       return reply.status(500).send({
         error: "Failed to compare gminy",
         message: error instanceof Error ? error.message : "Unknown error",
@@ -321,7 +321,7 @@ export async function gusRoutes(fastify: FastifyInstance) {
         message: "API key saved successfully",
       });
     } catch (error) {
-      request.log.error("GUS API key save error:", error);
+      request.log.error({ err: error }, "GUS API key save error");
       return reply.status(500).send({
         error: "Failed to save API key",
         message: error instanceof Error ? error.message : "Unknown error",
@@ -344,7 +344,7 @@ export async function gusRoutes(fastify: FastifyInstance) {
       gusService.clearCache();
       return reply.send({ success: true, message: "Cache cleared" });
     } catch (error) {
-      request.log.error("GUS cache clear error:", error);
+      request.log.error({ err: error }, "GUS cache clear error");
       return reply.status(500).send({
         error: "Failed to clear cache",
         message: error instanceof Error ? error.message : "Unknown error",

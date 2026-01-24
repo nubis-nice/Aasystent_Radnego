@@ -77,20 +77,35 @@ export async function testRoutes(fastify) {
                 return reply.status(400).send({ error: "Missing required parameters" });
             }
             // Check if provider is semantic search (no adapter needed)
-            const semanticProviders = ["exa", "perplexity", "tavily"];
+            const semanticProviders = ["exa", "perplexity", "tavily", "brave"];
             let result;
             if (semanticProviders.includes(config.provider)) {
                 // Simple connectivity test for semantic search providers
                 try {
-                    const testUrl = `${config.baseUrl}/search`;
+                    // Brave uses different endpoint and auth header
+                    const isBrave = config.provider === "brave";
+                    const testUrl = isBrave
+                        ? `${config.baseUrl}/res/v1/web/search?q=test&count=1`
+                        : `${config.baseUrl}/search`;
                     const startTime = Date.now();
+                    const headers = {
+                        "Content-Type": "application/json",
+                        Accept: "application/json",
+                    };
+                    // Brave uses X-Subscription-Token, others use Authorization Bearer
+                    if (isBrave) {
+                        headers["X-Subscription-Token"] = config.apiKey;
+                        headers["Accept-Encoding"] = "gzip";
+                    }
+                    else {
+                        headers["Authorization"] = `Bearer ${config.apiKey}`;
+                    }
                     const response = await globalThis.fetch(testUrl, {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            Authorization: `Bearer ${config.apiKey}`,
-                        },
-                        body: JSON.stringify({ query: "test", num_results: 1 }),
+                        method: isBrave ? "GET" : "POST",
+                        headers,
+                        body: isBrave
+                            ? undefined
+                            : JSON.stringify({ query: "test", num_results: 1 }),
                     });
                     const responseTime = Date.now() - startTime;
                     if (response.ok || response.status === 400) {

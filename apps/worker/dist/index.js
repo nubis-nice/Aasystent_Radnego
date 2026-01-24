@@ -6,6 +6,7 @@ import { processExtraction } from "./jobs/extraction.js";
 import { processAnalysis } from "./jobs/analysis.js";
 import { processRelations } from "./jobs/relations.js";
 import { processVision, } from "./jobs/vision.js";
+import { processTranscription } from "./jobs/transcription.js";
 const redisHost = process.env.REDIS_HOST ?? "localhost";
 const redisPort = Number(process.env.REDIS_PORT ?? 6379);
 const connection = new Redis({
@@ -21,6 +22,7 @@ export const userQueue = new Queue("user-jobs", {
     connection: connection,
 });
 export const visionQueue = new Queue("vision-jobs", { connection: connection });
+export const transcriptionQueue = new Queue("transcription-jobs", { connection: connection });
 // Worker dla zadań dokumentów
 const documentWorker = new Worker("document-jobs", async (job) => {
     console.log(`[document-worker] Processing job ${job.name} (${job.id})`);
@@ -59,6 +61,18 @@ const visionWorker = new Worker("vision-jobs", async (job) => {
         duration: 60000, // na minutę
     },
 });
+// Worker dla zadań transkrypcji YouTube
+const transcriptionWorker = new Worker("transcription-jobs", async (job) => {
+    console.log(`[transcription-worker] Processing job ${job.id} (video="${job.data.videoTitle}")`);
+    return await processTranscription(job);
+}, {
+    connection: connection,
+    concurrency: 1, // Max 1 równoczesne zadanie (długie procesowanie)
+    limiter: {
+        max: 5, // Max 5 zadań
+        duration: 3600000, // na godzinę
+    },
+});
 // Event handlers dla vision worker
 visionWorker.on("completed", (job) => {
     console.log(`[vision-worker] ✅ Completed ${job.id}`);
@@ -68,6 +82,17 @@ visionWorker.on("failed", (job, err) => {
 });
 visionWorker.on("progress", (job, progress) => {
     console.log(`[vision-worker] 📊 Progress ${job.id}: ${progress}%`);
+});
+// Event handlers dla transcription worker
+transcriptionWorker.on("completed", (job) => {
+    console.log(`[transcription-worker] ✅ Completed ${job.id} - "${job.data.videoTitle}"`);
+});
+transcriptionWorker.on("failed", (job, err) => {
+    console.error(`[transcription-worker] ❌ Failed ${job?.id}: ${err.message}`);
+});
+transcriptionWorker.on("progress", (job, progress) => {
+    const progressData = progress;
+    console.log(`[transcription-worker] 📊 Progress ${job.id}: ${progressData.progress}% - ${progressData.message}`);
 });
 // Event handlers dla document worker
 documentWorker.on("completed", (job, result) => {
@@ -95,10 +120,11 @@ process.on("SIGTERM", async () => {
     await documentWorker.close();
     await userWorker.close();
     await visionWorker.close();
+    await transcriptionWorker.close();
     await connection.quit();
     process.exit(0);
 });
 console.log(`[worker] 🚀 Started (redis=${redisHost}:${redisPort})`);
-console.log("[worker] 📋 Queues: document-jobs, user-jobs, vision-jobs");
-console.log("[worker] 🔧 Jobs: extraction, analysis, relations, vision-ocr");
+console.log("[worker] 📋 Queues: document-jobs, user-jobs, vision-jobs, transcription-jobs");
+console.log("[worker] 🔧 Jobs: extraction, analysis, relations, vision-ocr, youtube-transcription");
 //# sourceMappingURL=index.js.map

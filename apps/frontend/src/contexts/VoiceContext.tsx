@@ -112,7 +112,7 @@ interface VoiceProviderProps {
   children: ReactNode;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 export function VoiceProvider({ children }: VoiceProviderProps) {
   const router = useRouter();

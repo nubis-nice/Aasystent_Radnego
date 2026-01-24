@@ -24,6 +24,7 @@ export interface TranscriptionJob {
     error?: string;
     resultDocumentId?: string;
     audioIssues?: string[];
+    metadata?: Record<string, unknown>;
 }
 export interface CouncilMember {
     id: string;
@@ -51,16 +52,18 @@ export declare class TranscriptionJobService {
     /**
      * Pobiera status zadania
      */
-    getJob(jobId: string): TranscriptionJob | undefined;
+    getJob(jobId: string): Promise<TranscriptionJob | undefined>;
     /**
      * Pobiera wszystkie zadania użytkownika
      */
-    getUserJobs(): TranscriptionJob[];
+    getUserJobs(): Promise<TranscriptionJob[]>;
     /**
      * Główna logika przetwarzania zadania
      */
     private processJob;
     private updateJob;
+    private mapRowToJob;
+    private saveJobRow;
     /**
      * Pobiera listę radnych z bazy danych
      */

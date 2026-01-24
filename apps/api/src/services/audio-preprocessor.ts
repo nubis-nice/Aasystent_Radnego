@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { Buffer } from "node:buffer";
+import { setTimeout, clearTimeout } from "node:timers";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -118,18 +119,18 @@ export class AudioPreprocessor {
   async preprocess(
     inputBuffer: Buffer,
     inputFileName: string,
-    options: AudioPreprocessorOptions = {}
+    options: AudioPreprocessorOptions = {},
   ): Promise<{ buffer: Buffer; tempPath: string }> {
     const opts = { ...DEFAULT_OPTIONS, ...options };
 
     // Zapisz input do pliku tymczasowego
     const inputPath = path.join(
       this.tempDir,
-      `input-${Date.now()}-${inputFileName}`
+      `input-${Date.now()}-${inputFileName}`,
     );
     const outputPath = path.join(
       this.tempDir,
-      `output-${Date.now()}.${opts.outputFormat}`
+      `output-${Date.now()}.${opts.outputFormat}`,
     );
 
     fs.writeFileSync(inputPath, inputBuffer);
@@ -139,7 +140,7 @@ export class AudioPreprocessor {
       const filterChain = this.buildFilterChain(opts);
 
       console.log(
-        `[AudioPreprocessor] Processing: ${inputFileName} with filters: ${filterChain}`
+        `[AudioPreprocessor] Processing: ${inputFileName} with filters: ${filterChain}`,
       );
 
       // Uruchom ffmpeg
@@ -152,12 +153,12 @@ export class AudioPreprocessor {
       fs.unlinkSync(inputPath);
 
       console.log(
-        `[AudioPreprocessor] Processed: ${inputFileName} -> ${outputPath}`
+        `[AudioPreprocessor] Processed: ${inputFileName} -> ${outputPath}`,
       );
       console.log(
         `[AudioPreprocessor] Size: ${(inputBuffer.length / 1024 / 1024).toFixed(
-          2
-        )}MB -> ${(outputBuffer.length / 1024 / 1024).toFixed(2)}MB`
+          2,
+        )}MB -> ${(outputBuffer.length / 1024 / 1024).toFixed(2)}MB`,
       );
 
       return { buffer: outputBuffer, tempPath: outputPath };
@@ -174,14 +175,14 @@ export class AudioPreprocessor {
    */
   async preprocessAdaptive(
     inputPath: string,
-    outputFormat: "wav" | "mp3" | "flac" = "wav"
+    outputFormat: "wav" | "mp3" | "flac" = "wav",
   ): Promise<{ outputPath: string; analysis: AudioAnalysis }> {
     if (!fs.existsSync(inputPath)) {
       throw new Error(`Plik nie istnieje: ${inputPath}`);
     }
 
     console.log(
-      `[AudioPreprocessor] Starting adaptive preprocessing: ${inputPath}`
+      `[AudioPreprocessor] Starting adaptive preprocessing: ${inputPath}`,
     );
 
     // 1. Analiza audio
@@ -195,13 +196,13 @@ export class AudioPreprocessor {
     console.log(
       `[AudioPreprocessor] Issues detected: ${
         analysis.issues.map((i) => i.type).join(", ") || "none"
-      }`
+      }`,
     );
 
     // 3. Przygotuj ścieżkę wyjściową
     const outputPath = path.join(
       this.tempDir,
-      `adaptive-${Date.now()}.${outputFormat}`
+      `adaptive-${Date.now()}.${outputFormat}`,
     );
 
     // 4. Uruchom FFmpeg z adaptacyjnymi filtrami
@@ -265,7 +266,7 @@ export class AudioPreprocessor {
       // Wzmocnienie klarowności mowy (1000-4000 Hz)
       "equalizer=f=2500:t=q:w=1.5:g=3",
       // Lekkie wzmocnienie "presence" (4000-6000 Hz)
-      "equalizer=f=5000:t=q:w=1:g=1"
+      "equalizer=f=5000:t=q:w=1:g=1",
     );
 
     // 6. De-esser
@@ -278,7 +279,7 @@ export class AudioPreprocessor {
     if (recs.enableCompressor) {
       // acompressor: threshold, ratio, attack, release, makeup gain
       filters.push(
-        `acompressor=threshold=${recs.compressorThreshold}dB:ratio=${recs.compressorRatio}:attack=5:release=50:makeup=2`
+        `acompressor=threshold=${recs.compressorThreshold}dB:ratio=${recs.compressorRatio}:attack=5:release=50:makeup=2`,
       );
     }
 
@@ -315,7 +316,7 @@ export class AudioPreprocessor {
       // nf = noise floor in dB
       // tn = track noise (adaptacyjne śledzenie szumu)
       filters.push(
-        `afftdn=nr=${opts.noiseReductionStrength * 100}:nf=-25:tn=1`
+        `afftdn=nr=${opts.noiseReductionStrength * 100}:nf=-25:tn=1`,
       );
     }
 
@@ -330,7 +331,7 @@ export class AudioPreprocessor {
         // Wzmocnienie klarowności mowy (1000-4000 Hz)
         "equalizer=f=2500:t=q:w=1.5:g=3",
         // Lekkie wzmocnienie "presence" (4000-6000 Hz)
-        "equalizer=f=5000:t=q:w=1:g=1"
+        "equalizer=f=5000:t=q:w=1:g=1",
       );
     }
 
@@ -338,7 +339,7 @@ export class AudioPreprocessor {
     if (opts.deesser) {
       // Kompresja w paśmie 4-8 kHz gdzie występują syczące dźwięki
       filters.push(
-        "highpass=f=4000,compand=attacks=0:decays=0.3:points=-80/-80|-12/-12|-6/-9|0/-6:soft-knee=6,lowpass=f=8000"
+        "highpass=f=4000,compand=attacks=0:decays=0.3:points=-80/-80|-12/-12|-6/-9|0/-6:soft-knee=6,lowpass=f=8000",
       );
     }
 
@@ -350,7 +351,7 @@ export class AudioPreprocessor {
           opts.compressorThreshold
         }/${opts.compressorThreshold}|0/${
           -opts.compressorThreshold / opts.compressorRatio
-        }:soft-knee=6:gain=3`
+        }:soft-knee=6:gain=3`,
       );
     }
 
@@ -360,7 +361,7 @@ export class AudioPreprocessor {
       // TP = true peak (dBTP)
       // LRA = loudness range target
       filters.push(
-        `loudnorm=I=${opts.targetLoudness}:TP=-1.5:LRA=11:print_format=summary`
+        `loudnorm=I=${opts.targetLoudness}:TP=-1.5:LRA=11:print_format=summary`,
       );
     }
 
@@ -374,7 +375,7 @@ export class AudioPreprocessor {
     inputPath: string,
     outputPath: string,
     filterChain: string,
-    opts: Required<AudioPreprocessorOptions>
+    opts: Required<AudioPreprocessorOptions>,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const args = [
@@ -459,7 +460,7 @@ export class AudioPreprocessor {
 
       ffmpeg.on("close", () => {
         const durationMatch = stderr.match(
-          /Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})/
+          /Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})/,
         );
         if (durationMatch) {
           const hours = parseInt(durationMatch[1], 10);
@@ -481,7 +482,7 @@ export class AudioPreprocessor {
    */
   async splitAudioByTime(
     inputPath: string,
-    maxPartDuration: number = 600
+    maxPartDuration: number = 600,
   ): Promise<AudioSplitResult> {
     try {
       console.log(`[AudioPreprocessor] Splitting audio: ${inputPath}`);
@@ -489,12 +490,12 @@ export class AudioPreprocessor {
 
       const totalDuration = await this.getAudioDuration(inputPath);
       console.log(
-        `[AudioPreprocessor] Total duration: ${totalDuration.toFixed(1)}s`
+        `[AudioPreprocessor] Total duration: ${totalDuration.toFixed(1)}s`,
       );
 
       if (totalDuration <= maxPartDuration) {
         console.log(
-          `[AudioPreprocessor] Audio shorter than maxPartDuration, no splitting needed`
+          `[AudioPreprocessor] Audio shorter than maxPartDuration, no splitting needed`,
         );
         return {
           success: true,
@@ -517,20 +518,20 @@ export class AudioPreprocessor {
 
         const outputPath = path.join(
           outputDir,
-          `${baseName}_part_${String(partIndex).padStart(3, "0")}.wav`
+          `${baseName}_part_${String(partIndex).padStart(3, "0")}.wav`,
         );
 
         console.log(
           `[AudioPreprocessor] Extracting part ${partIndex}: ${startTime.toFixed(
-            1
-          )}s - ${endTime.toFixed(1)}s`
+            1,
+          )}s - ${endTime.toFixed(1)}s`,
         );
 
         await this.extractAudioSegment(
           inputPath,
           outputPath,
           startTime,
-          endTime
+          endTime,
         );
 
         const stats = fs.statSync(outputPath);
@@ -567,30 +568,44 @@ export class AudioPreprocessor {
   }
 
   /**
-   * Wyciągnij segment audio
+   * Wyciągnij segment audio z timeout (60s) i fallback do re-encode
    */
   private extractAudioSegment(
     inputPath: string,
     outputPath: string,
     startTime: number,
-    endTime: number
+    endTime: number,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
+      // Użyj re-encode zamiast -c copy (copy wisi na dużych WAV)
       const args = [
+        "-y", // Overwrite output
+        "-ss",
+        startTime.toString(), // Seek PRZED input (szybsze)
         "-i",
         inputPath,
-        "-ss",
-        startTime.toString(),
-        "-to",
-        endTime.toString(),
-        "-c",
-        "copy",
+        "-t",
+        (endTime - startTime).toString(), // Duration zamiast -to
+        "-acodec",
+        "pcm_s16le", // Re-encode do WAV (stabilniejsze niż copy)
         outputPath,
       ];
 
       const ffmpeg = spawn(this.ffmpegPath, args);
+      let killed = false;
+
+      // Timeout 60s per segment
+      const timeout = setTimeout(() => {
+        if (!killed) {
+          killed = true;
+          ffmpeg.kill("SIGKILL");
+          reject(new Error(`FFmpeg extraction timeout after 60s`));
+        }
+      }, 60000);
 
       ffmpeg.on("close", (code) => {
+        clearTimeout(timeout);
+        if (killed) return;
         if (code === 0) {
           resolve();
         } else {
@@ -598,7 +613,223 @@ export class AudioPreprocessor {
         }
       });
 
+      ffmpeg.on("error", (err) => {
+        clearTimeout(timeout);
+        if (!killed) reject(err);
+      });
+    });
+  }
+
+  /**
+   * Preprocessing pojedynczego segmentu na TOP QUALITY audio
+   * Stosuje: highpass 80Hz, noise reduction, loudnorm
+   * Zwraca ścieżkę do przetworzonego pliku (nadal top quality)
+   */
+  async preprocessSegment(inputPath: string): Promise<string> {
+    const outputPath = inputPath.replace(/\.wav$/, "_preprocessed.wav");
+
+    console.log(`[AudioPreprocessor] Preprocessing segment: ${inputPath}`);
+
+    return new Promise((resolve, reject) => {
+      // Filtry na top quality audio:
+      // 1. highpass=f=80 - usuwa niskie częstotliwości (buczenie, szum)
+      // 2. afftdn=nf=-25 - noise reduction (FFT-based)
+      // 3. loudnorm - normalizacja głośności do -16 LUFS
+      const filterChain =
+        "highpass=f=80,afftdn=nf=-25,loudnorm=I=-16:TP=-1.5:LRA=11";
+
+      const args = [
+        "-i",
+        inputPath,
+        "-af",
+        filterChain,
+        "-y", // Overwrite output
+        outputPath,
+      ];
+
+      console.log(
+        `[AudioPreprocessor] Running: ffmpeg -i input -af "${filterChain}" output`,
+      );
+
+      const ffmpeg = spawn(this.ffmpegPath, args);
+      let stderr = "";
+
+      ffmpeg.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      ffmpeg.on("close", (code) => {
+        if (code === 0) {
+          // Usuń oryginalny plik, zachowaj przetworzony
+          if (fs.existsSync(inputPath) && inputPath !== outputPath) {
+            fs.unlinkSync(inputPath);
+          }
+          console.log(
+            `[AudioPreprocessor] Segment preprocessed: ${outputPath}`,
+          );
+          resolve(outputPath);
+        } else {
+          console.error(`[AudioPreprocessor] Preprocessing failed:`, stderr);
+          reject(new Error(`Preprocessing failed with code ${code}`));
+        }
+      });
+
       ffmpeg.on("error", reject);
+    });
+  }
+
+  /**
+   * Downsampling do formatu optymalnego dla Whisper (16kHz mono WAV)
+   * Wykonywany PO preprocessingu na top quality audio
+   */
+  async downsampleForWhisper(inputPath: string): Promise<string> {
+    const outputPath = inputPath.replace(
+      /(_preprocessed)?\.wav$/,
+      "_whisper.wav",
+    );
+
+    console.log(`[AudioPreprocessor] Downsampling for Whisper: ${inputPath}`);
+
+    return new Promise((resolve, reject) => {
+      const args = [
+        "-i",
+        inputPath,
+        "-ar",
+        "16000", // 16kHz - optimal for Whisper
+        "-ac",
+        "1", // Mono
+        "-y",
+        outputPath,
+      ];
+
+      const ffmpeg = spawn(this.ffmpegPath, args);
+      let stderr = "";
+
+      ffmpeg.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      ffmpeg.on("close", (code) => {
+        if (code === 0) {
+          // Usuń plik preprocessed, zachowaj whisper-ready
+          if (fs.existsSync(inputPath) && inputPath !== outputPath) {
+            fs.unlinkSync(inputPath);
+          }
+          const stats = fs.statSync(outputPath);
+          console.log(
+            `[AudioPreprocessor] Downsampled for Whisper: ${outputPath} (${(stats.size / 1024 / 1024).toFixed(2)}MB)`,
+          );
+          resolve(outputPath);
+        } else {
+          console.error(`[AudioPreprocessor] Downsampling failed:`, stderr);
+          reject(new Error(`Downsampling failed with code ${code}`));
+        }
+      });
+
+      ffmpeg.on("error", reject);
+    });
+  }
+
+  /**
+   * Pełny pipeline: preprocessing + downsampling dla pojedynczego segmentu
+   * 1. Preprocessing na top quality (highpass + noise reduction + loudnorm)
+   * 2. Downsampling do 16kHz mono dla Whisper
+   */
+  async prepareSegmentForWhisper(inputPath: string): Promise<string> {
+    console.log(`[AudioPreprocessor] Full pipeline for segment: ${inputPath}`);
+
+    // 1. Preprocessing na top quality
+    const preprocessedPath = await this.preprocessSegment(inputPath);
+
+    // 2. Downsampling do Whisper format
+    const whisperReadyPath = await this.downsampleForWhisper(preprocessedPath);
+
+    return whisperReadyPath;
+  }
+
+  /**
+   * BEST PRACTICE: Konwertuj dowolne audio do formatu optymalnego dla Whisper
+   * - 16kHz sample rate
+   * - Mono (1 channel)
+   * - 16-bit PCM WAV
+   * - Normalizacja głośności (loudnorm)
+   */
+  async convertToWhisperFormat(
+    inputPath: string,
+    outputPath: string,
+  ): Promise<void> {
+    console.log(
+      `[AudioPreprocessor] Converting to Whisper format: ${inputPath}`,
+    );
+
+    return new Promise((resolve, reject) => {
+      // FFmpeg: konwersja do 16kHz mono 16-bit PCM WAV z pełnym preprocessingiem
+      // Filtry dla lepszej jakości transkrypcji:
+      // 1. highpass=f=80 - usuwa niskie szumy/hum
+      // 2. afftdn=nf=-25 - redukcja szumów FFT
+      // 3. acompressor - wyrównuje głośność mówców
+      // 4. loudnorm - normalizacja głośności dla Whisper
+      const filterChain = [
+        "highpass=f=80", // Usuń niskie częstotliwości (hum, szumy)
+        "afftdn=nf=-25", // Redukcja szumów (FFT denoiser)
+        "acompressor=threshold=-20dB:ratio=4:attack=5:release=50", // Kompresja dynamiki
+        "loudnorm=I=-16:TP=-1.5:LRA=11", // Normalizacja głośności
+      ].join(",");
+
+      const args = [
+        "-y", // Overwrite
+        "-i",
+        inputPath,
+        "-af",
+        filterChain,
+        "-ar",
+        "16000", // 16kHz - optimal dla Whisper
+        "-ac",
+        "1", // Mono
+        "-acodec",
+        "pcm_s16le", // 16-bit PCM
+        outputPath,
+      ];
+
+      const ffmpeg = spawn(this.ffmpegPath, args);
+      let stderr = "";
+      let killed = false;
+
+      // Timeout 10 min dla konwersji (długie sesje rady mogą trwać kilka godzin)
+      const timeout = setTimeout(() => {
+        if (!killed) {
+          killed = true;
+          ffmpeg.kill("SIGKILL");
+          reject(new Error("FFmpeg conversion timeout after 600s"));
+        }
+      }, 600000);
+
+      ffmpeg.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      ffmpeg.on("close", (code) => {
+        clearTimeout(timeout);
+        if (killed) return;
+        if (code === 0) {
+          const stats = fs.statSync(outputPath);
+          console.log(
+            `[AudioPreprocessor] Converted to Whisper format: ${(stats.size / 1024 / 1024).toFixed(2)}MB`,
+          );
+          resolve();
+        } else {
+          console.error(
+            `[AudioPreprocessor] Conversion failed:`,
+            stderr.slice(-500),
+          );
+          reject(new Error(`FFmpeg conversion failed with code ${code}`));
+        }
+      });
+
+      ffmpeg.on("error", (err) => {
+        clearTimeout(timeout);
+        if (!killed) reject(err);
+      });
     });
   }
 }

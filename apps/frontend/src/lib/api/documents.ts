@@ -2,7 +2,7 @@
  * API client dla operacji na dokumentach
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 export interface CreateDocumentRequest {
   title: string;

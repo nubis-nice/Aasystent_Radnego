@@ -126,7 +126,7 @@ const INTENT_DETECTION_PROMPT = `Jesteś ekspertem od analizy intencji użytkown
 
 ## ALERTY I NAWIGACJA:
 - **alert_check** → "sprawdź alerty", "czy są powiadomienia", "co nowego"
-- **quick_tool** → "utwórz interpelację", "napisz pismo", "generuj protokół", "analiza budżetu"
+- **quick_tool** → "utwórz interpelację", "napisz pismo", "generuj protokół", "analiza budżetu", "przygotuj wystąpienie", "wystąpienie na sesji", "przemówienie", "speech", "projekt wystąpienia"
 - **app_navigate** → "przejdź do pulpitu", "otwórz dokumenty", "pokaż ustawienia", "idź do czatu"
 
 # PRZYKŁADY MAPOWANIA:
@@ -195,7 +195,7 @@ export class AIToolOrchestrator {
 
   async process(
     userMessage: string,
-    conversationContext?: string
+    conversationContext?: string,
   ): Promise<OrchestratorResult> {
     const startTime = Date.now();
     await this.initialize();
@@ -217,7 +217,7 @@ export class AIToolOrchestrator {
     const { response, sources } = await this.synthesizeResponse(
       userMessage,
       intent,
-      toolResults
+      toolResults,
     );
 
     return {
@@ -234,7 +234,7 @@ export class AIToolOrchestrator {
 
   private async detectIntent(
     userMessage: string,
-    context?: string
+    context?: string,
   ): Promise<DetectedIntent> {
     if (!this.llmClient) throw new Error("LLM client not initialized");
 
@@ -313,7 +313,7 @@ export class AIToolOrchestrator {
 
   private async executeTools(
     intent: DetectedIntent,
-    userMessage: string
+    userMessage: string,
   ): Promise<ToolExecutionResult[]> {
     const tools = [intent.primaryIntent, ...intent.secondaryIntents];
     const results: ToolExecutionResult[] = [];
@@ -344,7 +344,7 @@ export class AIToolOrchestrator {
   private async executeSingleTool(
     tool: ToolType,
     userMessage: string,
-    intent: DetectedIntent
+    intent: DetectedIntent,
   ): Promise<unknown> {
     switch (tool) {
       case "deep_research": {
@@ -426,7 +426,7 @@ export class AIToolOrchestrator {
         const service = new LegalSearchAPI(this.userId);
         return await service.search({
           query: `budżet ${intent.entities.topics.join(
-            " "
+            " ",
           )} ${intent.entities.dates.join(" ")}`,
           searchMode: "hybrid",
           maxResults: 15,
@@ -439,7 +439,7 @@ export class AIToolOrchestrator {
         await youtubeService.initializeWithUserConfig(this.userId);
         const searchResult = await youtubeService.searchWithContext(
           userMessage,
-          { topics: intent.entities.topics }
+          { topics: intent.entities.topics },
         );
         return {
           videos: searchResult.sessions,
@@ -483,7 +483,7 @@ export class AIToolOrchestrator {
         if (acts.length === 0) {
           const localGovActs = await isapService.searchLocalGovernmentActs(
             topic,
-            15
+            15,
           );
           return {
             type: "local_government_acts",
@@ -508,9 +508,8 @@ export class AIToolOrchestrator {
         const municipality = intent.entities.topics[1] || "";
         const competitions = await euService.getActiveCompetitions();
         if (projectType) {
-          const opportunities = await euService.findFundingOpportunities(
-            projectType
-          );
+          const opportunities =
+            await euService.findFundingOpportunities(projectType);
           return {
             type: "funding_opportunities",
             projectType,
@@ -546,14 +545,14 @@ export class AIToolOrchestrator {
 
         // Sprawdź czy to współrzędne
         const coordMatch = userMessage.match(
-          /(\d+[.,]\d+)\s*[,;\s]\s*(\d+[.,]\d+)/
+          /(\d+[.,]\d+)\s*[,;\s]\s*(\d+[.,]\d+)/,
         );
         if (coordMatch) {
           const lat = parseFloat(coordMatch[1].replace(",", "."));
           const lon = parseFloat(coordMatch[2].replace(",", "."));
           const parcel = await geoportalService.getParcelByCoordinates(
             lat,
-            lon
+            lon,
           );
           const plans = await geoportalService.getSpatialPlanInfo(lat, lon);
           return {
@@ -660,7 +659,7 @@ export class AIToolOrchestrator {
       case "gdos_environmental": {
         const gdosService = new GdosService();
         const coordMatch = userMessage.match(
-          /(\d+[.,]\d+)\s*[,;\s]\s*(\d+[.,]\d+)/
+          /(\d+[.,]\d+)\s*[,;\s]\s*(\d+[.,]\d+)/,
         );
 
         if (coordMatch) {
@@ -668,7 +667,7 @@ export class AIToolOrchestrator {
           const lon = parseFloat(coordMatch[2].replace(",", "."));
           const data = await gdosService.getEnvironmentalDataAtLocation(
             lat,
-            lon
+            lon,
           );
           return {
             type: "environmental_data",
@@ -722,7 +721,7 @@ export class AIToolOrchestrator {
   private async synthesizeResponse(
     userMessage: string,
     intent: DetectedIntent,
-    toolResults: ToolExecutionResult[]
+    toolResults: ToolExecutionResult[],
   ): Promise<{
     response: string;
     sources: Array<{ title: string; url?: string; type: string }>;
@@ -813,7 +812,7 @@ export class AIToolOrchestrator {
           if (gusData.stats.variables) {
             for (const v of gusData.stats.variables) {
               contextForSynthesis += `- ${v.name}: ${v.value.toLocaleString(
-                "pl-PL"
+                "pl-PL",
               )} ${v.unit} (${v.year})\n`;
             }
           }
@@ -869,9 +868,87 @@ export class AIToolOrchestrator {
             contextForSynthesis += `- ${comp.title}\n  Program: ${
               comp.program
             }\n  Budżet: ${comp.budget.toLocaleString(
-              "pl-PL"
+              "pl-PL",
             )} PLN\n  Termin: ${comp.endDate}\n`;
           }
+        }
+      }
+
+      if (result.tool === "geoportal_spatial") {
+        const geoData = data as {
+          type?: string;
+          query?: string;
+          parcels?: Array<{
+            id: string;
+            voivodeship: string;
+            county: string;
+            municipality: string;
+            precinct: string;
+            parcelNumber: string;
+            area?: number;
+          }>;
+          addresses?: Array<{
+            id: string;
+            street?: string;
+            houseNumber?: string;
+            city: string;
+            voivodeship: string;
+            coordinates?: { lat: number; lon: number };
+          }>;
+          municipalities?: Array<{
+            id: string;
+            name: string;
+            code: string;
+            type: string;
+          }>;
+          coordinates?: { lat: number; lon: number };
+          parcel?: Record<string, unknown>;
+          spatialPlans?: Array<{ name: string; type: string; status: string }>;
+          links?: { geoportal?: string; orthophoto?: string };
+        };
+
+        contextForSynthesis += `\n🗺️ DANE Z GEOPORTAL.GOV.PL:\n`;
+        sources.push({
+          title: "Geoportal - dane przestrzenne",
+          url: "https://geoportal.gov.pl",
+          type: "Geoportal",
+        });
+
+        if (geoData.parcels && geoData.parcels.length > 0) {
+          contextForSynthesis += `\n📍 DZIAŁKI (${geoData.parcels.length}):\n`;
+          for (const p of geoData.parcels.slice(0, 10)) {
+            contextForSynthesis += `- Działka ${p.parcelNumber}, obręb ${p.precinct}\n`;
+            contextForSynthesis += `  Gmina: ${p.municipality}, Powiat: ${p.county}, Woj.: ${p.voivodeship}\n`;
+            if (p.area) contextForSynthesis += `  Powierzchnia: ${p.area} m²\n`;
+          }
+        }
+
+        if (geoData.addresses && geoData.addresses.length > 0) {
+          contextForSynthesis += `\n📫 ADRESY (${geoData.addresses.length}):\n`;
+          for (const a of geoData.addresses.slice(0, 10)) {
+            contextForSynthesis += `- ${a.street || ""} ${a.houseNumber || ""}, ${a.city}, ${a.voivodeship}\n`;
+            if (a.coordinates) {
+              contextForSynthesis += `  Współrzędne: ${a.coordinates.lat}, ${a.coordinates.lon}\n`;
+            }
+          }
+        }
+
+        if (geoData.municipalities && geoData.municipalities.length > 0) {
+          contextForSynthesis += `\n🏛️ JEDNOSTKI ADMINISTRACYJNE (${geoData.municipalities.length}):\n`;
+          for (const m of geoData.municipalities.slice(0, 10)) {
+            contextForSynthesis += `- ${m.name} (${m.type}), kod: ${m.code}\n`;
+          }
+        }
+
+        if (geoData.spatialPlans && geoData.spatialPlans.length > 0) {
+          contextForSynthesis += `\n📋 PLANY ZAGOSPODAROWANIA:\n`;
+          for (const plan of geoData.spatialPlans.slice(0, 5)) {
+            contextForSynthesis += `- ${plan.name} (${plan.type}) - ${plan.status}\n`;
+          }
+        }
+
+        if (geoData.links?.geoportal) {
+          contextForSynthesis += `\n🔗 Link do mapy: ${geoData.links.geoportal}\n`;
         }
       }
 

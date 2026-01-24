@@ -81,37 +81,80 @@ export async function processVision(job) {
  * Pobierz konfigurację AI użytkownika z bazy
  */
 async function getUserAIConfig(userId, provider) {
-    // Domyślne wartości dla Ollama
-    if (provider === "ollama") {
-        return {
-            apiKey: "dummy-key",
-            baseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1",
-        };
-    }
-    // Pobierz z bazy dla innych providerów
-    const { data } = await getSupabase()
-        .from("user_ai_configs")
-        .select("vision_provider, vision_api_key, vision_base_url")
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from("api_configurations")
+        .select("provider, base_url, api_key_encrypted, vision_model, provider_meta, is_default")
         .eq("user_id", userId)
-        .single();
-    if (data) {
+        .eq("config_type", "ai")
+        .eq("is_active", true)
+        .eq("provider", provider)
+        .order("is_default", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    if (!error && data) {
         return {
-            apiKey: data.vision_api_key || process.env.OPENAI_API_KEY || "",
-            baseUrl: data.vision_base_url || "https://api.openai.com/v1",
+            apiKey: decodeApiKey(data.api_key_encrypted) || getDefaultApiKey(provider),
+            baseUrl: getBaseUrl(provider, data.base_url),
         };
     }
-    // Fallback na env
+    // Jeśli nie znaleziono konkretnego providera, spróbuj domyślnej konfiguracji użytkownika
+    const { data: defaultConfig } = await supabase
+        .from("api_configurations")
+        .select("provider, base_url, api_key_encrypted")
+        .eq("user_id", userId)
+        .eq("config_type", "ai")
+        .eq("is_active", true)
+        .eq("is_default", true)
+        .maybeSingle();
+    if (defaultConfig) {
+        return {
+            apiKey: decodeApiKey(defaultConfig.api_key_encrypted) ||
+                getDefaultApiKey(defaultConfig.provider),
+            baseUrl: getBaseUrl(defaultConfig.provider, defaultConfig.base_url),
+        };
+    }
     return {
-        apiKey: process.env.OPENAI_API_KEY || "",
-        baseUrl: "https://api.openai.com/v1",
+        apiKey: getDefaultApiKey(provider),
+        baseUrl: getBaseUrl(provider, undefined),
     };
+}
+function decodeApiKey(encrypted) {
+    if (!encrypted)
+        return "";
+    try {
+        const decoded = Buffer.from(encrypted, "base64").toString("utf-8");
+        try {
+            return decodeURIComponent(decoded);
+        }
+        catch {
+            return decoded;
+        }
+    }
+    catch {
+        return encrypted;
+    }
+}
+function getBaseUrl(provider, override) {
+    if (override && override.trim().length > 0) {
+        return override;
+    }
+    if (provider === "local" || provider === "ollama") {
+        return process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1";
+    }
+    return process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+}
+function getDefaultApiKey(provider) {
+    if (provider === "local" || provider === "ollama") {
+        return process.env.OLLAMA_API_KEY || "";
+    }
+    return process.env.OPENAI_API_KEY || "";
 }
 /**
  * Buduje wiadomości w formacie odpowiednim dla providera
  */
-function buildVisionMessages(provider, imageBase64, prompt
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-) {
+function buildVisionMessages(provider, imageBase64, prompt) {
     const systemPrompt = `Jesteś ekspertem OCR. Twoim zadaniem jest dokładne odczytanie i transkrypcja CAŁEGO tekstu widocznego na obrazie.
 
 Zasady:

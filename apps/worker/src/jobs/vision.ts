@@ -30,7 +30,7 @@ function getSupabase(): SupabaseClient {
     if (!url || !key) {
       throw new Error(
         `Missing Supabase config. SUPABASE_URL=${url ? "set" : "missing"}, ` +
-          `SUPABASE_SERVICE_ROLE_KEY=${key ? "set" : "missing"}`
+          `SUPABASE_SERVICE_ROLE_KEY=${key ? "set" : "missing"}`,
       );
     }
 
@@ -63,13 +63,13 @@ export interface VisionJobResult {
  * Główna funkcja przetwarzania zadania Vision
  */
 export async function processVision(
-  job: Job<VisionJobData>
+  job: Job<VisionJobData>,
 ): Promise<VisionJobResult> {
   const startTime = Date.now();
   const { userId, imageBase64, prompt, provider, model, pageNumber } = job.data;
 
   console.log(
-    `[vision-job] Processing job ${job.id} (provider=${provider}, model=${model}, page=${pageNumber})`
+    `[vision-job] Processing job ${job.id} (provider=${provider}, model=${model}, page=${pageNumber})`,
   );
 
   try {
@@ -93,7 +93,9 @@ export async function processVision(
       model,
       messages,
       max_tokens: 4096,
-    } as Parameters<typeof client.chat.completions.create>[0])) as OpenAI.Chat.ChatCompletion;
+    } as Parameters<
+      typeof client.chat.completions.create
+    >[0])) as OpenAI.Chat.ChatCompletion;
 
     await job.updateProgress(80);
 
@@ -101,7 +103,7 @@ export async function processVision(
     const processingTimeMs = Date.now() - startTime;
 
     console.log(
-      `[vision-job] Job ${job.id} completed: ${text.length} chars in ${processingTimeMs}ms`
+      `[vision-job] Job ${job.id} completed: ${text.length} chars in ${processingTimeMs}ms`,
     );
 
     await job.updateProgress(100);
@@ -131,35 +133,85 @@ export async function processVision(
  */
 async function getUserAIConfig(
   userId: string,
-  provider: string
+  provider: string,
 ): Promise<{ apiKey: string; baseUrl: string }> {
-  // Domyślne wartości dla Ollama
-  if (provider === "ollama") {
-    return {
-      apiKey: "dummy-key",
-      baseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1",
-    };
-  }
-
-  // Pobierz z bazy dla innych providerów
-  const { data } = await getSupabase()
-    .from("user_ai_configs")
-    .select("vision_provider, vision_api_key, vision_base_url")
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("api_configurations")
+    .select(
+      "provider, base_url, api_key_encrypted, vision_model, provider_meta, is_default",
+    )
     .eq("user_id", userId)
-    .single();
+    .eq("config_type", "ai")
+    .eq("is_active", true)
+    .eq("provider", provider)
+    .order("is_default", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  if (data) {
+  if (!error && data) {
     return {
-      apiKey: data.vision_api_key || process.env.OPENAI_API_KEY || "",
-      baseUrl: data.vision_base_url || "https://api.openai.com/v1",
+      apiKey:
+        decodeApiKey(data.api_key_encrypted) || getDefaultApiKey(provider),
+      baseUrl: getBaseUrl(provider, data.base_url),
     };
   }
 
-  // Fallback na env
+  // Jeśli nie znaleziono konkretnego providera, spróbuj domyślnej konfiguracji użytkownika
+  const { data: defaultConfig } = await supabase
+    .from("api_configurations")
+    .select("provider, base_url, api_key_encrypted")
+    .eq("user_id", userId)
+    .eq("config_type", "ai")
+    .eq("is_active", true)
+    .eq("is_default", true)
+    .maybeSingle();
+
+  if (defaultConfig) {
+    return {
+      apiKey:
+        decodeApiKey(defaultConfig.api_key_encrypted) ||
+        getDefaultApiKey(defaultConfig.provider),
+      baseUrl: getBaseUrl(defaultConfig.provider, defaultConfig.base_url),
+    };
+  }
+
   return {
-    apiKey: process.env.OPENAI_API_KEY || "",
-    baseUrl: "https://api.openai.com/v1",
+    apiKey: getDefaultApiKey(provider),
+    baseUrl: getBaseUrl(provider, undefined),
   };
+}
+
+function decodeApiKey(encrypted: string | null): string {
+  if (!encrypted) return "";
+  try {
+    const decoded = Buffer.from(encrypted, "base64").toString("utf-8");
+    try {
+      return decodeURIComponent(decoded);
+    } catch {
+      return decoded;
+    }
+  } catch {
+    return encrypted;
+  }
+}
+
+function getBaseUrl(provider: string, override?: string | null): string {
+  if (override && override.trim().length > 0) {
+    return override;
+  }
+  if (provider === "local" || provider === "ollama") {
+    return process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1";
+  }
+  return process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+}
+
+function getDefaultApiKey(provider: string): string {
+  if (provider === "local" || provider === "ollama") {
+    return process.env.OLLAMA_API_KEY || "";
+  }
+  return process.env.OPENAI_API_KEY || "";
 }
 
 /**
@@ -168,7 +220,7 @@ async function getUserAIConfig(
 function buildVisionMessages(
   provider: string,
   imageBase64: string,
-  prompt: string
+  prompt: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): any[] {
   const systemPrompt = `Jesteś ekspertem OCR. Twoim zadaniem jest dokładne odczytanie i transkrypcja CAŁEGO tekstu widocznego na obrazie.

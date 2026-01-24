@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Send,
   Bot,
@@ -21,7 +22,6 @@ import {
   TrendingUp,
   ExternalLink,
   Zap,
-  Paperclip,
 } from "lucide-react";
 import { sendMessage, getConversation } from "@/lib/api/chat";
 import { performResearch } from "@/lib/api/deep-research";
@@ -47,7 +47,6 @@ import { YouTubeSessionTool } from "@/components/chat/YouTubeSessionTool";
 import { SystemStatus } from "@/components/chat/SystemStatus";
 import { VoiceButton } from "@/components/voice/VoiceButton";
 import { useVoice } from "@/contexts/VoiceContext";
-import { DocumentPicker } from "@/components/chat/DocumentPicker";
 
 interface Citation {
   documentId?: string;
@@ -85,7 +84,8 @@ interface NextStepSuggestion {
   label: string;
   icon: string;
   prompt: string;
-  category: "legal" | "financial" | "report" | "search" | "action";
+  category: "legal" | "financial" | "report" | "search" | "action" | "calendar";
+  isPrimary?: boolean; // Czy to główna sugestia (z propozycji w tekście)
 }
 
 interface Message {
@@ -118,11 +118,39 @@ export default function ChatPage() {
       citations: [],
     },
   ]);
+  const searchParams = useSearchParams();
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [showYouTubeTool, setShowYouTubeTool] = useState(false);
-  const [showDocumentPicker, setShowDocumentPicker] = useState(false);
+
+  // Funkcja ładowania konwersacji (dostępna przed efektami, aby uniknąć odwołania przed inicjalizacją)
+  async function loadConversation(id: string) {
+    try {
+      setLoading(true);
+      const data = await getConversation(id);
+
+      // Załaduj wiadomości z konwersacji
+      const loadedMessages: Message[] = data.conversation.messages.map(
+        (msg) => ({
+          id: msg.id,
+          role: msg.role as "user" | "assistant",
+          content: msg.content,
+          citations: msg.citations || [],
+        }),
+      );
+
+      setMessages(loadedMessages);
+      setConversationId(id);
+    } catch (err) {
+      console.error("Error loading conversation:", err);
+      setError({
+        message: "Nie udało się załadować konwersacji",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
 
   // Globalny kontekst głosowy
   const voiceContext = useVoice();
@@ -163,6 +191,34 @@ export default function ChatPage() {
     window.addEventListener("storage", loadContext);
     return () => window.removeEventListener("storage", loadContext);
   }, []);
+
+  // Nasłuch na zdarzenie presetów z dashboardu (chat-preset)
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const customEvent = event as CustomEvent<{ message?: string }>;
+      const preset = customEvent.detail?.message;
+      if (preset) {
+        setMessage(preset + " ");
+        // auto-fokus na polu input (jeśli istnieje)
+        const input = document.querySelector<HTMLInputElement>(
+          "textarea, input[type='text']",
+        );
+        input?.focus();
+      }
+    };
+
+    window.addEventListener("chat-preset", handler as EventListener);
+    return () =>
+      window.removeEventListener("chat-preset", handler as EventListener);
+  }, []);
+
+  // Wczytaj konwersację przekazaną w URL (?conversation=<id>)
+  useEffect(() => {
+    const convId = searchParams.get("conversation");
+    if (convId) {
+      loadConversation(convId);
+    }
+  }, [searchParams]);
 
   // Obsługa wiadomości głosowych z VoiceContext (gdy użytkownik przychodzi z innej strony)
   useEffect(() => {
@@ -352,32 +408,88 @@ export default function ChatPage() {
   // Generuj sugestie następnych kroków na podstawie kontekstu
   const generateNextSteps = (
     content: string,
-    _categories?: AnalysisCategory[]
-  ): NextStepSuggestion[] => {
-    const suggestions: NextStepSuggestion[] = [];
+    _categories?: AnalysisCategory[],
+  ): { primary: NextStepSuggestion[]; secondary: NextStepSuggestion[] } => {
+    const primarySuggestions: NextStepSuggestion[] = [];
+    const secondarySuggestions: NextStepSuggestion[] = [];
     const contentLower = content.toLowerCase();
     const categoryTypes = new Set<string>(
-      (_categories || []).map((category) => category.type)
+      (_categories || []).map((category) => category.type),
     );
 
-    const addSuggestion = (suggestion: NextStepSuggestion) => {
-      if (!suggestions.some((s) => s.id === suggestion.id)) {
-        suggestions.push(suggestion);
-      }
-    };
-
     // ═══════════════════════════════════════════════════════════════════════
-    // ZADANIA RADNEGO - sugestie kontekstowe
+    // GŁÓWNE SUGESTIE - bazowane na propozycjach z tekstu AI
     // ═══════════════════════════════════════════════════════════════════════
 
-    // Uchwały i sesje
+    // Projekt uchwały - jeśli wspomniany w tekście
+    if (
+      contentLower.includes("projekt uchwały") ||
+      contentLower.includes("projektu uchwały") ||
+      contentLower.includes("uchwał")
+    ) {
+      primarySuggestions.push({
+        id: "resolution-draft",
+        label: "Projekt uchwały",
+        icon: "📝",
+        prompt:
+          "Przygotuj projekt uchwały w tej sprawie. Uwzględnij: tytuł, podstawę prawną, treść merytoryczną i uzasadnienie.",
+        category: "legal",
+        isPrimary: true,
+      });
+    }
+
+    // Szablon raportu - jeśli wspomniany w tekście
+    if (
+      contentLower.includes("szablon raportu") ||
+      contentLower.includes("raport") ||
+      contentLower.includes("kontroli") ||
+      contentLower.includes("komisji rewizyjnej")
+    ) {
+      primarySuggestions.push({
+        id: "report-template",
+        label: "Szablon raportu",
+        icon: "📋",
+        prompt:
+          "Wygeneruj szablon raportu kontroli zawierający: nagłówek, zakres kontroli, ustalenia, wnioski i rekomendacje.",
+        category: "report",
+        isPrimary: true,
+      });
+    }
+
+    // Przypomnienie w kalendarzu - jeśli wspomniane terminy
+    if (
+      contentLower.includes("kalendarz") ||
+      contentLower.includes("termin") ||
+      contentLower.includes("przypomni") ||
+      contentLower.includes("data") ||
+      contentLower.match(/\d{1,2}[./]\d{1,2}[./]\d{4}/) ||
+      contentLower.match(
+        /styczeń|luty|marzec|kwiecień|maj|czerwiec|lipiec|sierpień|wrzesień|październik|listopad|grudzień/i,
+      )
+    ) {
+      primarySuggestions.push({
+        id: "calendar-reminder",
+        label: "Przypomnienie w kalendarzu",
+        icon: "📅",
+        prompt:
+          "Dodaj przypomnienia o kluczowych terminach z powyższego dokumentu do mojego kalendarza.",
+        category: "calendar",
+        isPrimary: true,
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // DODATKOWE SUGESTIE - kontekstowe narzędzia
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Analiza prawna
     if (
       contentLower.includes("uchwał") ||
       contentLower.includes("sesj") ||
       contentLower.includes("rada") ||
       categoryTypes.has("legal")
     ) {
-      addSuggestion({
+      secondarySuggestions.push({
         id: "legal-analysis",
         label: "Analiza prawna uchwały",
         icon: "⚖️",
@@ -387,16 +499,14 @@ export default function ChatPage() {
       });
     }
 
-    // Budżet i finanse
+    // Kontrola budżetowa
     if (
       contentLower.includes("budżet") ||
       contentLower.includes("wydatk") ||
       contentLower.includes("finans") ||
-      contentLower.includes("przychod") ||
-      contentLower.includes("dochod") ||
       categoryTypes.has("budget")
     ) {
-      addSuggestion({
+      secondarySuggestions.push({
         id: "budget-control",
         label: "Kontrola rozliczeń budżetowych",
         icon: "💰",
@@ -406,14 +516,13 @@ export default function ChatPage() {
       });
     }
 
-    // Dokumenty i raporty
+    // Pełny raport
     if (
       contentLower.includes("dokument") ||
       contentLower.includes("protokół") ||
-      contentLower.includes("raport") ||
       categoryTypes.has("report")
     ) {
-      addSuggestion({
+      secondarySuggestions.push({
         id: "full-report",
         label: "Pełny raport analizy",
         icon: "📊",
@@ -423,131 +532,96 @@ export default function ChatPage() {
       });
     }
 
-    // Interpelacje i zapytania
+    // Interpelacja
     if (
       contentLower.includes("interpelacj") ||
       contentLower.includes("zapytani") ||
-      contentLower.includes("wnios") ||
-      contentLower.includes("mieszkańc") ||
-      categoryTypes.has("legal")
+      contentLower.includes("wnios")
     ) {
-      addSuggestion({
+      secondarySuggestions.push({
         id: "interpellation",
         label: "Przygotuj interpelację",
         icon: "✍️",
         prompt:
-          "Przygotuj projekt interpelacji lub zapytania radnego w tej sprawie. Sformułuj pytania do organu wykonawczego i uzasadnienie.",
+          "Przygotuj projekt interpelacji lub zapytania radnego w tej sprawie.",
         category: "legal",
       });
     }
 
-    // Inwestycje i projekty
-    if (
-      contentLower.includes("inwestycj") ||
-      contentLower.includes("projekt") ||
-      contentLower.includes("realizacj") ||
-      contentLower.includes("przetarg") ||
-      categoryTypes.has("financial")
-    ) {
-      addSuggestion({
-        id: "investment-review",
-        label: "Przegląd realizacji inwestycji",
-        icon: "🏗️",
-        prompt:
-          "Przeanalizuj stan realizacji inwestycji: harmonogram, wydatki, zgodność z umową, potencjalne opóźnienia i ryzyka.",
-        category: "financial",
-      });
+    // Pogłębione wyszukiwanie
+    secondarySuggestions.push({
+      id: "deep-search",
+      label: "Pogłębione wyszukiwanie",
+      icon: "🔍",
+      prompt:
+        "Przeprowadź pogłębione wyszukiwanie w dostępnych dokumentach i bazach danych.",
+      category: "search",
+    });
+
+    // Plan działania
+    secondarySuggestions.push({
+      id: "action-plan",
+      label: "Plan działania radnego",
+      icon: "📋",
+      prompt:
+        "Przygotuj konkretny plan działania radnego: kroki do wykonania, terminy i sposób monitorowania.",
+      category: "action",
+    });
+
+    // Wystąpienie na sesji
+    secondarySuggestions.push({
+      id: "session-speech",
+      label: "Wystąpienie na sesji",
+      icon: "🎤",
+      prompt:
+        "Przygotuj projekt wystąpienia radnego na sesji Rady w tej sprawie.",
+      category: "report",
+    });
+
+    // Podstawa prawna
+    secondarySuggestions.push({
+      id: "legal-basis",
+      label: "Podstawa prawna",
+      icon: "📜",
+      prompt:
+        "Wskaż podstawę prawną w tej sprawie: właściwe ustawy, rozporządzenia i uchwały.",
+      category: "legal",
+    });
+
+    // Usuń duplikaty z secondary które są już w primary
+    const primaryIds = new Set(primarySuggestions.map((s) => s.id));
+    const filteredSecondary = secondarySuggestions.filter(
+      (s) => !primaryIds.has(s.id),
+    );
+
+    // Jeśli brak głównych sugestii, przenieś pierwsze 3 z dodatkowych
+    if (primarySuggestions.length === 0) {
+      return {
+        primary: filteredSecondary.slice(0, 3),
+        secondary: filteredSecondary.slice(3),
+      };
     }
 
-    // Komisje
-    if (
-      contentLower.includes("komisj") ||
-      contentLower.includes("posiedzeni")
-    ) {
-      addSuggestion({
-        id: "commission-summary",
-        label: "Podsumowanie prac komisji",
-        icon: "🏛️",
-        prompt:
-          "Przygotuj podsumowanie prac komisji: omówione tematy, podjęte decyzje, wnioski i rekomendacje dla Rady.",
-        category: "report",
-      });
-    }
-
-    // Mieszkańcy i sprawy społeczne
-    if (
-      contentLower.includes("mieszkańc") ||
-      contentLower.includes("społeczn") ||
-      contentLower.includes("petycj") ||
-      contentLower.includes("skarg")
-    ) {
-      addSuggestion({
-        id: "citizen-response",
-        label: "Odpowiedź dla mieszkańca",
-        icon: "👥",
-        prompt:
-          "Przygotuj projekt odpowiedzi na sprawę zgłoszoną przez mieszkańca. Uwzględnij podstawę prawną i możliwe rozwiązania.",
-        category: "action",
-      });
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // UNIWERSALNE ZADANIA RADNEGO (zawsze dostępne)
-    // ═══════════════════════════════════════════════════════════════════════
-
-    // Jeśli mało sugestii kontekstowych, dodaj uniwersalne
-    if (suggestions.length < 3) {
-      suggestions.push({
-        id: "deep-search",
-        label: "Pogłębione wyszukiwanie",
-        icon: "🔍",
-        prompt:
-          "Przeprowadź pogłębione wyszukiwanie w dostępnych dokumentach i bazach danych. Znajdź wszystkie powiązane informacje i źródła.",
-        category: "search",
-      });
-
-      suggestions.push({
-        id: "action-plan",
-        label: "Plan działania radnego",
-        icon: "📋",
-        prompt:
-          "Na podstawie powyższych informacji przygotuj konkretny plan działania radnego: kroki do wykonania, terminy, osoby odpowiedzialne i sposób monitorowania.",
-        category: "action",
-      });
-
-      suggestions.push({
-        id: "session-speech",
-        label: "Wystąpienie na sesji",
-        icon: "🎤",
-        prompt:
-          "Przygotuj projekt wystąpienia radnego na sesji Rady w tej sprawie. Uwzględnij argumenty, dane i propozycje rozwiązań.",
-        category: "report",
-      });
-
-      suggestions.push({
-        id: "legal-basis",
-        label: "Podstawa prawna",
-        icon: "📜",
-        prompt:
-          "Wskaż podstawę prawną w tej sprawie: właściwe ustawy, rozporządzenia, uchwały i kompetencje organów gminy.",
-        category: "legal",
-      });
-    }
-
-    return suggestions.slice(0, 4); // Max 4 sugestie
+    return {
+      primary: primarySuggestions.slice(0, 3),
+      secondary: filteredSecondary.slice(0, 6),
+    };
   };
+
+  // Stan dla rozwijanej listy dodatkowych narzędzi
+  const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
 
   // Eksport
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Zwijanie źródeł - domyślnie zwinięte
   const [expandedSources, setExpandedSources] = useState<Set<string>>(
-    new Set()
+    new Set(),
   );
 
   // Zwijanie długich wiadomości - domyślnie zwinięte
   const [expandedMessages, setExpandedMessages] = useState<Set<string>>(
-    new Set()
+    new Set(),
   );
 
   const toggleSources = (messageId: string) => {
@@ -611,7 +685,7 @@ export default function ChatPage() {
       "rozporządz",
     ];
     const legalScore = legalKeywords.filter((k) =>
-      lowerQuery.includes(k)
+      lowerQuery.includes(k),
     ).length;
     if (legalScore > 0) {
       categories.push({
@@ -634,7 +708,7 @@ export default function ChatPage() {
       "lista",
     ];
     const searchScore = searchKeywords.filter((k) =>
-      lowerQuery.includes(k)
+      lowerQuery.includes(k),
     ).length;
     if (searchScore > 0) {
       categories.push({
@@ -657,7 +731,7 @@ export default function ChatPage() {
       "wielolet",
     ];
     const budgetScore = budgetKeywords.filter((k) =>
-      lowerQuery.includes(k)
+      lowerQuery.includes(k),
     ).length;
     if (budgetScore > 0) {
       categories.push({
@@ -675,8 +749,8 @@ export default function ChatPage() {
     // Oznacz wiadomość jako rozbudowywaną
     setMessages((prev) =>
       prev.map((msg) =>
-        msg.id === messageId ? { ...msg, isExpanding: true } : msg
-      )
+        msg.id === messageId ? { ...msg, isExpanding: true } : msg,
+      ),
     );
 
     try {
@@ -696,7 +770,7 @@ export default function ChatPage() {
           depth: "standard",
           maxResults: 10,
         },
-        session.access_token
+        session.access_token,
       );
 
       // Wyodrębnij podstawy prawne z wyników
@@ -706,7 +780,7 @@ export default function ChatPage() {
             r.metadata?.documentType === "legal" ||
             r.url?.includes("prawo") ||
             r.url?.includes("lex") ||
-            r.url?.includes("isap")
+            r.url?.includes("isap"),
         )
         .slice(0, 5)
         .map((r: ResearchResult) => ({
@@ -733,15 +807,17 @@ export default function ChatPage() {
       // Zaktualizuj wiadomość z rozszerzeniem
       setMessages((prev) =>
         prev.map((msg) =>
-          msg.id === messageId ? { ...msg, expansion, isExpanding: false } : msg
-        )
+          msg.id === messageId
+            ? { ...msg, expansion, isExpanding: false }
+            : msg,
+        ),
       );
     } catch (err) {
       console.error("Błąd rozbudowy odpowiedzi:", err);
       setMessages((prev) =>
         prev.map((msg) =>
-          msg.id === messageId ? { ...msg, isExpanding: false } : msg
-        )
+          msg.id === messageId ? { ...msg, isExpanding: false } : msg,
+        ),
       );
       setError({
         message:
@@ -784,7 +860,7 @@ export default function ChatPage() {
               referencesInfo += `- ⚠️ **Brak w bazie:** ${missingCount} druków (analiza może być niepełna)\n`;
               if (analysis.context?.missingReferences?.length > 0) {
                 referencesInfo += `  - Brakujące: ${analysis.context.missingReferences.join(
-                  ", "
+                  ", ",
                 )}\n`;
               }
             }
@@ -867,34 +943,6 @@ export default function ChatPage() {
       window.history.replaceState({}, "", "/chat");
     }
   }, []);
-
-  // Funkcja ładowania konwersacji
-  const loadConversation = async (id: string) => {
-    try {
-      setLoading(true);
-      const data = await getConversation(id);
-
-      // Załaduj wiadomości z konwersacji
-      const loadedMessages: Message[] = data.conversation.messages.map(
-        (msg) => ({
-          id: msg.id,
-          role: msg.role as "user" | "assistant",
-          content: msg.content,
-          citations: msg.citations || [],
-        })
-      );
-
-      setMessages(loadedMessages);
-      setConversationId(id);
-    } catch (err) {
-      console.error("Error loading conversation:", err);
-      setError({
-        message: "Nie udało się załadować konwersacji",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
 
   // Toggle sidebar i zapisz w localStorage
   const toggleSidebar = () => {
@@ -1242,7 +1290,7 @@ export default function ChatPage() {
                                 <button
                                   onClick={() => {
                                     const msgIndex = messages.findIndex(
-                                      (m) => m.id === msg.id
+                                      (m) => m.id === msg.id,
                                     );
                                     const userQuery =
                                       msgIndex > 0
@@ -1385,7 +1433,7 @@ export default function ChatPage() {
                                         {finding}
                                       </span>
                                     </li>
-                                  )
+                                  ),
                                 )}
                               </ul>
                             </div>
@@ -1462,7 +1510,7 @@ export default function ChatPage() {
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center gap-2 px-3 py-2 text-xs bg-white text-blue-700 rounded-lg hover:bg-blue-100 transition-all shadow-sm hover:shadow border border-blue-200"
                                     title={`🎯 Trafność: ${Math.round(
-                                      source.relevance * 100
+                                      source.relevance * 100,
                                     )}%`}
                                   >
                                     <span>🔗</span>
@@ -1493,8 +1541,8 @@ export default function ChatPage() {
                                 cat.type === "legal"
                                   ? "bg-purple-100 text-purple-700 border border-purple-200"
                                   : cat.type === "search"
-                                  ? "bg-blue-100 text-blue-700 border border-blue-200"
-                                  : "bg-green-100 text-green-700 border border-green-200"
+                                    ? "bg-blue-100 text-blue-700 border border-blue-200"
+                                    : "bg-green-100 text-green-700 border border-green-200"
                               }`}
                             >
                               {cat.type === "legal" && (
@@ -1548,7 +1596,7 @@ export default function ChatPage() {
                                     {citation.relevanceScore && (
                                       <span className="text-xs text-green-600 bg-green-50 px-1.5 py-0.5 rounded">
                                         {Math.round(
-                                          citation.relevanceScore * 100
+                                          citation.relevanceScore * 100,
                                         )}
                                         % trafności
                                       </span>
@@ -1567,40 +1615,103 @@ export default function ChatPage() {
                     )}
 
                     {/* Sekcja następnych kroków - tylko dla odpowiedzi asystenta */}
-                    {msg.role === "assistant" && msg.id !== "welcome" && (
-                      <div className="mt-5 pt-5 border-t border-secondary-200">
-                        <p className="text-xs font-semibold text-secondary-600 uppercase mb-3 flex items-center gap-2">
-                          <Sparkles className="h-3.5 w-3.5 text-primary-500" />
-                          Co chciałbyś zrobić w następnym kroku?
-                        </p>
-                        <div className="grid grid-cols-2 gap-2">
-                          {generateNextSteps(msg.content, msg.categories).map(
-                            (step) => (
-                              <button
-                                key={step.id}
-                                onClick={() => {
-                                  setMessage(step.prompt);
-                                }}
-                                className={`flex items-center gap-2 px-3 py-2.5 text-xs font-medium rounded-xl border transition-all hover:shadow-md text-left ${
-                                  step.category === "legal"
-                                    ? "bg-purple-50 border-purple-200 text-purple-700 hover:bg-purple-100"
-                                    : step.category === "financial"
-                                    ? "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
-                                    : step.category === "report"
-                                    ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
-                                    : step.category === "search"
-                                    ? "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100"
-                                    : "bg-secondary-50 border-secondary-200 text-secondary-700 hover:bg-secondary-100"
-                                }`}
-                              >
-                                <span className="text-base">{step.icon}</span>
-                                <span className="truncate">{step.label}</span>
-                              </button>
-                            )
-                          )}
-                        </div>
-                      </div>
-                    )}
+                    {msg.role === "assistant" &&
+                      msg.id !== "welcome" &&
+                      (() => {
+                        const { primary, secondary } = generateNextSteps(
+                          msg.content,
+                          msg.categories,
+                        );
+                        const isExpanded = expandedTools.has(msg.id);
+
+                        const getCategoryStyle = (category: string) => {
+                          switch (category) {
+                            case "legal":
+                              return "bg-purple-50 border-purple-200 text-purple-700 hover:bg-purple-100";
+                            case "financial":
+                              return "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100";
+                            case "report":
+                              return "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100";
+                            case "search":
+                              return "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100";
+                            case "calendar":
+                              return "bg-cyan-50 border-cyan-200 text-cyan-700 hover:bg-cyan-100";
+                            default:
+                              return "bg-secondary-50 border-secondary-200 text-secondary-700 hover:bg-secondary-100";
+                          }
+                        };
+
+                        return (
+                          <div className="mt-5 pt-5 border-t border-secondary-200">
+                            <p className="text-xs font-semibold text-secondary-600 uppercase mb-3 flex items-center gap-2">
+                              <Sparkles className="h-3.5 w-3.5 text-primary-500" />
+                              Co chciałbyś zrobić w następnym kroku?
+                            </p>
+
+                            {/* Główne sugestie - zawsze widoczne */}
+                            <div className="grid grid-cols-3 gap-2 mb-2">
+                              {primary.map((step) => (
+                                <button
+                                  key={step.id}
+                                  onClick={() => setMessage(step.prompt)}
+                                  className={`flex items-center gap-2 px-3 py-2.5 text-xs font-medium rounded-xl border transition-all hover:shadow-md text-left ${getCategoryStyle(step.category)}`}
+                                >
+                                  <span className="text-base">{step.icon}</span>
+                                  <span className="truncate">{step.label}</span>
+                                </button>
+                              ))}
+                            </div>
+
+                            {/* Lista rozwijana z dodatkowymi narzędziami */}
+                            {secondary.length > 0 && (
+                              <div className="mt-2">
+                                <button
+                                  onClick={() => {
+                                    setExpandedTools((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(msg.id)) {
+                                        next.delete(msg.id);
+                                      } else {
+                                        next.add(msg.id);
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                  className="flex items-center gap-1.5 text-xs text-secondary-500 hover:text-secondary-700 transition-colors"
+                                >
+                                  {isExpanded ? (
+                                    <ChevronDown className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <ChevronRight className="h-3.5 w-3.5" />
+                                  )}
+                                  <span>
+                                    Więcej narzędzi ({secondary.length})
+                                  </span>
+                                </button>
+
+                                {isExpanded && (
+                                  <div className="grid grid-cols-2 gap-2 mt-2 animate-in slide-in-from-top-2 duration-200">
+                                    {secondary.map((step) => (
+                                      <button
+                                        key={step.id}
+                                        onClick={() => setMessage(step.prompt)}
+                                        className={`flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg border transition-all hover:shadow-sm text-left opacity-90 ${getCategoryStyle(step.category)}`}
+                                      >
+                                        <span className="text-sm">
+                                          {step.icon}
+                                        </span>
+                                        <span className="truncate">
+                                          {step.label}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                   </div>
                 </div>
               </div>
@@ -1721,7 +1832,7 @@ export default function ChatPage() {
                 onTextExtracted={(text, action) => {
                   if (action === "chat") {
                     setMessage(
-                      text.slice(0, 500) + (text.length > 500 ? "..." : "")
+                      text.slice(0, 500) + (text.length > 500 ? "..." : ""),
                     );
                   } else {
                     setMessage(text);
@@ -1730,15 +1841,6 @@ export default function ChatPage() {
                 }}
                 onError={(err) => setError({ message: err })}
               />
-
-              {/* Załącz dokumenty z bazy */}
-              <button
-                onClick={() => setShowDocumentPicker(true)}
-                className="h-full px-3 rounded-xl border-2 border-secondary-200 hover:border-violet-300 hover:bg-violet-50 transition-colors"
-                title="Załącz dokumenty z bazy wiedzy"
-              >
-                <Paperclip className="h-4 w-4 text-text-secondary" />
-              </button>
 
               {/* System Status */}
               <SystemStatus apiError={error} />
@@ -1762,7 +1864,7 @@ export default function ChatPage() {
                     onClick={() =>
                       exportConversationToPDF(
                         messages.filter((m) => m.id !== "welcome"),
-                        "Konwersacja"
+                        "Konwersacja",
                       )
                     }
                     className="w-full px-3 py-1.5 text-left text-xs hover:bg-red-50 text-red-600 flex items-center gap-2"
@@ -1773,7 +1875,7 @@ export default function ChatPage() {
                     onClick={() =>
                       exportConversationToDOCX(
                         messages.filter((m) => m.id !== "welcome"),
-                        "Konwersacja"
+                        "Konwersacja",
                       )
                     }
                     className="w-full px-3 py-1.5 text-left text-xs hover:bg-blue-50 text-blue-600 flex items-center gap-2"
@@ -1784,7 +1886,7 @@ export default function ChatPage() {
                     onClick={() =>
                       exportConversationToRTF(
                         messages.filter((m) => m.id !== "welcome"),
-                        "Konwersacja"
+                        "Konwersacja",
                       )
                     }
                     className="w-full px-3 py-1.5 text-left text-xs hover:bg-purple-50 text-purple-600 flex items-center gap-2"
@@ -1856,12 +1958,6 @@ export default function ChatPage() {
           onClose={() => setShowYouTubeTool(false)}
         />
       )}
-
-      {/* Document Picker Modal */}
-      <DocumentPicker
-        isOpen={showDocumentPicker}
-        onClose={() => setShowDocumentPicker(false)}
-      />
 
       {/* Modal dokumentu źródłowego */}
       {documentModal.isOpen && (

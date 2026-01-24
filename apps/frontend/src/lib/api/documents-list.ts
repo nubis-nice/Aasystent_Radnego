@@ -2,7 +2,7 @@
  * API client dla listy dokumentów
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 export type DocumentPriority = "critical" | "high" | "medium" | "low";
 

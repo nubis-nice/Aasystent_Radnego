@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import { transcribeAudio, processVoiceCommand } from "@/lib/api/voice";
+import type { VoiceCommandResult } from "@/lib/api/voice";
 
 export interface VoiceCommand {
   transcription: string;
@@ -7,6 +8,53 @@ export interface VoiceCommand {
   confidence: number;
   action: VoiceAction;
   timestamp: Date;
+}
+
+function normalizeVoiceAction(
+  action: VoiceCommandResult["action"],
+  fallbackTranscription: string,
+): VoiceAction {
+  if (!action || typeof action !== "object" || !("type" in action)) {
+    return { type: "chat", message: fallbackTranscription };
+  }
+
+  switch (action.type) {
+    case "navigate":
+      return {
+        type: "navigate",
+        path:
+          typeof action.path === "string" && action.path.length > 0
+            ? action.path
+            : "/dashboard",
+      };
+    case "search":
+      return {
+        type: "search",
+        query:
+          typeof action.query === "string" && action.query.length > 0
+            ? action.query
+            : fallbackTranscription,
+        tool: typeof action.tool === "string" ? action.tool : undefined,
+      };
+    case "chat":
+      return {
+        type: "chat",
+        message:
+          typeof action.message === "string" && action.message.length > 0
+            ? action.message
+            : fallbackTranscription,
+      };
+    case "control":
+      return {
+        type: "control",
+        command:
+          typeof action.command === "string" && action.command.length > 0
+            ? action.command
+            : "stop",
+      };
+    default:
+      return { type: "chat", message: fallbackTranscription };
+  }
 }
 
 export type VoiceIntent =
@@ -64,11 +112,16 @@ export function useVoiceCommands(): UseVoiceCommandsResult {
 
         const commandResult = await processVoiceCommand(transcription);
 
+        const normalizedAction = normalizeVoiceAction(
+          commandResult.action,
+          transcription,
+        );
+
         const voiceCommand: VoiceCommand = {
           transcription,
           intent: commandResult.intent,
           confidence: commandResult.confidence,
-          action: commandResult.action,
+          action: normalizedAction,
           timestamp: new Date(),
         };
 
@@ -97,7 +150,7 @@ export function useVoiceCommands(): UseVoiceCommandsResult {
         return null;
       }
     },
-    []
+    [],
   );
 
   const executeCommand = useCallback(async (command: VoiceCommand) => {

@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 export interface ProcessedDocumentResult {
   success: boolean;
@@ -72,7 +72,7 @@ async function getAuthToken(): Promise<string> {
 }
 
 export async function processDocument(
-  file: File
+  file: File,
 ): Promise<ProcessedDocumentResult> {
   const token = await getAuthToken();
 
@@ -87,7 +87,13 @@ export async function processDocument(
     body: formData,
   });
 
-  const data = await response.json();
+  let data;
+  try {
+    data = await response.json();
+  } catch (parseError) {
+    console.error("[DocumentProcessor] JSON parse error:", parseError);
+    throw new Error("Serwer zwrócił nieprawidłową odpowiedź");
+  }
 
   if (!response.ok) {
     throw new Error(data.error || "Błąd przetwarzania dokumentu");
@@ -97,7 +103,7 @@ export async function processDocument(
 }
 
 export async function transcribeAudio(
-  file: File
+  file: File,
 ): Promise<TranscriptionResult> {
   const token = await getAuthToken();
 
@@ -112,7 +118,13 @@ export async function transcribeAudio(
     body: formData,
   });
 
-  const data = await response.json();
+  let data;
+  try {
+    data = await response.json();
+  } catch (parseError) {
+    console.error("[DocumentProcessor] JSON parse error:", parseError);
+    throw new Error("Serwer zwrócił nieprawidłową odpowiedź");
+  }
 
   if (!response.ok) {
     throw new Error(data.error || "Błąd transkrypcji");
@@ -125,7 +137,7 @@ export async function saveToRAG(
   text: string,
   title: string,
   sourceFileName: string,
-  documentType: string = "uploaded"
+  documentType: string = "uploaded",
 ): Promise<SaveToRAGResult> {
   const token = await getAuthToken();
 

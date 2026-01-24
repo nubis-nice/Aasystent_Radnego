@@ -39,7 +39,7 @@ export const youtubeRoutes: FastifyPluginAsync = async (fastify) => {
         .select("url, name")
         .eq("user_id", user.id)
         .or(
-          "type.eq.youtube,url.ilike.%youtube.com/@%,url.ilike.%youtube.com/channel/%"
+          "type.eq.youtube,url.ilike.%youtube.com/@%,url.ilike.%youtube.com/channel/%",
         )
         .limit(1);
 
@@ -65,7 +65,7 @@ export const youtubeRoutes: FastifyPluginAsync = async (fastify) => {
           };
 
       console.log(
-        `[YouTube API] Using channel: ${channelConfig.channelUrl} (${channelConfig.name})`
+        `[YouTube API] Using channel: ${channelConfig.channelUrl} (${channelConfig.name})`,
       );
 
       const service = new YouTubeSessionService();
@@ -185,15 +185,16 @@ export const youtubeRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       fastify.log.info(
-        `[YouTube] Audio downloaded: ${downloadResult.audioPath}`
+        `[YouTube] Audio downloaded: ${downloadResult.audioPath}`,
       );
 
-      // Transcribe and analyze
+      // Transcribe and analyze - przekazujemy precomputed parts
       const result = await downloader.transcribeAndAnalyze(
         downloadResult.audioPath,
         videoId,
         videoTitle || downloadResult.title || "Sesja Rady",
-        videoUrl
+        videoUrl,
+        downloadResult.parts, // Precomputed parts z downloadAudio()
       );
 
       if (!result.success) {
@@ -265,7 +266,7 @@ export const youtubeRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       fastify.log.info(
-        `[YouTube] Creating async transcription job for: ${videoUrl}`
+        `[YouTube] Creating async transcription job for: ${videoUrl}`,
       );
 
       // Utwórz zadanie asynchroniczne w Redis queue
@@ -277,7 +278,7 @@ export const youtubeRoutes: FastifyPluginAsync = async (fastify) => {
           sessionId,
           includeSentiment: includeSentiment ?? true,
           identifySpeakers: identifySpeakers ?? true,
-        }
+        },
       );
 
       // Zapisz zadanie w bazie dla persystencji
@@ -596,14 +597,14 @@ export const youtubeRoutes: FastifyPluginAsync = async (fastify) => {
             .select("id, title")
             .eq("user_id", user.id)
             .or(
-              `title.ilike.%sesja ${sessionNumber}%,title.ilike.%${sessionNumber} sesj%`
+              `title.ilike.%sesja ${sessionNumber}%,title.ilike.%${sessionNumber} sesj%`,
             )
             .limit(5);
 
           if (relatedDocs && relatedDocs.length > 0) {
             // Zapisz powiązania w document_relations (jeśli tabela istnieje)
             console.log(
-              `[RAG] Found ${relatedDocs.length} related documents for session ${sessionNumber}`
+              `[RAG] Found ${relatedDocs.length} related documents for session ${sessionNumber}`,
             );
           }
         }
@@ -626,6 +627,9 @@ export const youtubeRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post<{
     Params: { jobId: string };
   }>("/youtube/job/:jobId/cancel", async (request, reply) => {
+    fastify.log.info(
+      `[YouTube] CANCEL request for job: ${request.params.jobId}`,
+    );
     try {
       const authHeader = request.headers.authorization;
       if (!authHeader?.startsWith("Bearer ")) {
@@ -696,6 +700,9 @@ export const youtubeRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.delete<{
     Params: { jobId: string };
   }>("/youtube/job/:jobId", async (request, reply) => {
+    fastify.log.info(
+      `[YouTube] DELETE request for job: ${request.params.jobId}`,
+    );
     try {
       const authHeader = request.headers.authorization;
       if (!authHeader?.startsWith("Bearer ")) {
@@ -792,14 +799,26 @@ export const youtubeRoutes: FastifyPluginAsync = async (fastify) => {
           .send({ error: "Brak dostępu do tego zadania" });
       }
 
-      if (dbJob.status !== "failed") {
+      // Pozwól na retry dla: failed, pending (utknięte), downloading, transcribing, analyzing, saving
+      const canRetry = [
+        "failed",
+        "pending",
+        "downloading",
+        "transcribing",
+        "analyzing",
+        "saving",
+      ].includes(dbJob.status);
+      if (!canRetry) {
         return reply
           .status(400)
-          .send({ error: "Można ponowić tylko nieudane zadania" });
+          .send({ error: "Nie można ponowić zakończonego zadania" });
       }
 
-      // Spróbuj retry w Redis queue
-      const retried = await retryTranscriptionJob(jobId);
+      // Spróbuj retry w Redis queue (dla failed)
+      let retried = false;
+      if (dbJob.status === "failed") {
+        retried = await retryTranscriptionJob(jobId);
+      }
 
       if (retried) {
         // Zaktualizuj status w bazie
@@ -821,6 +840,7 @@ export const youtubeRoutes: FastifyPluginAsync = async (fastify) => {
           message: "Zadanie zostało ponowione",
         });
       } else {
+        // Dla utkniętych zadań (pending bez wpisu w kolejce) - utwórz nowe
         // Utwórz nowe zadanie z tymi samymi parametrami
         const newJobId = await addTranscriptionJob(
           user.id,
@@ -830,7 +850,7 @@ export const youtubeRoutes: FastifyPluginAsync = async (fastify) => {
             sessionId: dbJob.session_id,
             includeSentiment: dbJob.include_sentiment,
             identifySpeakers: dbJob.identify_speakers,
-          }
+          },
         );
 
         // Zapisz nowe zadanie w bazie
@@ -849,7 +869,7 @@ export const youtubeRoutes: FastifyPluginAsync = async (fastify) => {
         });
 
         fastify.log.info(
-          `[YouTube] New job ${newJobId} created to replace failed job ${jobId}`
+          `[YouTube] New job ${newJobId} created to replace failed job ${jobId}`,
         );
 
         return reply.send({
@@ -863,6 +883,59 @@ export const youtubeRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.status(500).send({
         error:
           error instanceof Error ? error.message : "Błąd ponowienia zadania",
+      });
+    }
+  });
+
+  // DELETE /api/youtube/jobs/cleanup - Usuń wszystkie niedziałające zadania
+  fastify.delete("/youtube/jobs/cleanup", async (request, reply) => {
+    try {
+      const authHeader = request.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return reply.status(401).send({ error: "Unauthorized" });
+      }
+
+      const token = authHeader.substring(7);
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser(token);
+
+      if (authError || !user) {
+        return reply.status(401).send({ error: "Invalid token" });
+      }
+
+      // Usuń zadania które nie są completed (utknięte/failed)
+      const { data: deletedJobs, error: deleteError } = await supabase
+        .from("transcription_jobs")
+        .delete()
+        .eq("user_id", user.id)
+        .neq("status", "completed")
+        .select("id, video_title, status");
+
+      if (deleteError) {
+        throw new Error(`Database error: ${deleteError.message}`);
+      }
+
+      fastify.log.info(
+        `[YouTube] Cleaned up ${deletedJobs?.length || 0} stuck jobs for user ${user.id}`,
+      );
+
+      return reply.send({
+        success: true,
+        deletedCount: deletedJobs?.length || 0,
+        deletedJobs: deletedJobs?.map((j) => ({
+          id: j.id,
+          title: j.video_title,
+          status: j.status,
+        })),
+        message: `Usunięto ${deletedJobs?.length || 0} niedziałających zadań`,
+      });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send({
+        error:
+          error instanceof Error ? error.message : "Błąd czyszczenia zadań",
       });
     }
   });

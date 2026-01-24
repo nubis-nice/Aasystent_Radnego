@@ -3,6 +3,9 @@
  * Agent AI "Winsdurf" - Deep Internet Researcher
  * Main service coordinating multi-provider research with AI synthesis
  */
+import { Buffer } from "node:buffer";
+import { randomUUID } from "node:crypto";
+import { URL } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { ExaProvider } from "./research-providers/exa-provider.js";
 import { TavilyProvider } from "./research-providers/tavily-provider.js";
@@ -49,7 +52,7 @@ export class DeepResearchService {
                 throw error;
             const apiKeys = {};
             // Map API keys for research providers (decode from base64)
-            for (const config of configs || []) {
+            for (const config of (configs || [])) {
                 apiKeys[config.provider] = Buffer.from(config.api_key_encrypted, "base64").toString("utf-8");
             }
             console.log(`[DeepResearch] Found research providers:`, Object.keys(apiKeys));
@@ -164,7 +167,7 @@ export class DeepResearchService {
             const confidence = this.calculateConfidence(rankedResults);
             const processingTime = Date.now() - startTime;
             const report = {
-                id: crypto.randomUUID(),
+                id: randomUUID(),
                 query: request.query,
                 researchType: request.researchType,
                 depth: request.depth,
@@ -197,19 +200,35 @@ export class DeepResearchService {
                 messages: [
                     {
                         role: "system",
-                        content: "Jesteś ekspertem od researchu prawnego. Rozłóż złożone pytanie prawne na 2-4 prostsze pod-pytania, które pomogą znaleźć kompletną odpowiedź. Zwróć tylko listę pytań, każde w nowej linii.",
+                        content: "Jesteś ekspertem od researchu. Rozłóż pytanie na 2-4 prostsze pod-pytania do wyszukiwania. ZAWSZE zwracaj pytania, NIGDY nie odmawiaj. Zwróć tylko listę pytań, każde w nowej linii, bez numeracji.",
                     },
                     {
                         role: "user",
-                        content: query,
+                        content: `Rozłóż to pytanie na pod-pytania: ${query}`,
                     },
                 ],
                 temperature: 0.3,
             });
-            const subQueries = completion.choices[0].message.content
-                ?.split("\n")
+            const response = completion.choices[0].message.content?.trim() || "";
+            // Check for refusal patterns
+            const refusalPatterns = [
+                "i'm sorry",
+                "i can't",
+                "i cannot",
+                "nie mogę",
+                "przepraszam",
+                "sorry, but",
+                "unable to",
+            ];
+            const isRefusal = refusalPatterns.some((pattern) => response.toLowerCase().includes(pattern));
+            if (isRefusal || response.length < 10) {
+                console.log("[DeepResearch] LLM refused or invalid response, using original query");
+                return [query];
+            }
+            const subQueries = response
+                .split("\n")
                 .map((q) => q.replace(/^[-*\d.)\s]+/, "").trim())
-                .filter((q) => q.length > 10) || [];
+                .filter((q) => q.length > 10);
             return subQueries.length > 0 ? subQueries : [query];
         }
         catch (error) {
@@ -596,7 +615,7 @@ export class DeepResearchService {
      */
     async saveReport(report) {
         try {
-            const { error } = await this.supabase.from("research_reports").insert({
+            const insertData = {
                 id: report.id,
                 user_id: this.userId,
                 query: report.query,
@@ -610,7 +629,10 @@ export class DeepResearchService {
                 confidence: report.confidence,
                 processing_time: report.processingTime,
                 created_at: report.generatedAt,
-            });
+            };
+            const { error } = await this.supabase
+                .from("research_reports")
+                .insert(insertData);
             if (error)
                 throw error;
         }
@@ -639,7 +661,7 @@ export class DeepResearchService {
     async verifyClaim(claim) {
         // TODO: Implement claim verification
         // This would search for supporting and contradicting evidence
-        throw new Error("Claim verification not yet implemented");
+        throw new Error(`Claim verification not yet implemented for: ${claim.substring(0, 50)}`);
     }
 }
 //# sourceMappingURL=deep-research-service.js.map

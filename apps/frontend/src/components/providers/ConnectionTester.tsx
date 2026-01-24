@@ -61,7 +61,7 @@ export function ConnectionTester({
         if (resultsLimit) body.results_limit = resultsLimit;
       }
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
       const response = await fetch(`${apiUrl}/api/test/connection`, {
         method: "POST",
         headers: {

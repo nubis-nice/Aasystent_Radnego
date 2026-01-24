@@ -311,81 +311,35 @@ Szczegóły: `.windsurf/base_rules.md` (zasady budowania aplikacji)
 - **Release checklist** – lint + type-check, smoke test `/health`, test zapytania RAG, test DeepResearch (mock provider). Deployment lokalny: `npm run dev`; produkcyjny: docker-compose profile `api`, `frontend`, `worker`.
 - **Alerty operacyjne** – brak dostępu do Supabase, błędy 5xx dla `/api/research`, kolejka BullMQ > 50 jobów, brak nowych dokumentów >24h. Alerty trafiają do kanału #windsurf-ops oraz do właściciela zmiany.
 
-## Stan implementacji (2026-01-09)
+## Stan implementacji (2026-01-24)
 
 ### Co działa (deployment local dev)
 
-- **Infrastruktura**: Docker Compose (Redis, Whisper) + Supabase PostgreSQL (cloud).
-- **Frontend**: Next.js (app router) na `localhost:3000` — kompletny panel z nawigacją.
-- **API**: Fastify na `localhost:3001` — pełne API (dokumenty, analizy, czat, research).
-- **Worker**: BullMQ + Redis — joby ekstrakcji, analizy, wykrywania relacji.
+- **Infrastruktura**: Docker Compose (Redis, Speaches STT) + Supabase PostgreSQL (cloud).
+- **Frontend**: Next.js 14 (app router) na `localhost:3000` — kompletny panel.
+- **API**: Fastify na `localhost:3001` — 25 route files, 67 services.
+- **Worker**: BullMQ + Redis — 6 job handlers.
 - **Repo**: npm workspaces (apps/api, apps/frontend, apps/worker, packages/shared).
+- **Migracje**: 42 pliki SQL w `apps/api/migrations/`.
 
-### Zaimplementowane moduły
+### Kluczowe moduły
 
-- **API Routes** (10 plików):
+- **AI System** (`apps/api/src/ai/`): AIClientFactory, AIConfigResolver, defaults, types
+- **Transkrypcja**: TranscriptionQueue (Redis), TranscriptionWorker, TranscriptionRecovery
+- **Voice**: VoiceActionService, VoiceIntentDetector, voice routes
+- **Research**: DeepResearchService + 4 providery (Exa, Brave, Tavily, Serper)
+- **Legal**: LegalSearchApi, LegalReasoningEngine, BudgetAnalysisEngine
+- **Scraping**: IntelligentScraper, ScraperV2, UnifiedDataService
+- **OCR/Vision**: DocumentProcessor, VisionQueue, VisionOptimizer
 
-  - `auth.ts` - autoryzacja Supabase
-  - `chat.ts` - czat AI z RAG
-  - `data-sources.ts` - zarządzanie źródłami danych
-  - `deep-research.ts` - Deep Internet Researcher
-  - `documents.ts` - CRUD dokumentów
-  - `legal-analysis.ts` - analizy prawne
-  - `providers.ts` - konfiguracja providerów AI
-  - `api-models.ts` - modele AI
-  - `test-api.ts`, `test.ts` - testowanie
+### API Routes (25 plików)
 
-- **Services** (silniki analityczne):
+auth, chat, dashboard, data-sources, deep-research, diagnostics, document-graph, documents, eu-funds, gdos, geoportal, gus, isap, krs, legal-analysis, providers, teryt, voice, youtube, ceidg, api-models, test-api, test
 
-  - `legal-search-api.ts` - wyszukiwanie fulltext/semantic/hybrid
-  - `legal-reasoning-engine.ts` - analiza prawna z ryzykami
-  - `budget-analysis-engine.ts` - analiza budżetowa
-  - `deep-research-service.ts` - multi-provider research
-  - `unified-data-service.ts` - orkiestrator pobierania danych
-  - `scraper-v2.ts` - web scraping z Cheerio
-  - `semantic-document-discovery.ts` - semantic search z intelligent scraping
-  - `document-analysis-service.ts` - analiza dokumentów z crawlingiem źródeł
-  - `intelligent-scraper.ts` - zaawansowany scraper z LLM analysis
-  - `context-compressor.ts` - kompresja kontekstu AI (tokenizer, summaryzacja)
-  - `batch-embedding-service.ts` - OpenAI Batch API dla embeddingów (50% taniej)
-  - `document-processor.ts` - przetwarzanie PDF/DOCX z OCR (Tesseract.js + Sharp)
-  - `document-query-service.ts` - inteligentne wykrywanie dokumentów w chacie (ID/nazwa → RAG → potwierdzenie)
+### Worker Jobs (6)
 
-- **Data Fetchers**:
+extraction, analysis, relations, vision-ocr, youtube-transcription, scraping
 
-  - `api-fetcher.ts` - klient API (OAuth2, API key, Basic, Bearer)
-  - `scraper-fetcher.ts` - web scraping
-  - `base-fetcher.ts` - bazowa klasa
+### Frontend Pages
 
-- **Research Providers** (z automatycznym fallback gdy provider zawiedzie):
-
-  - `exa-provider.ts` - Exa AI (priorytet 1)
-  - `brave-provider.ts` - Brave Search (priorytet 2, dobre wsparcie PL)
-  - `tavily-provider.ts` - Tavily AI (priorytet 2)
-  - `serper-provider.ts` - Serper/Google (priorytet 3)
-
-- **Worker Jobs**:
-
-  - `extraction.ts` - ekstrakcja tekstu z PDF/skanów
-  - `analysis.ts` - streszczenie + skanowanie ryzyk
-  - `relations.ts` - wykrywanie relacji między dokumentami
-
-- **Frontend Pages**:
-
-  - `/dashboard` - panel główny
-  - `/documents` - lista i podgląd dokumentów
-  - `/chat` - czat AI z cytatami
-  - `/analysis` - analizy prawne i budżetowe
-  - `/research` - Deep Internet Researcher
-  - `/settings/*` - ustawienia (profil, API, źródła danych, wygląd)
-  - `/admin/users` - zarządzanie użytkownikami
-
-- **Migracje bazy danych** (17 plików SQL):
-  - Schematy: users, documents, chunks, analyses, conversations, data_sources, research_reports
-  - Funkcje: semantic search, embedding matching
-
-### Do uruchomienia (wymagane)
-
-- Uruchomienie wszystkich migracji w Supabase
-- Konfiguracja zmiennych środowiskowych (OPENAI*API_KEY, SUPABASE*\*)
-- Test z prawdziwymi dokumentami
+`/dashboard`, `/documents`, `/documents/youtube`, `/chat`, `/analysis`, `/research`, `/calendar`, `/settings/*`, `/admin/users`

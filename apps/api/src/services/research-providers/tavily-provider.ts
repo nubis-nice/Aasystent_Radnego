@@ -15,11 +15,13 @@ import type {
 export class TavilyProvider extends BaseResearchProvider {
   async search(
     query: string,
-    options: SearchOptions = {}
+    options: SearchOptions = {},
   ): Promise<ResearchResult[]> {
+    const searchDepth = options.searchType === "keyword" ? "basic" : "advanced";
+
     const request: TavilySearchRequest = {
       query,
-      search_depth: options.searchType === "deep" ? "advanced" : "basic",
+      search_depth: searchDepth,
       include_domains: options.domains,
       exclude_domains: options.excludeDomains,
       max_results: options.maxResults || 5,

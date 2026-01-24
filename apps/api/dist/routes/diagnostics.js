@@ -208,58 +208,102 @@ async function checkRAGStatus(userId) {
  */
 async function checkResearchStatus(userId) {
     try {
-        // Pobierz konfiguracje API dla research providerów
-        const { data: configs, error } = await supabase
+        // Najpierw pobierz konfiguracje semantic search
+        const { data: semanticConfigs, error: semanticError } = await supabase
             .from("api_configurations")
-            .select("provider, is_active")
+            .select("provider, is_active, config_type")
             .eq("user_id", userId)
-            .in("provider", ["exa", "tavily", "serper"]);
-        if (error) {
+            .eq("config_type", "semantic");
+        if (semanticError) {
             return {
                 status: "error",
-                message: `Database error: ${error.message}`,
-                providers: {
-                    exa: false,
-                    tavily: false,
-                    serper: false,
-                },
+                message: `Database error: ${semanticError.message}`,
+                providers: {},
+                totalProviders: 0,
+                activeProviders: 0,
             };
         }
-        const providers = {
-            exa: configs?.some((c) => c.provider === "exa" && c.is_active) || false,
-            tavily: configs?.some((c) => c.provider === "tavily" && c.is_active) || false,
-            serper: configs?.some((c) => c.provider === "serper" && c.is_active) || false,
-        };
-        const activeCount = Object.values(providers).filter(Boolean).length;
+        let providerConfigs = (semanticConfigs || []);
+        // Fallback dla starszych konfiguracji, które mogły nie mieć typu "semantic"
+        if (providerConfigs.length === 0) {
+            const { data: legacyConfigs, error: legacyError } = await supabase
+                .from("api_configurations")
+                .select("provider, is_active")
+                .eq("user_id", userId)
+                .is("config_type", null)
+                .in("provider", ["exa", "tavily", "serper"]);
+            if (legacyError) {
+                return {
+                    status: "error",
+                    message: `Database error: ${legacyError.message}`,
+                    providers: {},
+                    totalProviders: 0,
+                    activeProviders: 0,
+                };
+            }
+            providerConfigs = (legacyConfigs || []);
+        }
+        if (providerConfigs.length === 0) {
+            return {
+                status: "error",
+                message: "Brak skonfigurowanych wyszukiwarek semantycznych",
+                providers: {},
+                totalProviders: 0,
+                activeProviders: 0,
+            };
+        }
+        const providers = providerConfigs.reduce((acc, config) => {
+            const providerName = config.provider?.toLowerCase();
+            if (!providerName)
+                return acc;
+            if (!(providerName in acc)) {
+                acc[providerName] = Boolean(config.is_active);
+            }
+            else if (config.is_active) {
+                acc[providerName] = true;
+            }
+            return acc;
+        }, {});
+        const totalProviders = Object.keys(providers).length;
+        const activeProviders = Object.values(providers).filter(Boolean).length;
+        if (totalProviders === 0) {
+            return {
+                status: "error",
+                message: "Brak skonfigurowanych wyszukiwarek semantycznych",
+                providers: {},
+                totalProviders: 0,
+                activeProviders: 0,
+            };
+        }
         let status;
         let message;
-        if (activeCount === 0) {
+        if (activeProviders === 0) {
             status = "error";
-            message = "Brak aktywnych providerów research";
+            message = "Brak aktywnych providerów semantic search";
         }
-        else if (activeCount === 1) {
+        else if (activeProviders === 1) {
             status = "degraded";
-            message = `Tylko 1 provider aktywny - zalecane minimum 2`;
+            message = "Tylko jeden provider semantic search jest aktywny";
         }
         else {
             status = "healthy";
-            message = `${activeCount} providerów aktywnych`;
+            message = `${activeProviders}/${totalProviders} providerów semantic search aktywnych`;
         }
         return {
             status,
             message,
             providers,
+            totalProviders,
+            activeProviders,
         };
     }
     catch (error) {
         return {
             status: "error",
             message: error instanceof Error ? error.message : "Unknown error",
-            providers: {
-                exa: false,
-                tavily: false,
-                serper: false,
-            },
+            providers: {},
+            totalProviders: 0,
+            activeProviders: 0,
         };
     }
 }

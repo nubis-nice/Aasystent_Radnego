@@ -5,6 +5,7 @@
 
 import { FastifyInstance } from "fastify";
 import { LegalSearchAPI } from "../services/legal-search-api.js";
+import type { DataSourceType } from "@aasystent-radnego/shared";
 import { LegalReasoningEngine } from "../services/legal-reasoning-engine.js";
 import { BudgetAnalysisEngine } from "../services/budget-analysis-engine.js";
 
@@ -43,11 +44,21 @@ export async function legalAnalysisRoutes(fastify: FastifyInstance) {
       }
 
       const searchAPI = new LegalSearchAPI(userId);
+
+      const normalizedFilters = filters
+        ? {
+            ...filters,
+            sourceTypes: filters.sourceTypes?.filter((s): s is DataSourceType =>
+              Boolean(s),
+            ),
+          }
+        : undefined;
+
       const results = await searchAPI.search({
         query,
         searchMode,
         maxResults,
-        filters,
+        filters: normalizedFilters,
       });
 
       return reply.send({
@@ -56,7 +67,7 @@ export async function legalAnalysisRoutes(fastify: FastifyInstance) {
         searchMode,
       });
     } catch (error) {
-      request.log.error("Legal search error:", error);
+      request.log.error({ err: error }, "Legal search error");
       return reply.status(500).send({
         error: "Internal server error",
         message: error instanceof Error ? error.message : "Unknown error",
@@ -106,7 +117,7 @@ export async function legalAnalysisRoutes(fastify: FastifyInstance) {
         analysisType,
       });
     } catch (error) {
-      request.log.error("Legal reasoning error:", error);
+      request.log.error({ err: error }, "Legal reasoning error");
       return reply.status(500).send({
         error: "Internal server error",
         message: error instanceof Error ? error.message : "Unknown error",
@@ -142,7 +153,7 @@ export async function legalAnalysisRoutes(fastify: FastifyInstance) {
 
       request.log.info(
         { documentId, analysisType },
-        "Starting budget analysis"
+        "Starting budget analysis",
       );
 
       const budgetEngine = new BudgetAnalysisEngine(userId);
@@ -157,7 +168,7 @@ export async function legalAnalysisRoutes(fastify: FastifyInstance) {
         analysisType,
       });
     } catch (error) {
-      request.log.error("Budget analysis error:", error);
+      request.log.error({ err: error }, "Budget analysis error");
       return reply.status(500).send({
         error: "Internal server error",
         message: error instanceof Error ? error.message : "Unknown error",

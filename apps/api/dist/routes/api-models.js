@@ -389,7 +389,7 @@ export const apiModelsRoutes = async (fastify) => {
     /* eslint-disable no-undef */
     // GET /api/stt/status - Sprawdź status serwera STT
     fastify.get("/stt/status", async (request, reply) => {
-        const baseUrl = request.query.baseUrl || "http://localhost:8000/v1";
+        const baseUrl = request.query.baseUrl || "http://localhost:8001/v1";
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -419,9 +419,170 @@ export const apiModelsRoutes = async (fastify) => {
             });
         }
     });
+    // GET /api/tts/status - Sprawdź status serwera TTS
+    fastify.get("/tts/status", async (request, reply) => {
+        const baseUrl = request.query.baseUrl || "http://localhost:8001/v1";
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            const response = await fetch(`${baseUrl}/models`, {
+                method: "GET",
+                signal: controller.signal,
+            });
+            clearTimeout(timeoutId);
+            if (response.ok) {
+                const data = (await response.json());
+                let ttsModels = data.data
+                    ?.filter((m) => m.task === "text-to-speech")
+                    .map((m) => m.id) || [];
+                // Jeśli Speaches nie zwraca modeli TTS, użyj domyślnej listy
+                // (modele TTS nie są preloadowane w Speaches i mogą nie mieć task="text-to-speech")
+                if (ttsModels.length === 0) {
+                    ttsModels = ["speaches-ai/Kokoro-82M-v1.0-ONNX"];
+                }
+                return reply.send({
+                    status: "online",
+                    models: ttsModels,
+                });
+            }
+            else {
+                return reply.send({
+                    status: "offline",
+                    error: `HTTP ${response.status}`,
+                });
+            }
+        }
+        catch (err) {
+            return reply.send({
+                status: "offline",
+                error: err instanceof Error ? err.message : "Connection failed",
+            });
+        }
+    });
+    // POST /api/tts/download-model - Proxy dla pobierania modeli TTS (omija CORS)
+    fastify.post("/tts/download-model", async (request, reply) => {
+        const baseUrl = request.query.baseUrl || "http://localhost:8001/v1";
+        const { modelId } = request.body;
+        if (!modelId) {
+            return reply.status(400).send({
+                success: false,
+                error: "Brak modelId",
+            });
+        }
+        try {
+            // Pobieranie modelu przez POST /v1/models/{model_id}
+            const response = await fetch(`${baseUrl}/models/${encodeURIComponent(modelId)}`, {
+                method: "POST",
+            });
+            if (response.ok) {
+                const result = await response.text();
+                return reply.send({
+                    success: true,
+                    message: `Model '${modelId}' został pomyślnie pobrany`,
+                    result,
+                });
+            }
+            else {
+                const error = await response.text();
+                return reply.status(response.status).send({
+                    success: false,
+                    error: error,
+                });
+            }
+        }
+        catch (err) {
+            return reply.status(500).send({
+                success: false,
+                error: err instanceof Error ? err.message : "Błąd pobierania modelu",
+            });
+        }
+    });
+    // POST /api/tts/test - Test syntezy mowy
+    fastify.post("/tts/test", async (request, reply) => {
+        const baseUrl = request.query.baseUrl || "http://localhost:8001/v1";
+        const model = request.query.model || "speaches-ai/Kokoro-82M-v1.0-ONNX";
+        try {
+            const { text } = request.body;
+            if (!text) {
+                return reply.status(400).send({
+                    success: false,
+                    error: "Brak tekstu do syntezy",
+                });
+            }
+            const response = await fetch(`${baseUrl}/audio/speech`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    model: model,
+                    input: text,
+                    voice: "af_heart",
+                    response_format: "mp3",
+                }),
+            });
+            if (response.ok) {
+                const audioBuffer = await response.arrayBuffer();
+                const base64Audio = Buffer.from(audioBuffer).toString("base64");
+                return reply.send({
+                    success: true,
+                    audio: `data:audio/mp3;base64,${base64Audio}`,
+                });
+            }
+            else {
+                const error = await response.text();
+                return reply.status(response.status).send({
+                    success: false,
+                    error: error,
+                });
+            }
+        }
+        catch (err) {
+            return reply.status(500).send({
+                success: false,
+                error: err instanceof Error ? err.message : "TTS test failed",
+            });
+        }
+    });
+    // POST /api/stt/download-model - Proxy dla pobierania modeli STT (omija CORS)
+    fastify.post("/stt/download-model", async (request, reply) => {
+        const baseUrl = request.query.baseUrl || "http://localhost:8001/v1";
+        const { modelId } = request.body;
+        if (!modelId) {
+            return reply.status(400).send({
+                success: false,
+                error: "Brak modelId",
+            });
+        }
+        try {
+            // Pobieranie modelu przez POST /v1/models/{model_id}
+            const response = await fetch(`${baseUrl}/models/${encodeURIComponent(modelId)}`, {
+                method: "POST",
+            });
+            if (response.ok) {
+                const result = await response.text();
+                return reply.send({
+                    success: true,
+                    message: `Model '${modelId}' został pomyślnie pobrany`,
+                    result,
+                });
+            }
+            else {
+                const error = await response.text();
+                return reply.status(response.status).send({
+                    success: false,
+                    error: error,
+                });
+            }
+        }
+        catch (err) {
+            return reply.status(500).send({
+                success: false,
+                error: err instanceof Error ? err.message : "Błąd pobierania modelu",
+            });
+        }
+    });
     // POST /api/stt/transcribe-test - Test transkrypcji audio
     fastify.post("/stt/transcribe-test", async (request, reply) => {
-        const baseUrl = request.query.baseUrl || "http://localhost:8000/v1";
+        const baseUrl = request.query.baseUrl || "http://localhost:8001/v1";
         const model = request.query.model || "Systran/faster-whisper-medium";
         try {
             const data = await request.file();
@@ -459,6 +620,98 @@ export const apiModelsRoutes = async (fastify) => {
             return reply.status(500).send({
                 success: false,
                 error: err instanceof Error ? err.message : "Transcription failed",
+            });
+        }
+    });
+    // ─────────────────────────────────────────────────────────────────────────
+    // EDGE TTS - darmowy TTS od Microsoft z obsługą polskiego
+    // ─────────────────────────────────────────────────────────────────────────
+    // GET /api/edge-tts/voices - Lista dostępnych głosów
+    fastify.get("/edge-tts/voices", async (_request, reply) => {
+        try {
+            const { edgeTTSService } = await import("../services/edge-tts-service.js");
+            const voices = await edgeTTSService.getAvailableVoices();
+            const polishVoices = voices.filter((v) => v.locale.startsWith("pl"));
+            return reply.send({
+                success: true,
+                voices: voices,
+                polishVoices: polishVoices,
+            });
+        }
+        catch (err) {
+            return reply.status(500).send({
+                success: false,
+                error: err instanceof Error ? err.message : "Failed to get voices",
+            });
+        }
+    });
+    // POST /api/edge-tts/synthesize - Synteza mowy
+    fastify.post("/edge-tts/synthesize", async (request, reply) => {
+        try {
+            const { text, voice, rate, volume, pitch } = request.body;
+            if (!text) {
+                return reply.status(400).send({
+                    success: false,
+                    error: "Brak tekstu do syntezy",
+                });
+            }
+            // Przetwórz tekst przed syntezą - usuń URL, HTML, skróć odpowiedź
+            const { TTSTextProcessor } = await import("../services/tts-text-processor.js");
+            const processor = new TTSTextProcessor({
+                maxLength: 1000,
+                skipCodeBlocks: true,
+                skipUrls: true,
+                expandAbbreviations: true,
+                language: "pl",
+            });
+            const processedText = processor.process(text);
+            const { edgeTTSService } = await import("../services/edge-tts-service.js");
+            const audioBuffer = await edgeTTSService.synthesize(processedText, {
+                voice: voice || "pl-PL-ZofiaNeural",
+                rate,
+                volume,
+                pitch,
+            });
+            const base64Audio = audioBuffer.toString("base64");
+            return reply.send({
+                success: true,
+                audio: `data:audio/mp3;base64,${base64Audio}`,
+                voice: voice || "pl-PL-ZofiaNeural",
+            });
+        }
+        catch (err) {
+            return reply.status(500).send({
+                success: false,
+                error: err instanceof Error ? err.message : "TTS synthesis failed",
+            });
+        }
+    });
+    // POST /api/edge-tts/test - Test syntezy mowy (polski)
+    fastify.post("/edge-tts/test", async (request, reply) => {
+        try {
+            const { text } = request.body;
+            if (!text) {
+                return reply.status(400).send({
+                    success: false,
+                    error: "Brak tekstu do syntezy",
+                });
+            }
+            const { edgeTTSService } = await import("../services/edge-tts-service.js");
+            const audioBuffer = await edgeTTSService.synthesize(text, {
+                voice: "pl-PL-ZofiaNeural",
+            });
+            const base64Audio = audioBuffer.toString("base64");
+            return reply.send({
+                success: true,
+                audio: `data:audio/mp3;base64,${base64Audio}`,
+                voice: "pl-PL-ZofiaNeural",
+                provider: "edge-tts",
+            });
+        }
+        catch (err) {
+            return reply.status(500).send({
+                success: false,
+                error: err instanceof Error ? err.message : "Edge TTS test failed",
             });
         }
     });

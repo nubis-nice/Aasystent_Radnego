@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 interface CalendarEvent {
   id: string;
@@ -155,7 +155,7 @@ const getDateRangeForMode = (referenceDate: Date, mode: "month" | "week") => {
   const start = new Date(
     referenceDate.getFullYear(),
     referenceDate.getMonth(),
-    1
+    1,
   );
   const end = new Date(
     referenceDate.getFullYear(),
@@ -164,7 +164,7 @@ const getDateRangeForMode = (referenceDate: Date, mode: "month" | "week") => {
     23,
     59,
     59,
-    999
+    999,
   );
   return { start, end };
 };
@@ -338,7 +338,7 @@ function DayScheduleModal({
                               e.stopPropagation();
                               if (
                                 confirm(
-                                  "Czy na pewno chcesz usunąć to wydarzenie?"
+                                  "Czy na pewno chcesz usunąć to wydarzenie?",
                                 )
                               ) {
                                 onDeleteEvent?.(event.id);
@@ -424,7 +424,7 @@ function DayScheduleModal({
                                     e.stopPropagation();
                                     if (
                                       confirm(
-                                        "Czy na pewno chcesz usunąć to wydarzenie?"
+                                        "Czy na pewno chcesz usunąć to wydarzenie?",
                                       )
                                     ) {
                                       onDeleteEvent?.(event.id);
@@ -460,8 +460,8 @@ function DayScheduleModal({
               {events.length === 1
                 ? "wydarzenie"
                 : events.length < 5
-                ? "wydarzenia"
-                : "wydarzeń"}
+                  ? "wydarzenia"
+                  : "wydarzeń"}
             </span>
             <button
               onClick={onClose}
@@ -502,13 +502,19 @@ export function CalendarWidget({ onEventClick }: CalendarWidgetProps) {
         data: { session },
       } = await supabase.auth.getSession();
       const token = session?.access_token;
+      const userId = session?.user?.id;
 
       // Pobierz zakres dat dla widoku
       const { start, end } = getDateRangeForMode(currentDate, viewMode);
 
       const response = await fetch(
         `${API_URL}/api/dashboard/calendar?from=${start.toISOString()}&to=${end.toISOString()}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        {
+          headers: {
+            Authorization: token ? `Bearer ${token}` : "",
+            "x-user-id": userId || "",
+          },
+        },
       );
 
       if (response.ok) {
@@ -534,13 +540,16 @@ export function CalendarWidget({ onEventClick }: CalendarWidgetProps) {
         data: { session },
       } = await supabase.auth.getSession();
       const token = session?.access_token;
+      const userId = session?.user?.id;
+      const isoStart = new Date(newEvent.start_date).toISOString();
       const response = await fetch(`${API_URL}/api/dashboard/calendar`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: token ? `Bearer ${token}` : "",
+          "x-user-id": userId || "",
         },
-        body: JSON.stringify(newEvent),
+        body: JSON.stringify({ ...newEvent, start_date: isoStart }),
       });
 
       if (response.ok) {
@@ -553,6 +562,9 @@ export function CalendarWidget({ onEventClick }: CalendarWidgetProps) {
           description: "",
         });
         loadEvents();
+      } else {
+        const errorText = await response.text();
+        console.error("Add event failed:", response.status, errorText);
       }
     } catch (error) {
       console.error("Error adding event:", error);
@@ -565,9 +577,13 @@ export function CalendarWidget({ onEventClick }: CalendarWidgetProps) {
         data: { session },
       } = await supabase.auth.getSession();
       const token = session?.access_token;
+      const userId = session?.user?.id;
       await fetch(`${API_URL}/api/dashboard/calendar/${eventId}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: token ? `Bearer ${token}` : "",
+          "x-user-id": userId || "",
+        },
       });
       loadEvents();
     } catch (error) {
@@ -621,7 +637,7 @@ export function CalendarWidget({ onEventClick }: CalendarWidgetProps) {
 
   const getEventsForSegment = (
     date: Date,
-    segment: WeekDaySegment
+    segment: WeekDaySegment,
   ): CalendarEvent[] => {
     return getEventsForDate(date).filter((event) => {
       if (event.all_day) return false;
@@ -924,7 +940,7 @@ export function CalendarWidget({ onEventClick }: CalendarWidgetProps) {
                         {WEEK_DAY_SEGMENTS.map((segment) => {
                           const segmentEvents = getEventsForSegment(
                             date,
-                            segment
+                            segment,
                           );
 
                           return (
@@ -966,7 +982,7 @@ export function CalendarWidget({ onEventClick }: CalendarWidgetProps) {
                                         </span>
                                         <span className="text-[10px] opacity-80">
                                           {new Date(
-                                            event.start_date
+                                            event.start_date,
                                           ).toLocaleTimeString("pl-PL", {
                                             hour: "2-digit",
                                             minute: "2-digit",

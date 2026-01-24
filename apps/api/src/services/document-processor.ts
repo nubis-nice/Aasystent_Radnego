@@ -67,7 +67,7 @@ try {
     // Fallback - spróbuj użyć jako funkcji
     console.warn(
       "[DocumentProcessor] pdf-parse format unknown, keys:",
-      Object.keys(pdfParseModule)
+      Object.keys(pdfParseModule),
     );
     pdfParse = async () => {
       throw new Error("pdf-parse format not supported");
@@ -128,7 +128,7 @@ export interface OCROptions {
 
 const DEFAULT_OCR_OPTIONS: OCROptions = {
   useVisionOnly: false,
-  tesseractConfidenceThreshold: 75,
+  tesseractConfidenceThreshold: 85,
   tesseractDPI: 300,
   visionMaxDimension: 768,
   useVisionQueue: true,
@@ -206,10 +206,10 @@ export class DocumentProcessor {
     this.visionModel = visionConfig.modelName;
     this.visionProvider = visionConfig.provider;
     console.log(
-      `[DocumentProcessor] Initialized for user ${userId.substring(0, 8)}...`
+      `[DocumentProcessor] Initialized for user ${userId.substring(0, 8)}...`,
     );
     console.log(
-      `[DocumentProcessor] Vision: provider=${visionConfig.provider}, model=${this.visionModel}`
+      `[DocumentProcessor] Vision: provider=${visionConfig.provider}, model=${this.visionModel}`,
     );
     console.log(`[DocumentProcessor] Embeddings: model=${this.embeddingModel}`);
   }
@@ -223,11 +223,11 @@ export class DocumentProcessor {
    * Wywołuje LLM tekstowy (nie Vision!) z tekstem i zwraca JSON
    */
   async extractStructuredData(
-    ocrText: string
+    ocrText: string,
   ): Promise<DocumentStructure | null> {
     if (!this.userId) {
       console.warn(
-        "[DocumentProcessor] User ID not set for structured extraction"
+        "[DocumentProcessor] User ID not set for structured extraction",
       );
       return null;
     }
@@ -244,7 +244,7 @@ export class DocumentProcessor {
         ocrText.length > 4000 ? ocrText.substring(0, 4000) + "..." : ocrText;
 
       console.log(
-        `[DocumentProcessor] Extracting structured data from ${truncatedText.length} chars using ${llmConfig.modelName}`
+        `[DocumentProcessor] Extracting structured data from ${truncatedText.length} chars using ${llmConfig.modelName}`,
       );
 
       const response = await llmClient.chat.completions.create({
@@ -261,14 +261,14 @@ export class DocumentProcessor {
       console.log(
         `[DocumentProcessor] LLM response (${
           jsonResponse.length
-        } chars): ${jsonResponse.substring(0, 200)}...`
+        } chars): ${jsonResponse.substring(0, 200)}...`,
       );
 
       const structured = parseDocumentStructure(jsonResponse);
 
       if (structured) {
         console.log(
-          `[DocumentProcessor] ✓ Extracted: typ=${structured.typ}, numer=${structured.numer}`
+          `[DocumentProcessor] ✓ Extracted: typ=${structured.typ}, numer=${structured.numer}`,
         );
       }
 
@@ -287,7 +287,7 @@ export class DocumentProcessor {
     fileBuffer: Buffer,
     fileName: string,
     mimeType: string,
-    options: OCROptions = {}
+    options: OCROptions = {},
   ): Promise<ProcessedDocument> {
     // Merge with defaults
     const ocrOptions = { ...DEFAULT_OCR_OPTIONS, ...options };
@@ -306,7 +306,7 @@ export class DocumentProcessor {
           processingMethod: "direct",
         },
         error: `Plik jest zbyt duży (${Math.round(
-          fileSize / 1024 / 1024
+          fileSize / 1024 / 1024,
         )}MB). Maksymalny rozmiar to 10MB.`,
       };
     }
@@ -318,7 +318,7 @@ export class DocumentProcessor {
       if (EXTENSION_TO_MIME[ext]) {
         effectiveMimeType = EXTENSION_TO_MIME[ext];
         console.log(
-          `[DocumentProcessor] Detected ${ext} file, using ${effectiveMimeType}`
+          `[DocumentProcessor] Detected ${ext} file, using ${effectiveMimeType}`,
         );
       }
     }
@@ -335,7 +335,7 @@ export class DocumentProcessor {
             fileName,
             mimeType,
             fileSize,
-            ocrOptions
+            ocrOptions,
           );
 
         case "application/pdf":
@@ -344,7 +344,7 @@ export class DocumentProcessor {
             fileName,
             mimeType,
             fileSize,
-            ocrOptions
+            ocrOptions,
           );
 
         case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
@@ -352,7 +352,7 @@ export class DocumentProcessor {
             fileBuffer,
             fileName,
             mimeType,
-            fileSize
+            fileSize,
           );
 
         case "text/plain":
@@ -376,7 +376,7 @@ export class DocumentProcessor {
             fileBuffer,
             fileName,
             mimeType,
-            fileSize
+            fileSize,
           );
 
         default:
@@ -419,36 +419,36 @@ export class DocumentProcessor {
     fileName: string,
     mimeType: string,
     fileSize: number,
-    ocrOptions: OCROptions = {}
+    ocrOptions: OCROptions = {},
   ): Promise<ProcessedDocument> {
     if (!this.visionClient) {
       throw new Error(
-        "Vision client not initialized. Call initializeWithUserConfig first."
+        "Vision client not initialized. Call initializeWithUserConfig first.",
       );
     }
 
     console.log(
-      `[DocumentProcessor] Processing image with Vision model ${this.visionModel}: ${fileName}`
+      `[DocumentProcessor] Processing image with Vision model ${this.visionModel}: ${fileName}`,
     );
 
     // Analiza statystyk obrazu
     const stats = await this.analyzeImageStats(fileBuffer);
     console.log(
       `[DocumentProcessor] Image analysis: brightness=${stats.brightness.toFixed(
-        1
+        1,
       )}, contrast=${stats.contrast.toFixed(
-        2
+        2,
       )}, sharpness=${stats.sharpness.toFixed(
-        2
-      )}, noise=${stats.noiseLevel.toFixed(2)}`
+        2,
+      )}, noise=${stats.noiseLevel.toFixed(2)}`,
     );
 
     // Sprawdź czy obraz jest pusty/biały
     if (stats.brightness > 250 && stats.contrast < 0.05) {
       console.log(
         `[DocumentProcessor] Image appears to be blank (brightness=${stats.brightness.toFixed(
-          1
-        )}, contrast=${stats.contrast.toFixed(2)})`
+          1,
+        )}, contrast=${stats.contrast.toFixed(2)})`,
       );
       return {
         success: false,
@@ -478,15 +478,15 @@ export class DocumentProcessor {
       // KROK 1: Najpierw spróbuj Tesseract (darmowe, lokalne)
       const tesseractResult = await this.processImageWithTesseract(
         normalizedImage,
-        1 // page number
+        1, // page number
       );
 
       console.log(
         `[DocumentProcessor] Tesseract result: ${
           tesseractResult.text.length
         } chars, confidence: ${tesseractResult.confidence.toFixed(
-          1
-        )}% (threshold: ${confidenceThreshold}%)`
+          1,
+        )}% (threshold: ${confidenceThreshold}%)`,
       );
 
       // Jeśli Tesseract dał dobry wynik (confidence > threshold i tekst > 30 znaków) - użyj go
@@ -495,7 +495,7 @@ export class DocumentProcessor {
         tesseractResult.text.length > 30
       ) {
         console.log(
-          `[DocumentProcessor] ✓ Using Tesseract result (confidence >= ${confidenceThreshold}%)`
+          `[DocumentProcessor] ✓ Using Tesseract result (confidence >= ${confidenceThreshold}%)`,
         );
         return {
           success: true,
@@ -516,8 +516,8 @@ export class DocumentProcessor {
       // KROK 2: Tesseract słaby - użyj Vision API jako fallback
       console.log(
         `[DocumentProcessor] Tesseract confidence too low (${tesseractResult.confidence.toFixed(
-          1
-        )}% < ${confidenceThreshold}%), using Vision API fallback`
+          1,
+        )}% < ${confidenceThreshold}%), using Vision API fallback`,
       );
     } else {
       console.log(`[DocumentProcessor] useVisionOnly=true, skipping Tesseract`);
@@ -530,7 +530,7 @@ export class DocumentProcessor {
 
     console.log(
       `[DocumentProcessor] Vision optimization: ${optimizedImage.dimensions.width}x${optimizedImage.dimensions.height}, ` +
-        `${optimizedImage.compressionRatio.toFixed(1)}x compression`
+        `${optimizedImage.compressionRatio.toFixed(1)}x compression`,
     );
 
     try {
@@ -540,14 +540,16 @@ export class DocumentProcessor {
       // Buduj wiadomości w zależności od providera
       const messages = this.buildVisionMessages(
         optimizedImage.base64,
-        prompt.user
+        prompt.user,
       );
 
       const response = (await this.visionClient.chat.completions.create({
         model: this.visionModel,
         messages,
         max_tokens: 4096,
-      } as Parameters<typeof this.visionClient.chat.completions.create>[0])) as OpenAI.Chat.ChatCompletion;
+      } as Parameters<
+        typeof this.visionClient.chat.completions.create
+      >[0])) as OpenAI.Chat.ChatCompletion;
 
       const extractedText = response.choices[0]?.message?.content || "";
 
@@ -598,7 +600,7 @@ export class DocumentProcessor {
     // Dla Ollama używamy formatu z polem "images"
     if (this.visionProvider === "ollama") {
       console.log(
-        `[DocumentProcessor] Using Ollama Vision format for model ${this.visionModel}`
+        `[DocumentProcessor] Using Ollama Vision format for model ${this.visionModel}`,
       );
       return [
         {
@@ -647,7 +649,7 @@ export class DocumentProcessor {
     fileName: string,
     mimeType: string,
     fileSize: number,
-    ocrOptions: OCROptions = {}
+    ocrOptions: OCROptions = {},
   ): Promise<ProcessedDocument> {
     console.log(`[DocumentProcessor] Processing PDF: ${fileName}`);
 
@@ -706,7 +708,7 @@ export class DocumentProcessor {
             `onlyPageNumbers=${isOnlyPageNumbers}, ` +
             `garbled=${hasGarbledText}, ` +
             `lacksMeaningful=${lacksMeaningfulWords}, ` +
-            `repeatedPatterns=${hasRepeatedPatterns}`
+            `repeatedPatterns=${hasRepeatedPatterns}`,
         );
         return await this.processPDFWithOCR(
           fileBuffer,
@@ -714,14 +716,14 @@ export class DocumentProcessor {
           mimeType,
           fileSize,
           pdfData.numpages,
-          ocrOptions
+          ocrOptions,
         );
       }
 
       console.log(
         `[DocumentProcessor] PDF text extraction successful: ${
           meaningfulText.length
-        } chars, ${charsPerPage.toFixed(1)} chars/page`
+        } chars, ${charsPerPage.toFixed(1)} chars/page`,
       );
 
       return {
@@ -740,7 +742,7 @@ export class DocumentProcessor {
     } catch (error) {
       console.error(
         "[DocumentProcessor] PDF parsing failed, trying OCR:",
-        error
+        error,
       );
       return await this.processPDFWithOCR(
         fileBuffer,
@@ -748,7 +750,7 @@ export class DocumentProcessor {
         mimeType,
         fileSize,
         undefined,
-        ocrOptions
+        ocrOptions,
       );
     }
   }
@@ -897,14 +899,14 @@ export class DocumentProcessor {
       const sharpnessScore = this.calculateSharpness(
         grayscaleBuffer,
         width || 100,
-        height || 100
+        height || 100,
       );
 
       // Analiza szumu - bazując na lokalnej wariancji w gładkich obszarach
       const noiseScore = this.estimateNoise(
         grayscaleBuffer,
         width || 100,
-        height || 100
+        height || 100,
       );
 
       // Klasyfikacja
@@ -916,10 +918,10 @@ export class DocumentProcessor {
 
       console.log(
         `[DocumentProcessor] Image analysis: brightness=${avgBrightness.toFixed(
-          1
+          1,
         )}, contrast=${contrast.toFixed(2)}, sharpness=${sharpnessScore.toFixed(
-          2
-        )}, noise=${noiseScore.toFixed(2)}`
+          2,
+        )}, noise=${noiseScore.toFixed(2)}`,
       );
 
       return {
@@ -953,7 +955,7 @@ export class DocumentProcessor {
   private calculateSharpness(
     buffer: Buffer,
     width: number,
-    height: number
+    height: number,
   ): number {
     // Laplacian variance - przybliżenie ostrości
     // Wysoka wariancja gradientów = ostry obraz
@@ -1026,10 +1028,10 @@ export class DocumentProcessor {
 
       console.log(
         `[DocumentProcessor] Adaptive params: gamma=${params.gamma.toFixed(
-          2
+          2,
         )}, sharpen=${params.sharpenSigma.toFixed(2)}, denoise=${
           params.denoiseStrength
-        }`
+        }`,
       );
 
       // KROK 3: Buduj pipeline Sharp z adaptacyjnymi parametrami
@@ -1052,7 +1054,7 @@ export class DocumentProcessor {
       if (params.contrastMultiplier !== 1.0) {
         pipeline = pipeline.linear(
           params.contrastMultiplier,
-          params.brightnessOffset
+          params.brightnessOffset,
         );
       }
 
@@ -1084,7 +1086,7 @@ export class DocumentProcessor {
     } catch (error) {
       console.error(
         "[DocumentProcessor] Adaptive normalization failed:",
-        error
+        error,
       );
       return imageBuffer;
     }
@@ -1132,14 +1134,14 @@ export class DocumentProcessor {
       gamma = 0.7 + (stats.brightness / 255) * 0.3; // 0.7-1.0
       brightnessOffset = Math.round((128 - stats.brightness) * 0.3);
       console.log(
-        "[DocumentProcessor] Dark image detected - applying brightness correction"
+        "[DocumentProcessor] Dark image detected - applying brightness correction",
       );
     } else if (stats.isBright) {
       // Jasny obraz - przyciemnij (gamma > 1 przyciemnia)
       gamma = 1.0 + ((stats.brightness - 200) / 55) * 0.5; // 1.0-1.5
       brightnessOffset = -Math.round((stats.brightness - 128) * 0.2);
       console.log(
-        "[DocumentProcessor] Bright image detected - applying darkness correction"
+        "[DocumentProcessor] Bright image detected - applying darkness correction",
       );
     }
 
@@ -1148,7 +1150,7 @@ export class DocumentProcessor {
       // Niski kontrast - zwiększ
       contrastMultiplier = 1.2 + (0.15 - stats.contrast) * 2; // 1.2-1.5
       console.log(
-        "[DocumentProcessor] Low contrast detected - boosting contrast"
+        "[DocumentProcessor] Low contrast detected - boosting contrast",
       );
     }
 
@@ -1159,7 +1161,7 @@ export class DocumentProcessor {
       sharpenFlat = 1.5;
       sharpenJagged = 3.0;
       console.log(
-        "[DocumentProcessor] Blurry image detected - applying strong sharpening"
+        "[DocumentProcessor] Blurry image detected - applying strong sharpening",
       );
     } else if (stats.sharpness > 0.7) {
       // Już ostry - lekkie wyostrzenie
@@ -1175,7 +1177,7 @@ export class DocumentProcessor {
       // Zmniejsz wyostrzenie dla zaszumionych obrazów
       sharpenSigma = Math.max(sharpenSigma * 0.7, 0.5);
       console.log(
-        "[DocumentProcessor] Noisy image detected - applying denoising"
+        "[DocumentProcessor] Noisy image detected - applying denoising",
       );
     }
 
@@ -1185,7 +1187,7 @@ export class DocumentProcessor {
       // Adaptacyjny próg bazujący na jasności
       thresholdValue = Math.round(stats.brightness * 0.9);
       console.log(
-        "[DocumentProcessor] Very low contrast - applying adaptive threshold"
+        "[DocumentProcessor] Very low contrast - applying adaptive threshold",
       );
     }
 
@@ -1210,11 +1212,11 @@ export class DocumentProcessor {
 
   private async processImageWithTesseract(
     imageBuffer: Buffer,
-    pageNum: number
+    pageNum: number,
   ): Promise<{ text: string; confidence: number }> {
     try {
       console.log(
-        `[DocumentProcessor] Tesseract OCR processing page ${pageNum}...`
+        `[DocumentProcessor] Tesseract OCR processing page ${pageNum}...`,
       );
 
       // Normalizuj obraz przed OCR
@@ -1234,14 +1236,14 @@ export class DocumentProcessor {
       console.log(
         `[DocumentProcessor] Tesseract page ${pageNum}: ${
           text.length
-        } chars, confidence: ${confidence.toFixed(1)}%`
+        } chars, confidence: ${confidence.toFixed(1)}%`,
       );
 
       return { text, confidence };
     } catch (error) {
       console.error(
         `[DocumentProcessor] Tesseract OCR failed for page ${pageNum}:`,
-        error
+        error,
       );
       return { text: "", confidence: 0 };
     }
@@ -1261,7 +1263,7 @@ export class DocumentProcessor {
     mimeType: string,
     fileSize: number,
     pageCount?: number,
-    ocrOptions: OCROptions = {}
+    ocrOptions: OCROptions = {},
   ): Promise<ProcessedDocument> {
     console.log(`[DocumentProcessor] Processing PDF with OCR: ${fileName}`);
 
@@ -1273,7 +1275,7 @@ export class DocumentProcessor {
 
     try {
       console.log(
-        `[DocumentProcessor] Converting PDF pages to PNG images using Poppler...`
+        `[DocumentProcessor] Converting PDF pages to PNG images using Poppler...`,
       );
 
       // Utwórz katalog tymczasowy
@@ -1312,14 +1314,14 @@ export class DocumentProcessor {
       }
 
       console.log(
-        `[DocumentProcessor] Converted ${pngPages.length} pages to PNG using Poppler`
+        `[DocumentProcessor] Converted ${pngPages.length} pages to PNG using Poppler`,
       );
     } catch (pdfConversionError) {
       console.error(
         "[DocumentProcessor] PDF to PNG conversion failed:",
         pdfConversionError instanceof Error
           ? pdfConversionError.message
-          : pdfConversionError
+          : pdfConversionError,
       );
     } finally {
       // Posprzątaj pliki tymczasowe
@@ -1366,7 +1368,7 @@ export class DocumentProcessor {
       if (!useVisionOnly) {
         const tesseractResult = await this.processImageWithTesseract(
           page.content,
-          page.pageNumber
+          page.pageNumber,
         );
 
         // Jeśli Tesseract dał dobry wynik (confidence >= threshold i tekst > 30 znaków) - użyj go
@@ -1375,7 +1377,7 @@ export class DocumentProcessor {
           tesseractResult.text.length > 30
         ) {
           allTexts.push(
-            `--- Strona ${page.pageNumber} ---\n${tesseractResult.text}`
+            `--- Strona ${page.pageNumber} ---\n${tesseractResult.text}`,
           );
           totalConfidence += tesseractResult.confidence;
           pagesProcessed++;
@@ -1385,10 +1387,10 @@ export class DocumentProcessor {
         // Tesseract słaby - kontynuuj do Vision API
         console.log(
           `[DocumentProcessor] Tesseract confidence too low (${tesseractResult.confidence.toFixed(
-            1
+            1,
           )}% < ${confidenceThreshold}%), using Vision API for page ${
             page.pageNumber
-          }`
+          }`,
         );
       }
 
@@ -1399,8 +1401,8 @@ export class DocumentProcessor {
           `[DocumentProcessor] Page ${
             page.pageNumber
           } appears to be blank (brightness=${stats.brightness.toFixed(
-            1
-          )}, contrast=${stats.contrast.toFixed(2)}), skipping`
+            1,
+          )}, contrast=${stats.contrast.toFixed(2)}), skipping`,
         );
         blankPagesSkipped++;
         continue; // Pomiń pustą stronę
@@ -1409,7 +1411,7 @@ export class DocumentProcessor {
       // Vision API dla słabych wyników Tesseract lub useVisionOnly
       if (this.visionClient && this.visionModel && this.userId) {
         console.log(
-          `[DocumentProcessor] Using Vision API (${this.visionModel}) for page ${page.pageNumber}`
+          `[DocumentProcessor] Using Vision API (${this.visionModel}) for page ${page.pageNumber}`,
         );
 
         try {
@@ -1417,7 +1419,7 @@ export class DocumentProcessor {
           const visionOptimizer = getVisionOptimizer(this.visionModel);
           visionOptimizer.setConfig({ maxDimension: visionMaxDim });
           const optimizedImage = await visionOptimizer.optimizeImage(
-            page.content
+            page.content,
           );
 
           // Użyj VisionQueue dla async processing (bez timeout)
@@ -1434,38 +1436,40 @@ export class DocumentProcessor {
                 model: this.visionModel,
                 pageNumber: page.pageNumber,
                 fileName,
-              }
+              },
             );
 
             // Czekaj na wynik z dłuższym timeout (5 minut per strona)
             const result: VisionJobResult = await waitForVisionResult(
               jobId,
-              300000
+              300000,
             );
 
             if (result.success && result.text.trim()) {
               allTexts.push(
-                `--- Strona ${page.pageNumber} ---\n${result.text}`
+                `--- Strona ${page.pageNumber} ---\n${result.text}`,
               );
               totalConfidence += result.confidence ?? 90;
               pagesProcessed++;
             } else if (result.error) {
               console.warn(
-                `[DocumentProcessor] Vision Queue job failed for page ${page.pageNumber}: ${result.error}`
+                `[DocumentProcessor] Vision Queue job failed for page ${page.pageNumber}: ${result.error}`,
               );
             }
           } else {
             // Bezpośrednie wywołanie (może timeout)
             const messages = this.buildVisionMessages(
               optimizedImage.base64,
-              `Odczytaj cały tekst ze strony ${page.pageNumber}. Zachowaj formatowanie.`
+              `Odczytaj cały tekst ze strony ${page.pageNumber}. Zachowaj formatowanie.`,
             );
 
             const response = (await this.visionClient.chat.completions.create({
               model: this.visionModel,
               messages,
               max_tokens: 4096,
-            } as Parameters<typeof this.visionClient.chat.completions.create>[0])) as OpenAI.Chat.ChatCompletion;
+            } as Parameters<
+              typeof this.visionClient.chat.completions.create
+            >[0])) as OpenAI.Chat.ChatCompletion;
 
             const pageText = response.choices[0]?.message?.content || "";
             if (pageText.trim()) {
@@ -1477,16 +1481,16 @@ export class DocumentProcessor {
         } catch (visionError) {
           console.error(
             `[DocumentProcessor] Vision API (${this.visionModel}) failed for page ${page.pageNumber}:`,
-            visionError
+            visionError,
           );
           console.warn(
-            `[DocumentProcessor] Page ${page.pageNumber} could not be processed`
+            `[DocumentProcessor] Page ${page.pageNumber} could not be processed`,
           );
         }
       } else {
         // Brak Vision API - loguj ostrzeżenie
         console.warn(
-          `[DocumentProcessor] No Vision API available for page ${page.pageNumber}, skipping`
+          `[DocumentProcessor] No Vision API available for page ${page.pageNumber}, skipping`,
         );
       }
     }
@@ -1535,7 +1539,7 @@ export class DocumentProcessor {
     fileBuffer: Buffer,
     fileName: string,
     mimeType: string,
-    fileSize: number
+    fileSize: number,
   ): Promise<ProcessedDocument> {
     console.log(`[DocumentProcessor] Processing DOCX: ${fileName}`);
 
@@ -1562,7 +1566,7 @@ export class DocumentProcessor {
     fileBuffer: Buffer,
     fileName: string,
     mimeType: string,
-    fileSize: number
+    fileSize: number,
   ): ProcessedDocument {
     console.log(`[DocumentProcessor] Processing text file: ${fileName}`);
 
@@ -1597,12 +1601,12 @@ export class DocumentProcessor {
     text: string,
     title: string,
     sourceFileName: string,
-    documentType: string = "uploaded"
+    documentType: string = "uploaded",
   ): Promise<SaveToRAGResult> {
     try {
       if (!this.embeddingsClient) {
         throw new Error(
-          "Embeddings client not initialized. Call initializeWithUserConfig first."
+          "Embeddings client not initialized. Call initializeWithUserConfig first.",
         );
       }
 
@@ -1621,7 +1625,7 @@ export class DocumentProcessor {
 
       if (existingByUrl) {
         console.log(
-          `[DocumentProcessor] Document already exists (by URL): ${existingByUrl.id} - "${existingByUrl.title}"`
+          `[DocumentProcessor] Document already exists (by URL): ${existingByUrl.id} - "${existingByUrl.title}"`,
         );
         return {
           success: true,
@@ -1642,7 +1646,7 @@ export class DocumentProcessor {
         }, ` +
           `title="${normalized.normalizedTitle}", date=${
             normalized.publishDate || "N/A"
-          }`
+          }`,
       );
 
       // Sprawdź duplikat po znormalizowanym tytule
@@ -1657,7 +1661,7 @@ export class DocumentProcessor {
 
         if (existingByNormTitle) {
           console.log(
-            `[DocumentProcessor] Document already exists (by normalized title): ${existingByNormTitle.id}`
+            `[DocumentProcessor] Document already exists (by normalized title): ${existingByNormTitle.id}`,
           );
           return {
             success: true,
@@ -1728,7 +1732,7 @@ export class DocumentProcessor {
    */
   private extractNormalizedMetadata(
     title: string,
-    content: string
+    content: string,
   ): {
     sessionNumber: number | null;
     normalizedTitle: string | null;
@@ -1751,7 +1755,7 @@ export class DocumentProcessor {
       // Zamień różne formaty numeru sesji na zunifikowany
       normalizedTitle = normalizedTitle.replace(
         /(?:sesj[iaęy])\s+(?:nr\.?\s*)?[IVXLC0-9]+/gi,
-        `Sesja ${sessionNumber}`
+        `Sesja ${sessionNumber}`,
       );
     }
     normalizedTitle = normalizedTitle.replace(/\s+/g, " ").trim();
@@ -1926,7 +1930,7 @@ export class DocumentProcessor {
     fileBuffer: Buffer,
     fileName: string,
     mimeType: string,
-    fileSize: number
+    fileSize: number,
   ): Promise<ProcessedDocument> {
     if (!this.userId) {
       return {
@@ -1951,7 +1955,7 @@ export class DocumentProcessor {
       const sttConfig = await getAIConfig(this.userId, "stt");
 
       console.log(
-        `[DocumentProcessor] STT: provider=${sttConfig.provider}, model=${sttConfig.modelName}`
+        `[DocumentProcessor] STT: provider=${sttConfig.provider}, model=${sttConfig.modelName}`,
       );
 
       // Zapisz plik do temp
@@ -1965,24 +1969,23 @@ export class DocumentProcessor {
       // Adaptacyjny preprocessing audio
       let processedPath = tempPath;
       try {
-        const { getAudioPreprocessor } = await import(
-          "./audio-preprocessor.js"
-        );
+        const { getAudioPreprocessor } =
+          await import("./audio-preprocessor.js");
         const preprocessor = getAudioPreprocessor();
         console.log(
-          `[DocumentProcessor] Starting adaptive audio preprocessing...`
+          `[DocumentProcessor] Starting adaptive audio preprocessing...`,
         );
         const result = await preprocessor.preprocessAdaptive(tempPath, "wav");
         processedPath = result.outputPath;
         console.log(
           `[DocumentProcessor] Preprocessing complete. Issues: ${
             result.analysis.issues.map((i) => i.type).join(", ") || "none"
-          }`
+          }`,
         );
       } catch (preprocessError) {
         console.warn(
           `[DocumentProcessor] Preprocessing failed, using original audio:`,
-          preprocessError
+          preprocessError,
         );
         processedPath = tempPath;
       }

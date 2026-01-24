@@ -18,11 +18,17 @@ export async function legalAnalysisRoutes(fastify) {
                 return reply.status(400).send({ error: "Query is required" });
             }
             const searchAPI = new LegalSearchAPI(userId);
+            const normalizedFilters = filters
+                ? {
+                    ...filters,
+                    sourceTypes: filters.sourceTypes?.filter((s) => Boolean(s)),
+                }
+                : undefined;
             const results = await searchAPI.search({
                 query,
                 searchMode,
                 maxResults,
-                filters,
+                filters: normalizedFilters,
             });
             return reply.send({
                 results,
@@ -31,7 +37,7 @@ export async function legalAnalysisRoutes(fastify) {
             });
         }
         catch (error) {
-            request.log.error("Legal search error:", error);
+            request.log.error({ err: error }, "Legal search error");
             return reply.status(500).send({
                 error: "Internal server error",
                 message: error instanceof Error ? error.message : "Unknown error",
@@ -62,7 +68,7 @@ export async function legalAnalysisRoutes(fastify) {
             });
         }
         catch (error) {
-            request.log.error("Legal reasoning error:", error);
+            request.log.error({ err: error }, "Legal reasoning error");
             return reply.status(500).send({
                 error: "Internal server error",
                 message: error instanceof Error ? error.message : "Unknown error",
@@ -98,7 +104,7 @@ export async function legalAnalysisRoutes(fastify) {
             });
         }
         catch (error) {
-            request.log.error("Budget analysis error:", error);
+            request.log.error({ err: error }, "Budget analysis error");
             return reply.status(500).send({
                 error: "Internal server error",
                 message: error instanceof Error ? error.message : "Unknown error",

@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 export interface YouTubeVideo {
   id: string;
@@ -61,7 +61,7 @@ export interface TranscriptionDocumentResponse {
 }
 
 export async function getTranscriptionDocument(
-  documentId: string
+  documentId: string,
 ): Promise<TranscriptionDocumentResponse> {
   const token = await getAuthToken();
 
@@ -72,7 +72,7 @@ export async function getTranscriptionDocument(
       headers: {
         Authorization: `Bearer ${token}`,
       },
-    }
+    },
   );
 
   const data = await response.json();
@@ -119,7 +119,7 @@ export interface DetailedJobResponse {
 }
 
 export async function getTranscriptionJobDetailed(
-  jobId: string
+  jobId: string,
 ): Promise<DetailedJobResponse> {
   const token = await getAuthToken();
 
@@ -140,7 +140,7 @@ export async function getTranscriptionJobDetailed(
 }
 
 export async function getYouTubeVideoInfo(
-  videoUrl: string
+  videoUrl: string,
 ): Promise<YouTubeVideo> {
   const token = await getAuthToken();
 
@@ -196,7 +196,7 @@ export interface YouTubeTranscriptionResult {
 export async function transcribeYouTubeVideo(
   videoUrl: string,
   videoTitle?: string,
-  includeSentiment?: boolean
+  includeSentiment?: boolean,
 ): Promise<YouTubeTranscriptionResult> {
   const token = await getAuthToken();
 
@@ -257,7 +257,7 @@ export async function startAsyncTranscription(
     sessionId?: string;
     includeSentiment?: boolean;
     identifySpeakers?: boolean;
-  }
+  },
 ): Promise<TranscriptionJobResponse> {
   const token = await getAuthToken();
 
@@ -289,7 +289,7 @@ export async function startAsyncTranscription(
  * Pobiera status zadania transkrypcji
  */
 export async function getTranscriptionJobStatus(
-  jobId: string
+  jobId: string,
 ): Promise<{ success: boolean; job: TranscriptionJob }> {
   const token = await getAuthToken();
 
@@ -406,6 +406,33 @@ export async function retryTranscriptionJob(jobId: string): Promise<{
 
   if (!response.ok) {
     throw new Error(data.error || "Błąd ponowienia zadania");
+  }
+
+  return data;
+}
+
+/**
+ * Usuwa wszystkie niedziałające zadania (utknięte/failed)
+ */
+export async function cleanupTranscriptionJobs(): Promise<{
+  success: boolean;
+  deletedCount: number;
+  deletedJobs: Array<{ id: string; title: string; status: string }>;
+  message: string;
+}> {
+  const token = await getAuthToken();
+
+  const response = await fetch(`${API_URL}/api/youtube/jobs/cleanup`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Błąd czyszczenia zadań");
   }
 
   return data;

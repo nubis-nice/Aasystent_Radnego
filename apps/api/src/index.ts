@@ -45,7 +45,18 @@ const app = Fastify({
 });
 
 app.register(cors, {
-  origin: true,
+  origin: (origin, cb) => {
+    // Allow requests with no origin (mobile apps, curl, etc.)
+    if (!origin) return cb(null, true);
+    // Allow localhost on any port
+    if (
+      origin.startsWith("http://localhost:") ||
+      origin.startsWith("http://127.0.0.1:")
+    ) {
+      return cb(null, true);
+    }
+    cb(new Error("Not allowed by CORS"), false);
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "x-user-id"],
@@ -101,7 +112,7 @@ app.setErrorHandler(
       error: error.message || "Internal Server Error",
       statusCode: error.statusCode || 500,
     });
-  }
+  },
 );
 
 app

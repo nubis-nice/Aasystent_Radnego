@@ -591,13 +591,22 @@ export class DocumentQueryService {
             }
             return data
                 .filter((r) => r.target_document)
-                .map((r) => ({
-                id: r.target_document.id,
-                title: r.target_document.title,
-                documentType: r.target_document.document_type,
-                publishDate: r.target_document.publish_date,
-                similarity: 1.0,
-            }));
+                .map((r) => {
+                // Obsługa target_document jako tablicy (Supabase join) lub obiektu
+                const target = Array.isArray(r.target_document)
+                    ? r.target_document[0]
+                    : r.target_document;
+                if (!target)
+                    return null;
+                return {
+                    id: target.id,
+                    title: target.title,
+                    documentType: target.document_type,
+                    publishDate: target.publish_date,
+                    similarity: 1.0,
+                };
+            })
+                .filter(Boolean);
         }
         catch {
             return [];

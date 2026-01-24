@@ -90,10 +90,10 @@ export class AudioTranscriber {
     this.llmModel = llmConfig.modelName;
 
     console.log(
-      `[AudioTranscriber] Initialized for user ${userId.substring(0, 8)}...`
+      `[AudioTranscriber] Initialized for user ${userId.substring(0, 8)}...`,
     );
     console.log(
-      `[AudioTranscriber] STT: provider=${sttConfig.provider}, model=${this.sttModel}`
+      `[AudioTranscriber] STT: provider=${sttConfig.provider}, model=${this.sttModel}`,
     );
     console.log(`[AudioTranscriber] LLM: model=${this.llmModel}`);
   }
@@ -107,7 +107,7 @@ export class AudioTranscriber {
   async transcribe(
     fileBuffer: Buffer,
     fileName: string,
-    mimeType: string
+    mimeType: string,
   ): Promise<TranscriptionResult> {
     const fileSize = fileBuffer.length;
     const maxSize = 25 * 1024 * 1024; // 25MB - Whisper limit
@@ -134,14 +134,14 @@ export class AudioTranscriber {
         },
         formattedTranscript: "",
         error: `Plik jest zbyt duży (${Math.round(
-          fileSize / 1024 / 1024
+          fileSize / 1024 / 1024,
         )}MB). Maksymalny rozmiar to 25MB.`,
       };
     }
 
     if (!this.sttClient) {
       throw new Error(
-        "STT client not initialized. Call initializeWithUserConfig first."
+        "STT client not initialized. Call initializeWithUserConfig first.",
       );
     }
 
@@ -183,7 +183,7 @@ export class AudioTranscriber {
       // Step 3: Format output
       const formattedTranscript = this.formatTranscript(
         analysis.segments,
-        analysis.summary
+        analysis.summary,
       );
 
       return {
@@ -229,7 +229,7 @@ export class AudioTranscriber {
 
   private async whisperTranscribe(
     fileBuffer: Buffer,
-    fileName: string
+    fileName: string,
   ): Promise<string> {
     if (!this.sttClient) throw new Error("STT client not initialized");
 
@@ -260,6 +260,8 @@ export class AudioTranscriber {
     if (!this.llmClient) throw new Error("LLM client not initialized");
 
     const systemPrompt = `Jesteś ekspertem analizy lingwistycznej i psychologicznej. Przeanalizuj transkrypcję i zwróć szczegółową analizę w formacie JSON.
+
+WAŻNE: Tekst wypowiedzi (pole "text") ZAWSZE musi być w języku polskim. Jeśli oryginalna transkrypcja jest w innym języku, przetłumacz ją na polski.
 
 Dla KAŻDEJ wypowiedzi określ:
 1. **speaker** - identyfikuj rozmówców jako "Rozmówca 1", "Rozmówca 2" itd. na podstawie kontekstu, zmiany tonu, odpowiedzi na pytania
@@ -335,7 +337,7 @@ Odpowiedz TYLKO w formacie JSON:
     } catch {
       console.error(
         "[AudioTranscriber] Failed to parse GPT response:",
-        content
+        content,
       );
       // Return basic analysis if parsing fails
       return {
@@ -373,7 +375,7 @@ Odpowiedz TYLKO w formacie JSON:
       overallCredibilityEmoji: string;
       speakerCount: number;
       duration: string;
-    }
+    },
   ): string {
     let output = `📝 TRANSKRYPCJA AUDIO/VIDEO\n`;
     output += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
@@ -382,7 +384,7 @@ Odpowiedz TYLKO w formacie JSON:
       output += `[${seg.timestamp}] 👤 ${seg.speaker}:\n`;
       output += `"${seg.text}"\n`;
       output += `📊 Sentyment: ${this.translateSentiment(
-        seg.sentiment
+        seg.sentiment,
       )} | Emocja: ${seg.emotionEmoji} ${seg.emotion}\n`;
       output += `⚡ Napięcie: ${seg.tension}/10 | 🎯 Wiarygodność: ${seg.credibility}% ${seg.credibilityEmoji}\n\n`;
     }
@@ -393,7 +395,7 @@ Odpowiedz TYLKO w formacie JSON:
     output += `• Liczba rozmówców: ${summary.speakerCount}\n`;
     output += `• Średnie napięcie: ${summary.averageTension.toFixed(1)}/10\n`;
     output += `• Dominujący sentyment: ${this.translateSentiment(
-      summary.dominantSentiment
+      summary.dominantSentiment,
     )}\n`;
     output += `• Ogólna wiarygodność: ${summary.overallCredibility}% ${summary.overallCredibilityEmoji}\n`;
 

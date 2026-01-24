@@ -107,17 +107,17 @@ export const QUERY_TEMPLATES = {
 export const SEARCH_DEPTH_CONFIG = {
     quick: {
         maxResults: 5,
-        providers: ["exa"], // only primary
+        providers: ["exa", "brave"], // primary + brave fallback
         timeout: 5000, // 5s
     },
     standard: {
         maxResults: 20,
-        providers: ["exa", "tavily"], // primary + secondary
+        providers: ["exa", "brave", "tavily"], // primary + fallbacks
         timeout: 15000, // 15s
     },
     deep: {
         maxResults: 50,
-        providers: ["exa", "tavily", "serper"], // all except on-demand
+        providers: ["exa", "brave", "tavily", "serper"], // all providers
         timeout: 30000, // 30s
     },
 };

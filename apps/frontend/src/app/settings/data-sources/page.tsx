@@ -38,7 +38,7 @@ import { useDataCounts } from "@/lib/hooks/useDataCounts";
 
 export default function DataSourcesPage() {
   const [activeTab, setActiveTab] = useState<"sources" | "documents" | "stats">(
-    "sources"
+    "sources",
   );
   const [sources, setSources] = useState<DataSource[]>([]);
   const [stats, setStats] = useState<DataSourcesStats | null>(null);
@@ -168,20 +168,20 @@ export default function DataSourcesPage() {
             try {
               toast.info(
                 "Rozpoczęto scraping",
-                `Pobieranie danych ze źródła: ${source?.name}`
+                `Pobieranie danych ze źródła: ${source?.name}`,
               );
               const result = await triggerScraping(id);
               if (result.status === "success" || result.status === "ok") {
                 toast.success(
                   "Scraping zakończony",
-                  result.message || "Dane pobrane"
+                  result.message || "Dane pobrane",
                 );
               }
               setTimeout(() => loadData(), 2000);
             } catch (error) {
               toast.error(
                 "Błąd scrapingu",
-                error instanceof Error ? error.message : "Nieznany błąd"
+                error instanceof Error ? error.message : "Nieznany błąd",
               );
             }
           }}
@@ -365,8 +365,8 @@ function SourcesTab({
                 source.last_scrape?.status === "error"
                   ? "error"
                   : source.is_active
-                  ? "success"
-                  : "skipped"
+                    ? "success"
+                    : "skipped"
               }
               onToggle={() => onToggle(source.id, source.is_active)}
               onDelete={() => onDelete(source.id)}
@@ -805,7 +805,7 @@ function GUSSourceCard({
     } catch (error) {
       toast.error(
         "Błąd",
-        error instanceof Error ? error.message : "Nie udało się dodać źródła"
+        error instanceof Error ? error.message : "Nie udało się dodać źródła",
       );
     } finally {
       setAdding(false);
@@ -826,7 +826,7 @@ function GUSSourceCard({
     } catch (error) {
       toast.error(
         "Błąd zapisu",
-        error instanceof Error ? error.message : "Nie udało się zapisać klucza"
+        error instanceof Error ? error.message : "Nie udało się zapisać klucza",
       );
     } finally {
       setSavingKey(false);
@@ -932,6 +932,27 @@ function DocumentsTab({
   const [filterType, setFilterType] = useState("");
   const toast = useToast();
 
+  const handleDeleteAll = async () => {
+    if (
+      !confirm(
+        "Czy na pewno chcesz usunąć WSZYSTKIE dokumenty z bazy RAG? Tej operacji nie można cofnąć.",
+      )
+    )
+      return;
+
+    try {
+      const { deleteAllDocuments } = await import("@/lib/api/data-sources");
+      const res = await deleteAllDocuments();
+      toast.success("Usunięto", res.message || "Wyczyszczono bazę RAG");
+      setDocuments([]);
+    } catch (e) {
+      toast.error(
+        "Błąd",
+        e instanceof Error ? e.message : "Nie udało się usunąć dokumentów",
+      );
+    }
+  };
+
   const handleDeleteSingle = async (id: string, title: string) => {
     if (!confirm(`Czy na pewno chcesz usunąć dokument "${title}"?`)) return;
     try {
@@ -942,7 +963,7 @@ function DocumentsTab({
     } catch (e) {
       toast.error(
         "Błąd",
-        e instanceof Error ? e.message : "Nie udało się usunąć dokumentu"
+        e instanceof Error ? e.message : "Nie udało się usunąć dokumentu",
       );
     }
   };
@@ -974,6 +995,15 @@ function DocumentsTab({
           <option value="protocol">Protokoły</option>
           <option value="news">Aktualności</option>
         </select>
+        {documents.length > 0 && (
+          <button
+            onClick={handleDeleteAll}
+            className="px-4 py-2 border border-border text-danger hover:bg-red-50 rounded-lg flex items-center gap-2"
+          >
+            <Trash2 className="h-4 w-4" />
+            Usuń wszystkie (RAG)
+          </button>
+        )}
       </div>
 
       {documents.length === 0 ? (

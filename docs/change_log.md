@@ -1,5 +1,157 @@
 # Change Log
 
+## 2026-01-24 — Rozszerzona naprawa STT: powtórzenia i identyfikacja mówców
+
+### Problem:
+
+1. Powtórzenia w transkrypcji (halucynacje Whisper) nadal występowały
+2. Niepełny podział transkrypcji na prawidłową ilość mówców
+
+### Rozwiązanie:
+
+1. **Rozszerzona funkcja `removeRepetitions()`**:
+   - 6-etapowe usuwanie powtórzeń
+   - Algorytm `stringSimilarity()` do wykrywania podobnych zdań (>90%)
+   - Okno 5 zdań do sprawdzania duplikatów
+   - Usuwanie powtórzeń fraz w obrębie zdania
+
+2. **Rozszerzony prompt kontekstowy Whisper**:
+   - Dodane tematy: uchwały, budżet, podatki, inwestycje, oświata, kultura, sport, drogi, wodociągi
+   - Dodane zwroty: otwieram sesję, stwierdzam kworum, zarządzam głosowanie
+
+3. **Ulepszona identyfikacja mówców (LLM)**:
+   - Szczegółowe zasady rozpoznawania: Przewodniczący, Burmistrz, Skarbnik, Sekretarz, Radni
+   - Wskazówki rozpoznawania zmiany mówcy
+   - Wymóg minimum 10-20 segmentów dla dłuższych transkrypcji
+   - Zwiększony limit tekstu: 15000 → 25000 znaków
+   - Obniżona temperatura: 0.3 → 0.2
+   - max_tokens: 8000
+
+### Pliki:
+
+- `apps/api/src/services/youtube-downloader.ts` - removeRepetitions(), stringSimilarity(), prompty
+
+---
+
+## 2026-01-24 — Poprawa UX podglądu transkrypcji YouTube
+
+### Problem:
+
+Brak możliwości podglądu zakończonych transkrypcji w frontendzie gdy `resultDocumentId` nie istnieje.
+
+### Rozwiązanie:
+
+1. **Przycisk "Szczegóły"** - dodany dla wszystkich zakończonych jobów (niezależnie od `resultDocumentId`)
+2. **Informacja o braku zapisu** - komunikat gdy transkrypcja nie została zapisana do RAG
+3. **Przycisk podglądu w modalu** - dodany w `TranscriptionDetailModal` dla jobów z `resultDocumentId`
+
+### Pliki:
+
+- `apps/frontend/src/app/documents/youtube/page.tsx`
+- `apps/frontend/src/app/documents/youtube/components/TranscriptionDetailModal.tsx`
+
+---
+
+## 2026-01-24 — Naprawa halucynacji Whisper w transkrypcji YouTube
+
+### Problem:
+
+Whisper generował powtarzające się frazy ("Dziękuję. Dziękuję. Dziękuję...") gdy audio zawierało ciszę, muzykę lub niską jakość dźwięku.
+
+### Rozwiązanie:
+
+1. **`removeRepetitions()`** - nowa funkcja post-processing usuwająca powtarzające się zdania
+2. **Prompt kontekstowy dla Whisper** - dodany kontekst sesji rady miejskiej redukujący halucynacje
+3. **Ulepszony prompt korekty LLM** - dodana instrukcja usuwania powtórzeń i wykrywania braku mowy
+
+### Pliki:
+
+- `apps/api/src/services/youtube-downloader.ts` - removeRepetitions(), contextPrompt, correctTranscript()
+
+---
+
+## 2026-01-24 — Document Process Queue (Redis/BullMQ)
+
+### Dodane:
+
+- **Tabela `document_jobs`** - persystencja zadań OCR/transkrypcji
+- **`document-process-queue.ts`** - kolejka Redis dla zadań przetwarzania dokumentów
+- **Endpointy `/documents/jobs`** - POST (dodaj), GET (lista), DELETE (usuń), retry, save-rag, stats
+- **Worker `document-process-jobs`** - handler przetwarzania w tle
+- **Komponent `DocumentJobsList`** - lista zadań z zarządzaniem (podgląd, usuń, zapisz do RAG)
+- **Integracja z `DocumentProcessPage`** - checkbox "Użyj kolejki"
+
+### Cel:
+
+Zapewnienie persystencji zadań OCR/transkrypcji przy zerwaniu sesji przeglądarki. Zadania są kolejkowane w Redis i przetwarzane przez Worker, dzięki czemu nie giną przy zamknięciu przeglądarki.
+
+### Pliki:
+
+- `docs/supabase_migrations/027_document_jobs.sql`
+- `apps/api/src/services/document-process-queue.ts`
+- `apps/api/src/routes/documents.ts` (nowe endpointy)
+- `apps/worker/src/jobs/document-process.ts`
+- `apps/worker/src/index.ts` (rejestracja workera)
+- `apps/frontend/src/components/documents/DocumentJobsList.tsx`
+- `apps/frontend/src/app/documents/process/page.tsx`
+
+---
+
+## 2026-01-24 - Inwentaryzacja dokumentacji
+
+### 🧹 Cleanup: Usunięcie przestarzałej dokumentacji
+
+**Status:** ✅ Ukończone
+
+#### Usunięte pliki (7)
+
+- `docs/FIX_STT_TIMEOUT_PROBLEM.md` - problem naprawiony
+- `docs/DIAGNOSTYKA_TRANSKRYPCJI_JOB.md` - diagnostyka jednorazowa
+- `docs/TODO_TRANSKRYPCJA_DEPLOYMENT.md` - deployment ukończony
+- `docs/MIGRACJA_TRANSKRYPCJI_REDIS.md` - migracja ukończona
+- `docs/ANALIZA_TRANSKRYPCJI_YOUTUBE.md` - analiza historyczna
+- `docs/IMPLEMENTACJA_DETAILED_PROGRESS_UI.md` - implementacja ukończona
+- `docs/TEST_YOUTUBE_TRANSCRIPTION_PAGE.md` - plan testów jednorazowy
+
+#### Zaktualizowane pliki
+
+- `docs/todo.md` - usunięto ukończone zadania, dodano sekcję "Ukończone moduły"
+- `docs/architecture.md` - zaktualizowano stan implementacji (2026-01-24)
+- `.windsurf/TODO.md` - zaktualizowano priorytety i ukończone
+- `.windsurf/DECISIONS.md` - dodano decyzje: Redis/BullMQ, Voice Command, STT Timeout
+- `.windsurf/ARCHITECTURE.MD` - dodano sekcje: Transkrypcja YouTube, Voice Command System
+
+#### Stan po inwentaryzacji
+
+- **Migracje**: 42 pliki SQL
+- **API Routes**: 25 plików
+- **Services**: 67 plików
+- **Worker Jobs**: 6 handlers
+
+---
+
+## 2026-01-18 - useVoiceCommands: Normalizacja akcji głosowych
+
+### 🐛 Bugfix: Typowanie VoiceAction w czacie
+
+**Status:** ✅ Naprawione
+
+#### Problem
+
+Podczas `next build` frontend zatrzymywał się na błędzie TypeScript: odpowiedź API dla komendy głosowej mogła brakować wymaganych pól (np. `query`), co łamało typ `VoiceAction` w hooku `useVoiceCommands`.
+
+#### Rozwiązanie
+
+- Dodano funkcję `normalizeVoiceAction()` wymuszającą kompletność danych (domyślne ścieżki, zapytania i komendy kontrolne) przed zapisaniem do historii.
+- Hook teraz importuje typ `VoiceCommandResult`, aby zachować spójność kontraktu z backendem.
+
+#### Efekt
+
+- `npm --workspace apps/frontend run build` przechodzi poprawnie.
+- Historia komend głosowych przechowuje zawsze poprawnie ztypowane akcje.
+
+---
+
 ## 2026-01-17 - CalendarWidget: Naprawa parsowania daty
 
 ### 🐛 Bugfix: Formatowanie daty i godziny w kalendarzu
@@ -15,7 +167,6 @@
 #### Rozwiązania
 
 1. **Frontend** (`CalendarWidget.tsx`):
-
    - Dodano `formatDateTimeLocal()` formatującą datę w lokalnym czasie
    - Domyślna godzina 10:00 przy kliknięciu na dzień
    - Zaokrąglenie do 30 minut przy tworzeniu nowego wydarzenia
@@ -136,7 +287,6 @@ Scraper pobierał URL-e do plików PDF i zapisywał surowe dane binarne (`%PDF-1
 #### Rozwiązanie
 
 1. **Nowa funkcja `fetchUrlContent()`** - inteligentne pobieranie URL:
-
    - Sprawdza `Content-Type` header
    - Wykrywa PDF po rozszerzeniu URL (`.pdf`)
    - Dla PDF → `DocumentProcessor` (OCR/ekstrakcja tekstu)
@@ -830,7 +980,6 @@ Funkcja `saveToRAG()` teraz:
 **Rozwiązanie w `apps/api/src/services/youtube-downloader.ts`:**
 
 1. **Nowa funkcja `normalizeSTTModel()`** - mapuje różne formaty nazw modeli:
-
    - `whisper` → `large-v3`
    - `whisper-1` → `large-v3` (dla faster-whisper) lub bez zmian (dla OpenAI)
    - `dimavz/whisper-tiny:latest` → `tiny`
@@ -916,14 +1065,12 @@ Funkcja `saveToRAG()` teraz:
 **Zmiany:**
 
 1. **chat.ts** - pobieranie danych z `user_locale_settings`:
-
    - Gmina/Miasto (`municipality`)
    - Województwo (`voivodeship`)
    - Nazwa rady (`council_name`)
    - Adres BIP (`bip_url`)
 
 2. **buildSystemPrompt()** - personalizacja:
-
    - Agent zwraca się do użytkownika po imieniu
    - Kontekst lokalny: gmina, województwo, rada
    - Sekcja PERSONALIZACJA w system prompt
@@ -1095,12 +1242,10 @@ Hardcoded wartości są tylko fallbackami przed inicjalizacją:
 **Rozwiązanie:**
 
 1. **Deduplikacja po tytule** - `document-query-service.ts`:
-
    - Rozszerzono `deduplicateMatches()` o deduplikację po znormalizowanym tytule
    - Logowanie usuwanych duplikatów
 
 2. **Zaktualizowany system prompt** - `packages/shared/src/types/chat.ts`:
-
    - Dodano sekcję "PREZENTACJA DOKUMENTÓW"
    - Instrukcje: nigdy nie pokazuj duplikatów, rozróżniaj przez numer/datę/typ
 
@@ -1316,7 +1461,7 @@ const result = await downloader.transcribeAndAnalyze(
   videoId,
   videoTitle,
   videoUrl,
-  true // enablePreprocessing
+  true, // enablePreprocessing
 );
 ```
 
@@ -2217,7 +2362,6 @@ const results = await batchService.waitForCompletion(batchId);
 **Zaimplementowane moduły (dotychczas nieudokumentowane):**
 
 1. **Deep Internet Researcher** - kompletny system researchu internetowego:
-
    - `DeepResearchService` - orkiestrator multi-provider
    - Providers: Exa AI, Tavily AI, Serper (Google)
    - Frontend: `/research` z historią raportów
@@ -2226,12 +2370,10 @@ const results = await batchService.waitForCompletion(batchId);
    - Migracja: `011_create_research_reports.sql`
 
 2. **Analizy Prawne** - UI dla silników analitycznych:
-
    - Frontend: `/analysis` z tabami (wyszukiwanie, analiza prawna, budżetowa)
    - Integracja z Legal Search API, Legal Reasoning Engine, Budget Analysis Engine
 
 3. **Worker Jobs** - kompletne joby przetwarzania:
-
    - `extraction.ts` - ekstrakcja tekstu z PDF/skanów (multimodal LLM)
    - `analysis.ts` - streszczenie + skanowanie ryzyk
    - `relations.ts` - wykrywanie relacji między dokumentami
@@ -2266,7 +2408,6 @@ Agent AI "Winsdurf" nie jest chatbotem informacyjnym, lecz agentem analityczno-k
 **Zaimplementowane komponenty:**
 
 1. **Nowa struktura typów** (`packages/shared/src/types/data-sources-api.ts`):
-
    - `DataSourceType` - typy źródeł (api_isap, api_wsa_nsa, api_rio, scraper_bip, etc.)
    - `ApiClientConfig` - konfiguracja klientów API (auth, pagination, response mapping)
    - `ScraperConfig` - konfiguracja scrapingu (selektory, URL patterns, JavaScript)
@@ -2277,14 +2418,12 @@ Agent AI "Winsdurf" nie jest chatbotem informacyjnym, lecz agentem analityczno-k
    - `BudgetAnalysisRequest/Result` - analiza budżetowa
 
 2. **Adaptery pobierania danych:**
-
    - `BaseDataFetcher` - bazowa klasa dla wszystkich fetchers
    - `ApiDataFetcher` - uniwersalny klient API (OAuth2, API key, Basic, Bearer)
    - `ScraperDataFetcher` - web scraping z Cheerio
    - `UnifiedDataService` - orkiestrator łączący API i scraping
 
 3. **Migracja bazy danych** (`008_update_data_sources_for_api.sql`):
-
    - Dodano `fetch_method` (api, scraping, hybrid)
    - Dodano `api_config` (JSONB) dla konfiguracji API clients
    - Dodano `category` (legal, administrative, financial, statistical, other)
@@ -2295,7 +2434,6 @@ Agent AI "Winsdurf" nie jest chatbotem informacyjnym, lecz agentem analityczno-k
    - Domyślne źródła API dla nowych użytkowników (ISAP, Monitor Polski)
 
 4. **Backend API:**
-
    - Zaktualizowano `/api/data-sources/:id/scrape` - używa `UnifiedDataService`
    - Obsługa zarówno API jak i scrapingu przez jeden endpoint
 
@@ -2316,7 +2454,6 @@ Agent AI "Winsdurf" nie jest chatbotem informacyjnym, lecz agentem analityczno-k
 **Silniki analityczne (zaimplementowane):**
 
 1. **Legal Search API** (`apps/api/src/services/legal-search-api.ts`):
-
    - Wyszukiwanie pełnotekstowe (fulltext) - szybkie wyszukiwanie po słowach kluczowych
    - Wyszukiwanie semantyczne (semantic) - wyszukiwanie po znaczeniu z AI embeddings
    - Wyszukiwanie hybrydowe (hybrid) - łączy oba podejścia
@@ -2324,7 +2461,6 @@ Agent AI "Winsdurf" nie jest chatbotem informacyjnym, lecz agentem analityczno-k
    - Generowanie excerptów i highlights
 
 2. **Legal Reasoning Engine** (`apps/api/src/services/legal-reasoning-engine.ts`):
-
    - Analiza legalności - zgodność z prawem, podstawy prawne, delegacje
    - Analiza ryzyka finansowego - zgodność z budżetem, WPF, stanowiska RIO
    - Analiza zgodności proceduralnej - tryb uchwalania, konsultacje, terminy

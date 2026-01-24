@@ -17,7 +17,7 @@ services:
       - LOG_LEVEL=info
 
       # CORS - allow frontend and API
-      - ALLOW_ORIGINS=["http://localhost:3000","http://localhost:3001","http://192.168.33.4:3000","http://192.168.33.4:3001"]
+      - ALLOW_ORIGINS=["http://localhost:3000","http://localhost:3001"]
 
       # Model TTL (Time To Live)
       - STT_MODEL_TTL=600 # 10 min - keep models loaded longer
@@ -27,6 +27,8 @@ services:
       # Whisper config (nested with double underscore)
       - WHISPER__INFERENCE_DEVICE=cuda
       - WHISPER__COMPUTE_TYPE=int8 # int8 for low VRAM GPUs (RTX 3050 4GB)
+      # Model: small ~2GB VRAM (dla GPU 3-4GB)
+      - WHISPER__MODEL=Systran/faster-whisper-small
 
       # UI
       - ENABLE_UI=true # Gradio web interface

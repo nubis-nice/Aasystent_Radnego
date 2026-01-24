@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabase/client";
 import { AIErrorHandler } from "@/lib/errors/ai-error-handler";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 // Retry configuration
 const MAX_RETRIES = 3;
@@ -59,29 +59,35 @@ interface Conversation {
 }
 
 async function getAuthToken(): Promise<string | null> {
-  // Najpierw spróbuj odświeżyć sesję, żeby mieć aktualny token
-  const { data: refreshData, error: refreshError } =
-    await supabase.auth.refreshSession();
+  // 1) Spróbuj istniejącej sesji
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (session?.access_token) return session.access_token;
 
-  if (refreshError || !refreshData.session) {
-    // Jeśli odświeżenie nie zadziałało, spróbuj pobrać istniejącą sesję
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    return session?.access_token || null;
+  // 2) Spróbuj odświeżyć sesję
+  const { data: refreshData } = await supabase.auth.refreshSession();
+  if (refreshData?.session?.access_token) {
+    return refreshData.session.access_token;
   }
 
-  return refreshData.session.access_token;
+  // 3) Ostateczny fallback do lokalStorage (jeśli token był zapisany ręcznie)
+  if (typeof window !== "undefined") {
+    const stored = localStorage.getItem("supabase_access_token");
+    if (stored) return stored;
+  }
+
+  return null;
 }
 
 export async function sendMessage(
-  request: SendMessageRequest
+  request: SendMessageRequest,
 ): Promise<SendMessageResponse> {
   const token = await getAuthToken();
 
   if (!token) {
     const error = new Error(
-      "Nie jesteś zalogowany. Zaloguj się aby korzystać z czatu."
+      "Nie jesteś zalogowany. Zaloguj się aby korzystać z czatu.",
     );
     throw error;
   }
@@ -142,7 +148,15 @@ export async function sendMessage(
           continue;
         }
       } else {
-        return response.json();
+        // Parsuj JSON z obsługą błędów
+        try {
+          return await response.json();
+        } catch (parseError) {
+          console.error("[Chat API] JSON parse error:", parseError);
+          throw new Error(
+            "Otrzymano nieprawidłową odpowiedź z serwera (nie JSON)",
+          );
+        }
       }
     } catch (error) {
       lastError = error instanceof Error ? error : new Error("Unknown error");
@@ -186,12 +200,19 @@ export async function getConversations(): Promise<Conversation[]> {
   });
 
   if (!response.ok) {
-    const error = await response.json();
+    const error = await response
+      .json()
+      .catch(() => ({ error: "Unknown error" }));
     throw new Error(error.error || "Failed to fetch conversations");
   }
 
-  const data = await response.json();
-  return data.conversations;
+  try {
+    const data = await response.json();
+    return data.conversations;
+  } catch (parseError) {
+    console.error("[Chat API] getConversations JSON parse error:", parseError);
+    throw new Error("Nieprawidłowa odpowiedź serwera");
+  }
 }
 
 export async function getConversation(id: string): Promise<{
@@ -211,11 +232,18 @@ export async function getConversation(id: string): Promise<{
   });
 
   if (!response.ok) {
-    const error = await response.json();
+    const error = await response
+      .json()
+      .catch(() => ({ error: "Unknown error" }));
     throw new Error(error.error || "Failed to fetch conversation");
   }
 
-  return response.json();
+  try {
+    return await response.json();
+  } catch (parseError) {
+    console.error("[Chat API] getConversation JSON parse error:", parseError);
+    throw new Error("Nieprawidłowa odpowiedź serwera");
+  }
 }
 
 export async function deleteConversation(id: string): Promise<void> {

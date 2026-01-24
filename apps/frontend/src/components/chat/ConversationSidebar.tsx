@@ -81,7 +81,7 @@ export function ConversationSidebar({
 
     if (toDelete.length === 0) {
       alert(
-        "Brak konwersacji do usunięcia (aktualna konwersacja zostanie zachowana)."
+        "Brak konwersacji do usunięcia (aktualna konwersacja zostanie zachowana).",
       );
       return;
     }
@@ -102,7 +102,7 @@ export function ConversationSidebar({
       }
       // Zachowaj tylko aktywną konwersację
       setConversations((prev) =>
-        prev.filter((c) => c.id === activeConversationId)
+        prev.filter((c) => c.id === activeConversationId),
       );
     } catch (err) {
       console.error("Error clearing conversations:", err);
@@ -153,13 +153,13 @@ export function ConversationSidebar({
   // Paginacja - pobierz tylko 5 konwersacji dla aktualnej strony
   const allConversationsFlat = conversations;
   const totalPages = Math.ceil(
-    allConversationsFlat.length / conversationsPerPage
+    allConversationsFlat.length / conversationsPerPage,
   );
   const startIndex = currentPage * conversationsPerPage;
   const endIndex = startIndex + conversationsPerPage;
   const paginatedConversations = allConversationsFlat.slice(
     startIndex,
-    endIndex
+    endIndex,
   );
 
   return (
