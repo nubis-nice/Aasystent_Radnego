@@ -102,7 +102,10 @@ export const testApiRoutes: FastifyPluginAsync = async (fastify) => {
           },
         });
       } catch (error: any) {
-        fastify.log.error("OpenAI test failed:", error);
+        fastify.log.error(
+          "OpenAI test failed: " +
+            String(error instanceof Error ? error.message : error),
+        );
         console.error("[TestAPI] Full error:", JSON.stringify(error, null, 2));
         console.error("[TestAPI] Error message:", error.message);
         console.error("[TestAPI] Error stack:", error.stack);
@@ -132,7 +135,7 @@ export const testApiRoutes: FastifyPluginAsync = async (fastify) => {
           },
         });
       }
-    }
+    },
   );
 
   // POST /api/test-local-model - Testowanie lokalnego modelu
@@ -191,7 +194,10 @@ export const testApiRoutes: FastifyPluginAsync = async (fastify) => {
           },
         });
       } catch (error: any) {
-        fastify.log.error("Local model test failed:", error);
+        fastify.log.error(
+          "Local model test failed: " +
+            String(error instanceof Error ? error.message : error),
+        );
 
         let errorMessage = "Nieznany błąd";
 
@@ -213,6 +219,6 @@ export const testApiRoutes: FastifyPluginAsync = async (fastify) => {
           },
         });
       }
-    }
+    },
   );
 };

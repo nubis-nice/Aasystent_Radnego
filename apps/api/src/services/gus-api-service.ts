@@ -74,7 +74,7 @@ export class GUSApiService {
    */
   private async request<T>(
     endpoint: string,
-    params: Record<string, string | number> = {}
+    params: Record<string, string | number> = {},
   ): Promise<T> {
     const cacheKey = `${endpoint}:${JSON.stringify(params)}`;
 
@@ -93,7 +93,7 @@ export class GUSApiService {
     });
 
     // Headers
-    const headers: HeadersInit = {
+    const headers: Record<string, string> = {
       Accept: "application/json",
     };
 
@@ -105,11 +105,11 @@ export class GUSApiService {
 
     if (!response.ok) {
       throw new Error(
-        `GUS API error: ${response.status} ${response.statusText}`
+        `GUS API error: ${response.status} ${response.statusText}`,
       );
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as T;
 
     // Zapisz do cache
     if (this.cacheEnabled) {
@@ -142,7 +142,7 @@ export class GUSApiService {
   async findGmina(name: string): Promise<GUSUnit | null> {
     const gminy = await this.getUnits({ level: 6 }); // Poziom 6 = gminy
     const found = gminy.find((g) =>
-      g.name.toLowerCase().includes(name.toLowerCase())
+      g.name.toLowerCase().includes(name.toLowerCase()),
     );
     return found || null;
   }
@@ -161,7 +161,7 @@ export class GUSApiService {
         ...(params?.subjectId && { "subject-id": params.subjectId }),
         ...(params?.year && { year: params.year }),
         ...(params?.level && { level: params.level }),
-      }
+      },
     );
 
     return result.results || [];
@@ -184,14 +184,14 @@ export class GUSApiService {
   async getDataByVariable(
     variableId: string,
     unitIds: string[],
-    params?: { year?: number }
+    params?: { year?: number },
   ): Promise<GUSDataPoint[]> {
     const result = await this.request<{ results: GUSDataPoint[] }>(
       `/data/by-variable/${variableId}`,
       {
         "unit-id": unitIds.join(","),
         ...(params?.year && { year: params.year }),
-      }
+      },
     );
 
     return result.results || [];
@@ -203,14 +203,14 @@ export class GUSApiService {
   async getDataByUnit(
     unitId: string,
     variableIds: string[],
-    params?: { year?: number }
+    params?: { year?: number },
   ): Promise<GUSDataPoint[]> {
     const result = await this.request<{ results: GUSDataPoint[] }>(
       `/data/by-unit/${unitId}`,
       {
         "var-id": variableIds.join(","),
         ...(params?.year && { year: params.year }),
-      }
+      },
     );
 
     return result.results || [];
@@ -221,7 +221,7 @@ export class GUSApiService {
    */
   async getGminaStats(
     gminaId: string,
-    year?: number
+    year?: number,
   ): Promise<GUSStats | null> {
     try {
       // Kluczowe zmienne dla gmin (przykładowe ID - do dostosowania)
@@ -272,15 +272,15 @@ export class GUSApiService {
   async compareGminy(
     gminaIds: string[],
     variableIds: string[],
-    year?: number
+    year?: number,
   ): Promise<{
     variables: GUSVariable[];
     data: Record<string, GUSDataPoint[]>;
   }> {
     const variablesData = await Promise.all(
       variableIds.map((varId) =>
-        this.getDataByVariable(varId, gminaIds, { year })
-      )
+        this.getDataByVariable(varId, gminaIds, { year }),
+      ),
     );
 
     const variables = await this.getVariables();
@@ -289,7 +289,7 @@ export class GUSApiService {
     const dataByGmina: Record<string, GUSDataPoint[]> = {};
     gminaIds.forEach((gminaId) => {
       dataByGmina[gminaId] = variablesData.flatMap((varData) =>
-        varData.filter((d) => String(d.id) === gminaId)
+        varData.filter((d) => String(d.id) === gminaId),
       );
     });
 

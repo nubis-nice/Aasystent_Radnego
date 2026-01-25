@@ -1431,14 +1431,11 @@ export class AIToolOrchestrator {
         result.tool === "quick_tool" ||
         result.tool === "app_navigate"
       ) {
-        const actionData = data as {
-          type?: string;
-          success?: boolean;
-          message?: string;
-        };
-        if (actionData.message) {
+        // Dla akcji głosowych, message jest w result.message, nie w data.message
+        const actionMessage = (result as { message?: string }).message;
+        if (actionMessage) {
           return {
-            response: actionData.message,
+            response: actionMessage,
             sources: [],
           };
         }

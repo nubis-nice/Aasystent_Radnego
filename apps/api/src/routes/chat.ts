@@ -32,7 +32,7 @@ async function generateBatchEmbedding(
   client,
   text,
   model,
-  maxChunkChars = 18000
+  maxChunkChars = 18000,
 ) {
   // Jeśli tekst mieści się w limicie - pojedyncze wywołanie
   if (text.length <= maxChunkChars) {
@@ -69,7 +69,7 @@ async function generateBatchEmbedding(
     }
   }
   console.log(
-    `[Embedding] Batch processing: ${chunks.length} chunks from ${text.length} chars`
+    `[Embedding] Batch processing: ${chunks.length} chunks from ${text.length} chars`,
   );
   // Generuj embeddingi dla wszystkich chunków (batch API)
   const response = await client.embeddings.create({
@@ -92,11 +92,11 @@ async function generateBatchEmbedding(
   }
   // Normalizacja wektora (L2 norm) - ważne dla similarity search
   const norm = Math.sqrt(
-    aggregatedEmbedding.reduce((sum, val) => sum + val * val, 0)
+    aggregatedEmbedding.reduce((sum, val) => sum + val * val, 0),
   );
   const normalizedEmbedding = aggregatedEmbedding.map((val) => val / norm);
   console.log(
-    `[Embedding] Aggregated ${chunks.length} embeddings into single vector`
+    `[Embedding] Aggregated ${chunks.length} embeddings into single vector`,
   );
   return normalizedEmbedding;
 }
@@ -136,7 +136,7 @@ export const chatRoutes = async (fastify) => {
       let userName = profile?.full_name;
       if (!userName) {
         const { data: authUser } = await supabase.auth.admin.getUserById(
-          userId as string
+          userId as string,
         );
         userName =
           authUser?.user?.user_metadata?.full_name ||
@@ -175,13 +175,13 @@ export const chatRoutes = async (fastify) => {
           try {
             apiKey = decryptApiKey(
               apiConfig.api_key_encrypted,
-              apiConfig.encryption_iv
+              apiConfig.encryption_iv,
             );
           } catch (e) {
             console.error("[Chat] AES decryption failed, trying base64:", e);
             apiKey = Buffer.from(
               apiConfig.api_key_encrypted,
-              "base64"
+              "base64",
             ).toString("utf-8");
           }
         } else {
@@ -189,7 +189,7 @@ export const chatRoutes = async (fastify) => {
           console.log("[Chat] Decrypting API key using base64");
           const decoded = Buffer.from(
             apiConfig.api_key_encrypted,
-            "base64"
+            "base64",
           ).toString("utf-8");
           // Obsługa kodowania encodeURIComponent z frontendu
           try {
@@ -203,7 +203,7 @@ export const chatRoutes = async (fastify) => {
         console.log(
           `[Chat] API key decrypted, length: ${
             apiKey?.length || 0
-          }, starts with sk-: ${apiKey?.startsWith("sk-")}`
+          }, starts with sk-: ${apiKey?.startsWith("sk-")}`,
         );
         model = apiConfig.model_name || model;
         provider = apiConfig.provider;
@@ -212,7 +212,7 @@ export const chatRoutes = async (fastify) => {
         // Użyj embedding model z konfiguracji lub domyślny
         embeddingModel = apiConfig.embedding_model || "text-embedding-3-small";
         console.log(
-          `[Chat] Using provider: ${provider}, model: ${model}, baseUrl: ${baseUrl}, embeddingModel: ${embeddingModel}`
+          `[Chat] Using provider: ${provider}, model: ${model}, baseUrl: ${baseUrl}, embeddingModel: ${embeddingModel}`,
         );
         // Zaktualizuj last_used_at
         await supabase
@@ -267,16 +267,15 @@ export const chatRoutes = async (fastify) => {
 
       if (sessionIntent) {
         console.log(
-          `[Chat] Session intent detected: session=${sessionIntent.sessionNumber}, type=${sessionIntent.requestType}`
+          `[Chat] Session intent detected: session=${sessionIntent.sessionNumber}, type=${sessionIntent.requestType}`,
         );
 
         // Uruchom kaskadowe wyszukiwanie sesji
         const sessionDiscovery = new SessionDiscoveryService(userId);
         await sessionDiscovery.initialize();
 
-        const discoveryResult = await sessionDiscovery.discoverSession(
-          sessionIntent
-        );
+        const discoveryResult =
+          await sessionDiscovery.discoverSession(sessionIntent);
 
         // Jeśli nie znaleziono transkrypcji ale jest wideo - zaproponuj transkrypcję
         if (
@@ -344,7 +343,7 @@ export const chatRoutes = async (fastify) => {
 
         // Jeśli znaleziono materiały - dodaj je priorytetowo do kontekstu RAG
         console.log(
-          `[Chat] Session documents found: ${discoveryResult.documents.length}`
+          `[Chat] Session documents found: ${discoveryResult.documents.length}`,
         );
 
         // Zapisz dokumenty sesji do późniejszego użycia w kontekście RAG
@@ -361,7 +360,7 @@ export const chatRoutes = async (fastify) => {
       // ========================================================================
       if (shouldUseOrchestrator(message)) {
         console.log(
-          `[Chat] Deep research detected, using AI Tool Orchestrator`
+          `[Chat] Deep research detected, using AI Tool Orchestrator`,
         );
 
         try {
@@ -375,7 +374,7 @@ export const chatRoutes = async (fastify) => {
 
           const orchestratorResult = await orchestrator.process(
             message,
-            conversationContext
+            conversationContext,
           );
 
           // Sprawdź czy to akcja kalendarza/zadań (krótka odpowiedź OK)
@@ -393,7 +392,7 @@ export const chatRoutes = async (fastify) => {
             "app_navigate",
           ];
           const isActionTool = actionTools.includes(
-            orchestratorResult.intent.primaryIntent
+            orchestratorResult.intent.primaryIntent,
           );
 
           // Sprawdź czy orchestrator udzielił sensownej odpowiedzi
@@ -403,7 +402,7 @@ export const chatRoutes = async (fastify) => {
               ? orchestratorResult.synthesizedResponse.length > 10
               : orchestratorResult.synthesizedResponse.length > 100) &&
             !orchestratorResult.synthesizedResponse.includes(
-              "nie udało się znaleźć"
+              "nie udało się znaleźć",
             ) &&
             orchestratorResult.toolResults.some((r) => r.success && r.data);
 
@@ -414,14 +413,14 @@ export const chatRoutes = async (fastify) => {
               orchestratorResult.synthesizedResponse?.length || 0
             }, successfulTools=${
               orchestratorResult.toolResults.filter((r) => r.success).length
-            }`
+            }`,
           );
 
           // Debug: pokaż wyniki narzędzi
           if (isActionTool) {
             console.log(
               `[Chat] Action tool results:`,
-              JSON.stringify(orchestratorResult.toolResults, null, 2)
+              JSON.stringify(orchestratorResult.toolResults, null, 2),
             );
           }
 
@@ -457,6 +456,11 @@ export const chatRoutes = async (fastify) => {
               .select()
               .single();
 
+            // Wyciągnij uiAction z toolResults (dla akcji kalendarza/zadań)
+            const uiActions = orchestratorResult.toolResults
+              .filter((r) => r.uiAction)
+              .map((r) => r.uiAction);
+
             return reply.send({
               conversationId: currentConversationId,
               message: assistantMessage || {
@@ -479,12 +483,14 @@ export const chatRoutes = async (fastify) => {
                 requiresDeepSearch:
                   orchestratorResult.intent.requiresDeepSearch,
               },
+              // Przekaż akcje UI do frontendu (np. odświeżenie kalendarza)
+              uiActions: uiActions.length > 0 ? uiActions : undefined,
             });
           }
         } catch (orchError) {
           console.warn(
             "[Chat] Orchestrator failed, falling back to standard flow:",
-            orchError
+            orchError,
           );
           // Kontynuuj standardowy flow
         }
@@ -541,11 +547,11 @@ export const chatRoutes = async (fastify) => {
         const primaryDoc = documentQuery.matches[0];
         if (primaryDoc) {
           console.log(
-            `[Chat] Document found by ID: ${primaryDoc.id}, fetching context`
+            `[Chat] Document found by ID: ${primaryDoc.id}, fetching context`,
           );
           documentContext = await documentQueryService.getDocumentContext(
             primaryDoc.id,
-            message
+            message,
           );
         }
       }
@@ -558,7 +564,7 @@ export const chatRoutes = async (fastify) => {
           const embConfig = await getAIConfig(userId, "embeddings");
           const currentEmbeddingModel = embConfig.modelName;
           console.log(
-            `[Chat] Using embeddings: provider=${embConfig.provider}, model=${currentEmbeddingModel}`
+            `[Chat] Using embeddings: provider=${embConfig.provider}, model=${currentEmbeddingModel}`,
           );
 
           // Batch embedding dla długich wiadomości
@@ -567,7 +573,7 @@ export const chatRoutes = async (fastify) => {
             embeddingsClient,
             message,
             currentEmbeddingModel,
-            maxChunkChars
+            maxChunkChars,
           );
           ragContext = {
             documents: [],
@@ -578,7 +584,7 @@ export const chatRoutes = async (fastify) => {
             console.log("[Chat] Searching documents for user:", userId);
             console.log(
               "[Chat] Embedding generated, length:",
-              queryEmbedding.length
+              queryEmbedding.length,
             );
             // Diagnostyka: ile dokumentów ma embeddingi
             const { count: totalDocs } = await supabase
@@ -705,7 +711,7 @@ export const chatRoutes = async (fastify) => {
       const sessionDocuments = request.sessionDocuments;
       if (sessionDocuments && sessionDocuments.length > 0) {
         console.log(
-          `[Chat] Using ${sessionDocuments.length} session documents from SessionDiscoveryService`
+          `[Chat] Using ${sessionDocuments.length} session documents from SessionDiscoveryService`,
         );
         sessionDocuments.forEach(
           (doc: {
@@ -728,7 +734,7 @@ export const chatRoutes = async (fastify) => {
                 isSessionDocument: true,
               },
             });
-          }
+          },
         );
       }
 
@@ -736,7 +742,7 @@ export const chatRoutes = async (fastify) => {
       if (documentContext && documentContext.relevantChunks.length > 0) {
         // Użyj chunków z wykrytego dokumentu (nie pełnej treści!)
         console.log(
-          `[Chat] Using ${documentContext.relevantChunks.length} chunks from detected document`
+          `[Chat] Using ${documentContext.relevantChunks.length} chunks from detected document`,
         );
         ragDocuments = [
           {
@@ -800,7 +806,7 @@ export const chatRoutes = async (fastify) => {
         conversationHistory,
         message,
         model,
-        2000 // max completion tokens
+        2000, // max completion tokens
       );
       // Log oszczędności
       console.log(`[Chat] Context optimization:`, {
@@ -871,7 +877,7 @@ export const chatRoutes = async (fastify) => {
       }
       // Log przed wywołaniem API
       console.log(
-        `[Chat] Calling LLM with ${messages.length} messages, model: ${model}`
+        `[Chat] Calling LLM with ${messages.length} messages, model: ${model}`,
       );
       console.log(`[Chat] Estimated total tokens: ${optimized.totalTokens}`);
       const completion = await openai.chat.completions.create(completionParams);
@@ -929,11 +935,11 @@ export const chatRoutes = async (fastify) => {
       if (error instanceof ZodError) {
         console.error(
           "[Chat] Zod validation error:",
-          JSON.stringify(error.issues, null, 2)
+          JSON.stringify(error.issues, null, 2),
         );
         console.error(
           "[Chat] Request body was:",
-          JSON.stringify(request.body, null, 2)
+          JSON.stringify(request.body, null, 2),
         );
         return reply
           .status(400)
@@ -1020,7 +1026,7 @@ export const chatRoutes = async (fastify) => {
             lastMessageRole: lastMessage?.role || null,
             messageCount: count || 0,
           };
-        })
+        }),
       );
       return reply.send({ conversations: conversationsWithDetails });
     } catch (error) {
@@ -1128,7 +1134,7 @@ export const chatRoutes = async (fastify) => {
       if (apiConfig) {
         openaiApiKey = Buffer.from(
           apiConfig.api_key_encrypted,
-          "base64"
+          "base64",
         ).toString("utf-8");
         openaiBaseUrl = apiConfig.base_url || undefined;
       }
@@ -1223,7 +1229,7 @@ export const chatRoutes = async (fastify) => {
       if (apiConfig) {
         openaiApiKey = Buffer.from(
           apiConfig.api_key_encrypted,
-          "base64"
+          "base64",
         ).toString("utf-8");
         openaiModel = apiConfig.model_name || openaiModel;
         openaiBaseUrl = apiConfig.base_url || undefined;
@@ -1252,7 +1258,7 @@ export const chatRoutes = async (fastify) => {
           match_count: 30,
           filter_user_id: userId,
           filter_types: documentTypes || null,
-        }
+        },
       );
       if (!relevantDocs || relevantDocs.length === 0) {
         return reply.status(404).send({

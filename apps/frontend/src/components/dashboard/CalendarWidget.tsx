@@ -543,6 +543,20 @@ export function CalendarWidget({ onEventClick }: CalendarWidgetProps) {
     loadEvents();
   }, [loadEvents]);
 
+  // Nasłuchuj na zdarzenie calendar-refresh (z chatu AI)
+  useEffect(() => {
+    const handleCalendarRefresh = () => {
+      console.log(
+        "[CalendarWidget] Received calendar-refresh event, reloading...",
+      );
+      loadEvents();
+    };
+
+    window.addEventListener("calendar-refresh", handleCalendarRefresh);
+    return () =>
+      window.removeEventListener("calendar-refresh", handleCalendarRefresh);
+  }, [loadEvents]);
+
   const handleAddEvent = async () => {
     if (!newEvent.title || !newEvent.start_date) return;
 

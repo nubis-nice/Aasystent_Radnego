@@ -74,7 +74,7 @@ export class DeepResearchService {
     // Initialize Supabase
     this.supabase = createClient(
       process.env.SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
     );
 
     // OpenAI will be initialized in initializeProviders()
@@ -92,12 +92,12 @@ export class DeepResearchService {
       const llmConfig = await getAIConfig(this.userId, "llm");
       this.model = llmConfig.modelName;
       console.log(
-        `[DeepResearch] Using LLM: provider=${llmConfig.provider}, model=${this.model}`
+        `[DeepResearch] Using LLM: provider=${llmConfig.provider}, model=${this.model}`,
       );
 
       if (!this.openai) {
         throw new Error(
-          "Brak skonfigurowanego klienta LLM. Skonfiguruj providera AI w ustawieniach."
+          "Brak skonfigurowanego klienta LLM. Skonfiguruj providera AI w ustawieniach.",
         );
       }
 
@@ -117,13 +117,13 @@ export class DeepResearchService {
       for (const config of (configs || []) as ApiConfigRow[]) {
         apiKeys[config.provider] = Buffer.from(
           config.api_key_encrypted,
-          "base64"
+          "base64",
         ).toString("utf-8");
       }
 
       console.log(
         `[DeepResearch] Found research providers:`,
-        Object.keys(apiKeys)
+        Object.keys(apiKeys),
       );
 
       // Initialize Exa AI
@@ -176,20 +176,20 @@ export class DeepResearchService {
         if (RESEARCH_PROVIDERS.tavily.enabled) {
           this.providers.set(
             "tavily",
-            new TavilyProvider(RESEARCH_PROVIDERS.tavily)
+            new TavilyProvider(RESEARCH_PROVIDERS.tavily),
           );
         }
         if (RESEARCH_PROVIDERS.serper.enabled) {
           this.providers.set(
             "serper",
-            new SerperProvider(RESEARCH_PROVIDERS.serper)
+            new SerperProvider(RESEARCH_PROVIDERS.serper),
           );
         }
       }
 
       this.initialized = true;
       console.log(
-        `[DeepResearch] Initialized ${this.providers.size} providers`
+        `[DeepResearch] Initialized ${this.providers.size} providers`,
       );
     } catch (error) {
       console.error("[DeepResearch] Failed to initialize providers:", error);
@@ -246,14 +246,14 @@ export class DeepResearchService {
       allResults.push(...localResults);
 
       console.log(
-        `[DeepResearch] Total results before dedup: ${allResults.length}`
+        `[DeepResearch] Total results before dedup: ${allResults.length}`,
       );
 
       // 4. Deduplication & ranking
       const rankedResults = await this.rankAndDeduplicate(allResults);
 
       console.log(
-        `[DeepResearch] Results after dedup: ${rankedResults.length}`
+        `[DeepResearch] Results after dedup: ${rankedResults.length}`,
       );
 
       // 5. Generate AI summary
@@ -262,7 +262,7 @@ export class DeepResearchService {
       // 6. Extract key findings
       const keyFindings = await this.extractKeyFindings(
         request.query,
-        rankedResults
+        rankedResults,
       );
 
       // 7. Generate related queries
@@ -335,12 +335,12 @@ export class DeepResearchService {
       ];
 
       const isRefusal = refusalPatterns.some((pattern) =>
-        response.toLowerCase().includes(pattern)
+        response.toLowerCase().includes(pattern),
       );
 
       if (isRefusal || response.length < 10) {
         console.log(
-          "[DeepResearch] LLM refused or invalid response, using original query"
+          "[DeepResearch] LLM refused or invalid response, using original query",
         );
         return [query];
       }
@@ -362,7 +362,7 @@ export class DeepResearchService {
    */
   private async multiProviderSearch(
     queries: string[],
-    request: DeepResearchRequest
+    request: DeepResearchRequest,
   ): Promise<ResearchResult[]> {
     const depthConfig = SEARCH_DEPTH_CONFIG[request.depth];
     const activeProviders = Array.from(this.providers.entries())
@@ -372,7 +372,7 @@ export class DeepResearchService {
     console.log(
       `[DeepResearch] Using providers: ${activeProviders
         .map(([name]) => name)
-        .join(", ")}`
+        .join(", ")}`,
     );
 
     const allResults: ResearchResult[] = [];
@@ -443,7 +443,7 @@ export class DeepResearchService {
    * Deduplicate and rank results
    */
   private async rankAndDeduplicate(
-    results: ResearchResult[]
+    results: ResearchResult[],
   ): Promise<ResearchResult[]> {
     // 1. Deduplicate by URL similarity
     const uniqueResults = new Map<string, ResearchResult>();
@@ -484,7 +484,7 @@ export class DeepResearchService {
    */
   private async generateSummary(
     query: string,
-    results: ResearchResult[]
+    results: ResearchResult[],
   ): Promise<string> {
     try {
       const topResults = results.slice(0, 10);
@@ -521,7 +521,7 @@ export class DeepResearchService {
    */
   private async extractKeyFindings(
     query: string,
-    results: ResearchResult[]
+    results: ResearchResult[],
   ): Promise<string[]> {
     try {
       const topResults = results.slice(0, 10);
@@ -611,7 +611,7 @@ export class DeepResearchService {
 
     // 3. Średnia trafność wyników (z obsługą undefined/NaN)
     const validScores = results.filter(
-      (r) => typeof r.relevanceScore === "number" && !isNaN(r.relevanceScore)
+      (r) => typeof r.relevanceScore === "number" && !isNaN(r.relevanceScore),
     );
     const avgRelevance =
       validScores.length > 0
@@ -704,7 +704,7 @@ export class DeepResearchService {
           for (const b of resultsB) {
             const similarity = this.calculateTextSimilarity(
               a.excerpt || a.content,
-              b.excerpt || b.content
+              b.excerpt || b.content,
             );
 
             // Wysoka podobieństwo = potwierdzenie
@@ -797,7 +797,7 @@ export class DeepResearchService {
    * Aggregate sources statistics
    */
   private aggregateSources(
-    results: ResearchResult[]
+    results: ResearchResult[],
   ): DeepResearchReport["sources"] {
     const sourceStats = new Map<
       string,
@@ -841,7 +841,8 @@ export class DeepResearchService {
       };
       const { error } = await this.supabase
         .from("research_reports")
-        .insert(insertData as unknown as Record<string, unknown>);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .insert(insertData as any);
 
       if (error) throw error;
     } catch (error) {
@@ -870,12 +871,12 @@ export class DeepResearchService {
    * Verify a claim using multi-source research
    */
   async verifyClaim(
-    claim: string
+    claim: string,
   ): Promise<{ verified: boolean; evidence: ResearchResult[] }> {
     // TODO: Implement claim verification
     // This would search for supporting and contradicting evidence
     throw new Error(
-      `Claim verification not yet implemented for: ${claim.substring(0, 50)}`
+      `Claim verification not yet implemented for: ${claim.substring(0, 50)}`,
     );
   }
 }

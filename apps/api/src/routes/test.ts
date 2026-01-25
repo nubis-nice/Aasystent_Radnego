@@ -54,13 +54,13 @@ export async function testRoutes(fastify: FastifyInstance) {
           // Nowy format - AES-256-GCM
           decryptedKey = decryptApiKey(
             dbConfig.api_key_encrypted,
-            dbConfig.encryption_iv
+            dbConfig.encryption_iv,
           );
         } else {
           // Stary format - base64
           decryptedKey = Buffer.from(
             dbConfig.api_key_encrypted,
-            "base64"
+            "base64",
           ).toString("utf-8");
         }
 
@@ -211,7 +211,7 @@ export async function testRoutes(fastify: FastifyInstance) {
           name: error.name,
           code: error.code,
         },
-        "Connection test error"
+        "Connection test error",
       );
       return reply.status(500).send({
         error: "Test failed",
@@ -250,7 +250,7 @@ export async function testRoutes(fastify: FastifyInstance) {
 
       const decryptedKey = decryptApiKey(
         dbConfig.api_key_encrypted,
-        dbConfig.encryption_iv || ""
+        dbConfig.encryption_iv || "",
       );
 
       const config: ProviderConfig = {
@@ -293,7 +293,10 @@ export async function testRoutes(fastify: FastifyInstance) {
 
       return reply.send({ result, response });
     } catch (error: any) {
-      fastify.log.error("Chat test error:", error);
+      fastify.log.error(
+        "Chat test error: " +
+          String(error instanceof Error ? error.message : error),
+      );
 
       const result: TestResult = {
         test_type: "chat",
@@ -336,7 +339,7 @@ export async function testRoutes(fastify: FastifyInstance) {
 
       const decryptedKey = decryptApiKey(
         dbConfig.api_key_encrypted,
-        dbConfig.encryption_iv || ""
+        dbConfig.encryption_iv || "",
       );
 
       const config: ProviderConfig = {
@@ -383,7 +386,10 @@ export async function testRoutes(fastify: FastifyInstance) {
         },
       });
     } catch (error: any) {
-      fastify.log.error("Embeddings test error:", error);
+      fastify.log.error(
+        "Embeddings test error: " +
+          String(error instanceof Error ? error.message : error),
+      );
 
       const result: TestResult = {
         test_type: "embeddings",
@@ -425,7 +431,7 @@ export async function testRoutes(fastify: FastifyInstance) {
 
       const decryptedKey = decryptApiKey(
         dbConfig.api_key_encrypted,
-        dbConfig.encryption_iv || ""
+        dbConfig.encryption_iv || "",
       );
 
       const config: ProviderConfig = {
@@ -465,7 +471,10 @@ export async function testRoutes(fastify: FastifyInstance) {
 
       return reply.send({ result, models });
     } catch (error: any) {
-      fastify.log.error("Models test error:", error);
+      fastify.log.error(
+        "Models test error: " +
+          String(error instanceof Error ? error.message : error),
+      );
 
       const result: TestResult = {
         test_type: "models",

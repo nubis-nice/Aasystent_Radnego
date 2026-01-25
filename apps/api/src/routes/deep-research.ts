@@ -1,6 +1,6 @@
 /**
  * Deep Research API Routes
- * Agent AI "Winsdurf" - Deep Internet Researcher
+ * ~~bez~~RADNY - Deep Internet Researcher
  */
 
 import type { FastifyInstance } from "fastify";
@@ -57,13 +57,16 @@ export async function deepResearchRoutes(fastify: FastifyInstance) {
 
         return reply.send({ report });
       } catch (error) {
-        fastify.log.error("[DeepResearch] Research failed:", error);
+        fastify.log.error(
+          "[DeepResearch] Research failed: " +
+            String(error instanceof Error ? error.message : error),
+        );
         return reply.code(500).send({
           error: "Research failed",
           message: error instanceof Error ? error.message : "Unknown error",
         });
       }
-    }
+    },
   );
 
   // GET /api/research/history - Research history
@@ -78,13 +81,13 @@ export async function deepResearchRoutes(fastify: FastifyInstance) {
       const { createClient } = await import("@supabase/supabase-js");
       const supabase = createClient(
         process.env.SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
+        process.env.SUPABASE_SERVICE_ROLE_KEY!,
       );
 
       const { data: reports, error } = await supabase
         .from("research_reports")
         .select(
-          "id, query, research_type, depth, summary, confidence, created_at, processing_time"
+          "id, query, research_type, depth, summary, confidence, created_at, processing_time",
         )
         .eq("user_id", userId)
         .order("created_at", { ascending: false })
@@ -94,7 +97,10 @@ export async function deepResearchRoutes(fastify: FastifyInstance) {
 
       return reply.send({ reports: reports || [] });
     } catch (error) {
-      fastify.log.error("[DeepResearch] Failed to fetch history:", error);
+      fastify.log.error(
+        "[DeepResearch] Failed to fetch history: " +
+          String(error instanceof Error ? error.message : error),
+      );
       return reply.code(500).send({
         error: "Failed to fetch history",
         message: error instanceof Error ? error.message : "Unknown error",
@@ -117,7 +123,7 @@ export async function deepResearchRoutes(fastify: FastifyInstance) {
         const { createClient } = await import("@supabase/supabase-js");
         const supabase = createClient(
           process.env.SUPABASE_URL!,
-          process.env.SUPABASE_SERVICE_ROLE_KEY!
+          process.env.SUPABASE_SERVICE_ROLE_KEY!,
         );
 
         const { data: report, error } = await supabase
@@ -135,13 +141,16 @@ export async function deepResearchRoutes(fastify: FastifyInstance) {
 
         return reply.send({ report });
       } catch (error) {
-        fastify.log.error("[DeepResearch] Failed to fetch report:", error);
+        fastify.log.error(
+          "[DeepResearch] Failed to fetch report: " +
+            String(error instanceof Error ? error.message : error),
+        );
         return reply.code(500).send({
           error: "Failed to fetch report",
           message: error instanceof Error ? error.message : "Unknown error",
         });
       }
-    }
+    },
   );
 
   // DELETE /api/research/:id - Delete report
@@ -159,7 +168,7 @@ export async function deepResearchRoutes(fastify: FastifyInstance) {
         const { createClient } = await import("@supabase/supabase-js");
         const supabase = createClient(
           process.env.SUPABASE_URL!,
-          process.env.SUPABASE_SERVICE_ROLE_KEY!
+          process.env.SUPABASE_SERVICE_ROLE_KEY!,
         );
 
         const { error } = await supabase
@@ -172,20 +181,22 @@ export async function deepResearchRoutes(fastify: FastifyInstance) {
 
         return reply.send({ success: true });
       } catch (error) {
-        fastify.log.error("[DeepResearch] Failed to delete report:", error);
+        fastify.log.error(
+          "[DeepResearch] Failed to delete report: " +
+            String(error instanceof Error ? error.message : error),
+        );
         return reply.code(500).send({
           error: "Failed to delete report",
           message: error instanceof Error ? error.message : "Unknown error",
         });
       }
-    }
+    },
   );
 
   // GET /api/research/providers/status - Get providers status
   fastify.get("/research/providers/status", async (request, reply) => {
-    const { RESEARCH_PROVIDERS } = await import(
-      "../config/research-providers.js"
-    );
+    const { RESEARCH_PROVIDERS } =
+      await import("../config/research-providers.js");
 
     const providersStatus = Object.entries(RESEARCH_PROVIDERS).map(
       ([key, config]) => ({
@@ -194,7 +205,7 @@ export async function deepResearchRoutes(fastify: FastifyInstance) {
         enabled: config.enabled,
         priority: config.priority,
         hasApiKey: !!config.apiKey,
-      })
+      }),
     );
 
     return reply.send({ providers: providersStatus });

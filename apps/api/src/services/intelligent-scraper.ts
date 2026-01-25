@@ -1469,7 +1469,6 @@ export async function processDeepResearchLinks(
           buffer,
           fileName,
           contentType,
-          buffer.length,
         );
         if (result.success) {
           text = result.text;
@@ -1495,13 +1494,11 @@ export async function processDeepResearchLinks(
       }
 
       const saveResult = await processor.saveToRAG(
-        text,
-        {
-          title: link.title,
-          documentType: "research",
-          sourceUrl: link.url,
-        },
         userId,
+        text,
+        link.title || "research document",
+        link.url,
+        "research",
       );
 
       if (saveResult.success) {

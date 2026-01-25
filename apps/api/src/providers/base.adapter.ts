@@ -32,7 +32,7 @@ export abstract class BaseProviderAdapter {
    */
   abstract chat(
     messages: ChatMessage[],
-    options?: ChatOptions
+    options?: ChatOptions,
   ): Promise<ProviderChatResponse>;
 
   /**
@@ -97,7 +97,7 @@ export abstract class BaseProviderAdapter {
    */
   protected async makeRequest<T>(
     url: string,
-    options: RequestInit
+    options: RequestInit,
   ): Promise<T> {
     const maxRetries = this.config.maxRetries || 3;
     const timeout = (this.config.timeoutSeconds || 30) * 1000;
@@ -129,11 +129,11 @@ export abstract class BaseProviderAdapter {
             errorData.message || `HTTP ${response.status}`,
             "HTTP_ERROR",
             response.status,
-            errorText
+            errorText,
           );
         }
 
-        return await response.json();
+        return (await response.json()) as T;
       } catch (error) {
         lastError = error as Error;
 
@@ -148,7 +148,7 @@ export abstract class BaseProviderAdapter {
         // Wait before retry (exponential backoff)
         if (attempt < maxRetries - 1) {
           await new Promise((resolve) =>
-            setTimeout(resolve, Math.pow(2, attempt) * 1000)
+            setTimeout(resolve, Math.pow(2, attempt) * 1000),
           );
         }
       }
@@ -173,7 +173,7 @@ export abstract class BaseProviderAdapter {
           "Request timeout",
           "TIMEOUT",
           undefined,
-          error.message
+          error.message,
         );
       }
 
@@ -181,7 +181,7 @@ export abstract class BaseProviderAdapter {
         error.message,
         "UNKNOWN_ERROR",
         undefined,
-        error.stack
+        error.stack,
       );
     }
 
@@ -189,7 +189,7 @@ export abstract class BaseProviderAdapter {
       "Unknown error occurred",
       "UNKNOWN_ERROR",
       undefined,
-      String(error)
+      String(error),
     );
   }
 

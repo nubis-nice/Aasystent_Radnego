@@ -49,6 +49,34 @@ const ALLOWED_MIME_TYPES = [
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
+// Schema dla wyszukiwania semantycznego
+const SearchQuerySchema = z.object({
+  query: z.string().min(1),
+  documentType: z.string().optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+  maxResults: z.number().optional().default(10),
+  includeRelated: z.boolean().optional().default(false),
+  sessionNumber: z.number().optional(),
+});
+
+// Schema dla tworzenia dokumentu
+const CreateDocumentSchema = z.object({
+  title: z.string().min(1),
+  content: z.string().optional(),
+  documentType: z.string().optional(),
+  sourceUrl: z.string().url().optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+// Schema dla aktualizacji dokumentu
+const UpdateDocumentSchema = z.object({
+  title: z.string().min(1).optional(),
+  content: z.string().optional(),
+  documentType: z.string().optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
 export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /documents - Lista dokumentów z filtrowaniem, paginacją i scoringiem
   fastify.get("/documents", async (request, reply) => {
@@ -143,10 +171,11 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /documents - Upload nowego dokumentu
   fastify.post("/documents", async (request, reply) => {
     try {
-      const data = CreateDocumentSchema.parse(request.body);
+      const createData = CreateDocumentSchema.parse(request.body);
 
       // TODO: Zapisz dokument do bazy
       // TODO: Dodaj job do kolejki dla ekstrakcji
+      console.log(`[Documents] Create document:`, createData.title);
 
       return reply
         .status(201)
@@ -166,12 +195,13 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.patch<{ Params: { id: string } }>(
     "/documents/:id",
     async (request, reply) => {
-      const { id } = request.params;
+      const { id: docId } = request.params;
 
       try {
-        const data = UpdateDocumentSchema.parse(request.body);
+        const updateData = UpdateDocumentSchema.parse(request.body);
 
         // TODO: Aktualizuj dokument w bazie
+        console.log(`[Documents] Update document ${docId}:`, updateData);
 
         return reply
           .status(200)
@@ -220,7 +250,9 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
           .eq("user_id", userId);
 
         if (deleteError) {
-          fastify.log.error("Delete error:", deleteError);
+          fastify.log.error(
+            "Delete error: " + String(deleteError?.message || deleteError),
+          );
           return reply.status(500).send({ error: "Failed to delete document" });
         }
 
@@ -259,7 +291,9 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         .eq("user_id", userId);
 
       if (deleteError) {
-        fastify.log.error("Bulk delete error:", deleteError);
+        fastify.log.error(
+          "Bulk delete error: " + String(deleteError?.message || deleteError),
+        );
         return reply.status(500).send({ error: "Failed to delete documents" });
       }
 
@@ -310,7 +344,9 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         .eq("user_id", userId);
 
       if (deleteError) {
-        fastify.log.error("Delete all error:", deleteError);
+        fastify.log.error(
+          "Delete all error: " + String(deleteError?.message || deleteError),
+        );
         return reply
           .status(500)
           .send({ error: "Failed to delete all documents" });
@@ -349,7 +385,9 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         .limit(1000);
 
       if (error) {
-        fastify.log.error("Empty docs query error:", error);
+        fastify.log.error(
+          "Empty docs query error: " + String(error?.message || error),
+        );
         return reply
           .status(500)
           .send({ error: "Failed to fetch empty documents" });
@@ -365,7 +403,10 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         .limit(500);
 
       if (shortError) {
-        fastify.log.error("Short docs query error:", shortError);
+        fastify.log.error(
+          "Short docs query error: " +
+            String(shortError?.message || shortError),
+        );
       }
 
       // Filtruj dokumenty z treścią < 50 znaków
@@ -433,7 +474,10 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
           .eq("user_id", userId);
 
         if (deleteError) {
-          fastify.log.error("Delete error during repair:", deleteError);
+          fastify.log.error(
+            "Delete error during repair: " +
+              String(deleteError?.message || deleteError),
+          );
           return reply
             .status(500)
             .send({ error: "Failed to delete old document" });
@@ -478,13 +522,11 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
 
           // Zapisz do RAG
           const saveResult = await processor.saveToRAG(
-            textContent,
-            {
-              title: doc.title,
-              documentType: doc.document_type,
-              sourceUrl: doc.source_url,
-            },
             userId,
+            textContent,
+            doc.title || "Dokument",
+            doc.source_url || "unknown",
+            doc.document_type || "uploaded",
           );
 
           return reply.send({
@@ -500,7 +542,6 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
           buffer,
           fileName,
           contentType,
-          buffer.length,
         );
 
         if (!result.success || result.text.length < 50) {
@@ -513,13 +554,11 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
 
         // Zapisz do RAG
         const saveResult = await processor.saveToRAG(
-          result.text,
-          {
-            title: doc.title,
-            documentType: doc.document_type,
-            sourceUrl: doc.source_url,
-          },
           userId,
+          result.text,
+          doc.title || "Dokument",
+          doc.source_url || "unknown",
+          doc.document_type || "uploaded",
         );
 
         console.log(
@@ -533,7 +572,10 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
           contentLength: result.text.length,
         });
       } catch (error) {
-        fastify.log.error("Repair error:", error);
+        fastify.log.error(
+          "Repair error: " +
+            String(error instanceof Error ? error.message : error),
+        );
         return reply.status(500).send({
           error:
             error instanceof Error ? error.message : "Internal server error",
@@ -545,12 +587,15 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /documents/search - Wyszukiwanie semantyczne
   fastify.post("/documents/search", async (request, reply) => {
     try {
-      const query = SearchQuerySchema.parse(request.body);
+      const searchQuery = SearchQuerySchema.parse(request.body);
 
       // TODO: Wygeneruj embedding dla zapytania
       // TODO: Wykonaj wyszukiwanie semantyczne
+      console.log(`[Documents] Search query:`, searchQuery.query);
 
-      return reply.status(200).send({ message: "Search results" });
+      return reply
+        .status(200)
+        .send({ message: "Search results", query: searchQuery.query });
     } catch (error) {
       if (error instanceof ZodError) {
         return reply
@@ -566,12 +611,15 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get<{ Params: { id: string } }>(
     "/documents/:id/analyses",
     async (request, reply) => {
-      const { id } = request.params;
+      const { id: analysisDocId } = request.params;
 
       try {
         // TODO: Pobierz analizy dokumentu
+        console.log(`[Documents] Get analyses for document:`, analysisDocId);
 
-        return reply.status(501).send({ error: "Not implemented yet" });
+        return reply
+          .status(501)
+          .send({ error: "Not implemented yet", documentId: analysisDocId });
       } catch (error) {
         fastify.log.error(error);
         return reply.status(500).send({ error: "Internal server error" });
@@ -1448,7 +1496,16 @@ Zawrzyj:
         await import("../services/intelligent-rag-search.js");
 
       const ragSearch = new IntelligentRAGSearch(userId);
-      const results = await ragSearch.search(body);
+      const searchQuery = {
+        query: body.query,
+        sessionNumber: body.sessionNumber,
+        documentType: body.documentType,
+        dateFrom: body.dateFrom,
+        dateTo: body.dateTo,
+        maxResults: body.maxResults,
+        includeRelated: body.includeRelated,
+      };
+      const results = await ragSearch.search(searchQuery);
 
       return reply.send(results);
     } catch (error) {

@@ -1109,6 +1109,22 @@ export default function ChatPage() {
       };
 
       setMessages((prev) => [...prev, aiMessage]);
+
+      // Obsłuż akcje UI z orchestratora (np. odświeżenie kalendarza)
+      const uiActions = (
+        response as {
+          uiActions?: Array<{ type: string; target?: string; data?: unknown }>;
+        }
+      ).uiActions;
+      if (uiActions && uiActions.length > 0) {
+        for (const action of uiActions) {
+          if (action.type === "refresh" && action.target === "calendar") {
+            // Wyemituj zdarzenie odświeżenia kalendarza
+            window.dispatchEvent(new CustomEvent("calendar-refresh"));
+            console.log("[Chat] Dispatched calendar-refresh event");
+          }
+        }
+      }
     } catch (err: unknown) {
       console.error("Error sending message:", err);
 

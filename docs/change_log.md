@@ -1,6 +1,6 @@
 # ~~bez~~RADNY - Change Log
 
-## 2026-01-25 — Rebranding i publikacja open source
+## 2026-01-25 — Rebranding, naprawa błędów TypeScript i integracja kalendarza
 
 ### Zmiany:
 
@@ -14,6 +14,16 @@
    - `package.json` z nowymi metadanymi dla npm
    - Dodanie pliku LICENSE
    - Przygotowanie do publikacji na GitHub
+
+4. **Naprawa błędów TypeScript**:
+   - Naprawiono błędy loggera Fastify w routes: documents, isap, deep-research, providers, test, test-api
+   - Naprawiono typowanie w: base.adapter.ts, gus-api-service.ts, intelligent-scraper.ts, deep-research-service.ts
+   - Poprawiono sygnatury wywołań processFile i saveToRAG
+
+5. **Naprawa integracji kalendarza z chatem AI**:
+   - Dodano przekazywanie `uiActions` z orchestratora do frontendu (`chat.ts`)
+   - Frontend chat emituje zdarzenie `calendar-refresh` po dodaniu wydarzenia
+   - CalendarWidget nasłuchuje na `calendar-refresh` i automatycznie odświeża listę wydarzeń
 
 ---
 

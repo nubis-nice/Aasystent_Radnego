@@ -14,7 +14,10 @@ export const isapRoutes: FastifyPluginAsync = async (fastify) => {
       const publishers = await isapService.getPublishers();
       return reply.send({ success: true, publishers });
     } catch (error) {
-      fastify.log.error("Error fetching publishers:", error);
+      fastify.log.error(
+        "Error fetching publishers: " +
+          String(error instanceof Error ? error.message : error),
+      );
       return reply.status(500).send({
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
@@ -30,7 +33,10 @@ export const isapRoutes: FastifyPluginAsync = async (fastify) => {
       const result = await isapService.getActsByYear(publisher, parseInt(year));
       return reply.send({ success: true, ...result });
     } catch (error) {
-      fastify.log.error("Error fetching acts by year:", error);
+      fastify.log.error(
+        "Error fetching acts by year: " +
+          String(error instanceof Error ? error.message : error),
+      );
       return reply.status(500).send({
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
@@ -81,7 +87,10 @@ export const isapRoutes: FastifyPluginAsync = async (fastify) => {
 
       return reply.send({ success: true, ...result });
     } catch (error) {
-      fastify.log.error("Error searching acts:", error);
+      fastify.log.error(
+        "Error searching acts: " +
+          String(error instanceof Error ? error.message : error),
+      );
       return reply.status(500).send({
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
@@ -97,11 +106,14 @@ export const isapRoutes: FastifyPluginAsync = async (fastify) => {
       const act = await isapService.getActDetails(
         publisher,
         parseInt(year),
-        parseInt(position)
+        parseInt(position),
       );
       return reply.send({ success: true, act });
     } catch (error) {
-      fastify.log.error("Error fetching act details:", error);
+      fastify.log.error(
+        "Error fetching act details: " +
+          String(error instanceof Error ? error.message : error),
+      );
       return reply.status(500).send({
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
@@ -117,11 +129,14 @@ export const isapRoutes: FastifyPluginAsync = async (fastify) => {
       const text = await isapService.getActTextHTML(
         publisher,
         parseInt(year),
-        parseInt(position)
+        parseInt(position),
       );
       return reply.type("text/html").send(text);
     } catch (error) {
-      fastify.log.error("Error fetching act text:", error);
+      fastify.log.error(
+        "Error fetching act text: " +
+          String(error instanceof Error ? error.message : error),
+      );
       return reply.status(500).send({
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
@@ -139,7 +154,10 @@ export const isapRoutes: FastifyPluginAsync = async (fastify) => {
       const acts = await isapService.getLatestActs(publisher, limit);
       return reply.send({ success: true, count: acts.length, acts });
     } catch (error) {
-      fastify.log.error("Error fetching latest acts:", error);
+      fastify.log.error(
+        "Error fetching latest acts: " +
+          String(error instanceof Error ? error.message : error),
+      );
       return reply.status(500).send({
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
@@ -154,11 +172,14 @@ export const isapRoutes: FastifyPluginAsync = async (fastify) => {
       const { topic, limit } = request.query;
       const acts = await isapService.searchLocalGovernmentActs(
         topic,
-        limit ? parseInt(limit) : 30
+        limit ? parseInt(limit) : 30,
       );
       return reply.send({ success: true, count: acts.length, acts });
     } catch (error) {
-      fastify.log.error("Error fetching local government acts:", error);
+      fastify.log.error(
+        "Error fetching local government acts: " +
+          String(error instanceof Error ? error.message : error),
+      );
       return reply.status(500).send({
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
@@ -171,7 +192,10 @@ export const isapRoutes: FastifyPluginAsync = async (fastify) => {
       const types = await isapService.getActTypes();
       return reply.send({ success: true, types });
     } catch (error) {
-      fastify.log.error("Error fetching act types:", error);
+      fastify.log.error(
+        "Error fetching act types: " +
+          String(error instanceof Error ? error.message : error),
+      );
       return reply.status(500).send({
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
@@ -184,7 +208,10 @@ export const isapRoutes: FastifyPluginAsync = async (fastify) => {
       const keywords = await isapService.getKeywords();
       return reply.send({ success: true, keywords });
     } catch (error) {
-      fastify.log.error("Error fetching keywords:", error);
+      fastify.log.error(
+        "Error fetching keywords: " +
+          String(error instanceof Error ? error.message : error),
+      );
       return reply.status(500).send({
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
