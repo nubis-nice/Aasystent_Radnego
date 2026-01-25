@@ -1,15 +1,18 @@
-# Asystent Radnego - Frontend
+# ~~bez~~RADNY - Frontend
 
-Panel webowy dla Radnych Miejskich Gminy Drawno do zarządzania dokumentami Rady Miejskiej i analizy treści z wykorzystaniem AI.
+> Bo z nami radny nigdy nie jest *bez*radny.
+
+Panel webowy dla radnych samorządowych do zarządzania dokumentami Rady Miejskiej i analizy treści z wykorzystaniem AI.
 
 ## Stack Technologiczny
 
-- **Framework**: Next.js 16 (App Router)
+- **Framework**: Next.js 15 (App Router)
 - **Język**: TypeScript
 - **Styling**: TailwindCSS
-- **UI Components**: Lucide React Icons
+- **UI Components**: Lucide React, shadcn/ui
 - **Auth**: Supabase Auth (OAuth Google + Email/Hasło)
-- **State Management**: React Hooks (useState, useEffect)
+- **State Management**: React Hooks + Context API
+- **Kalendarz**: FullCalendar React
 
 ## Uruchomienie
 
@@ -45,26 +48,18 @@ src/
 ### ✅ Zaimplementowane
 
 - **Autentykacja**: OAuth Google, Email/Hasło, Reset hasła
-- **Dashboard**: Pulpit z kartami statystyk i aktywnością
-- **Dokumenty**: Lista dokumentów z filtrami (placeholder)
-- **Czat AI**: Interfejs czatu z cytatami (placeholder)
+- **Dashboard**: Pulpit z widgetami (kalendarz, statystyki, aktywność)
+- **Dokumenty**: Lista dokumentów z filtrami, szczegóły, powiązania
+- **Czat AI**: Stefan - asystent AI z cytowaniami i sugestiami
+- **Kalendarz**: Widget kalendarza z przypomnieniami o wydarzeniach
 - **Ustawienia**:
   - Profil użytkownika
-  - **Konfiguracja API** (OpenAI, lokalne modele)
+  - **Konfiguracja API** (OpenAI, Ollama, lokalne modele)
+  - Źródła danych (BIP, ISAP, RIO)
   - Powiadomienia
-  - Wygląd
-  - Język i region
-  - Prywatność
-- **Panel Admina**: Zarządzanie użytkownikami (placeholder)
+  - Wygląd (dark mode)
+- **Panel Admina**: Zarządzanie użytkownikami
 - **UI/UX**: Profesjonalny design, gradienty, animacje
-
-### 🚧 W Trakcie Implementacji
-
-- Integracja z backend API
-- Upload dokumentów
-- Podgląd szczegółów dokumentu
-- Rzeczywisty czat z AI
-- Dark mode
 
 ## Konfiguracja
 
@@ -88,10 +83,11 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 
 ## Status Projektu
 
-**Frontend**: ✅ Gotowy do użycia (MVP)
-**Backend**: 🚧 W przygotowaniu
-**Deployment**: 🔧 Local development
+**Frontend**: ✅ Produkcyjny
+**Backend**: ✅ Produkcyjny
+**Deployment**: 🔧 Self-hosted / Local
 
 ---
 
-**Data**: 2024-12-27
+**Licencja**: MIT
+**Data aktualizacji**: 2026-01-25

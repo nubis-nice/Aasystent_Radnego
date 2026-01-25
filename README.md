@@ -1,6 +1,6 @@
 # ~~bez~~RADNY - Agent AI
 
-Agent AI wspierający Radnego w kontroli legalności, zasadności i skutków uchwał samorządowych.
+Agent AI wspierający radnych samorządowych w kontroli legalności, zasadności i skutków uchwał.
 
 > **~~bez~~RADNY** - bo z nami radny nigdy nie jest *bez*radny.
 
@@ -204,7 +204,7 @@ Aasystent_Radnego/
 ## 🛠️ Technologie
 
 - **Backend**: Fastify, TypeScript, Node.js
-- **Frontend**: Next.js 14, React, TailwindCSS
+- **Frontend**: Next.js 15, React 19, TailwindCSS
 - **Database**: PostgreSQL + pgvector (Supabase)
 - **AI**: OpenAI (GPT-4, embeddings)
 - **Queue**: BullMQ + Redis
@@ -232,4 +232,6 @@ W razie problemów:
 
 ---
 
-**Status**: System gotowy do uruchomienia i testów ✅
+**Status**: System produkcyjny ✅
+**Licencja**: MIT
+**Data aktualizacji**: 2026-01-25

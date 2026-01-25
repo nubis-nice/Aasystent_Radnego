@@ -202,3 +202,7 @@ npm run build:shared
 ---
 
 **~~bez~~RADNY gotowy! Powodzenia! 🚀**
+
+---
+
+**Licencja**: MIT | **Data aktualizacji**: 2026-01-25
