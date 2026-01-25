@@ -8,6 +8,7 @@ import { Redis } from "ioredis";
 import { createClient } from "@supabase/supabase-js";
 import { YouTubeDownloader } from "./youtube-downloader.js";
 import { getEmbeddingsClient, getAIConfig } from "../ai/index.js";
+import { wsHub } from "./websocket-hub.js";
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 let worker = null;
 let connection = null;
@@ -44,9 +45,41 @@ export async function initializeTranscriptionWorker() {
         });
         worker.on("completed", (job) => {
             console.log(`[TranscriptionWorker] Job ${job.id} completed successfully`);
+            // Powiadom przez WebSocket
+            const userId = job.data.userId;
+            if (userId) {
+                wsHub.updateTask(userId, `transcription-${job.id}`, {
+                    status: "completed",
+                    description: "Transkrypcja zakończona pomyślnie",
+                });
+            }
         });
         worker.on("failed", (job, error) => {
             console.error(`[TranscriptionWorker] Job ${job?.id} failed:`, error.message);
+            // Powiadom przez WebSocket
+            const userId = job?.data.userId;
+            if (userId && job) {
+                wsHub.updateTask(userId, `transcription-${job.id}`, {
+                    status: "failed",
+                    description: `Błąd transkrypcji: ${error.message}`,
+                    error: error.message,
+                });
+            }
+        });
+        worker.on("active", (job) => {
+            console.log(`[TranscriptionWorker] Job ${job.id} started`);
+            // Powiadom przez WebSocket - zadanie uruchomione
+            const userId = job.data.userId;
+            if (userId) {
+                wsHub.registerTask(userId, {
+                    id: `transcription-${job.id}`,
+                    type: "transcription",
+                    status: "running",
+                    title: "Transkrypcja YouTube",
+                    description: `Przetwarzanie: ${job.data.videoUrl}`,
+                    startedAt: new Date().toISOString(),
+                });
+            }
         });
         worker.on("error", (error) => {
             console.error("[TranscriptionWorker] Worker error:", error);
@@ -66,41 +99,46 @@ async function processTranscriptionJob(job) {
     const startTime = Date.now();
     console.log(`[TranscriptionWorker] Processing job ${jobId}: ${videoTitle}`);
     try {
-        // Update status: downloading
-        await updateJobStatus(jobId, "downloading", 10, "Pobieranie audio z YouTube...");
-        await job.updateProgress({ progress: 10, message: "Pobieranie audio..." });
-        // Initialize downloader with user config
+        // ETAP 1: Pobieranie audio z YouTube
+        await updateJobStatus(jobId, "download", 5, "Pobieranie audio z YouTube...");
+        await job.updateProgress({ progress: 5, message: "Pobieranie audio..." });
         const downloader = new YouTubeDownloader();
         await downloader.initializeWithUserConfig(userId);
-        // Download audio
         const downloadResult = await downloader.downloadAudio(videoUrl);
         if (!downloadResult.success || !downloadResult.audioPath) {
             throw new Error(downloadResult.error || "Błąd pobierania audio");
         }
-        // Update status: preprocessing
-        await updateJobStatus(jobId, "preprocessing", 20, "Analiza i normalizacja audio...");
+        // ETAP 2: Konwersja (już wykonana w downloadAudio)
+        await updateJobStatus(jobId, "conversion", 15, "Audio skonwertowane do formatu Whisper");
+        await job.updateProgress({ progress: 15, message: "Konwersja zakończona" });
+        // ETAP 3: Dzielenie na segmenty (już wykonane w downloadAudio)
+        const partsCount = downloadResult.parts?.length || 1;
+        await updateJobStatus(jobId, "splitting", 20, `Podzielono na ${partsCount} segment(ów)`);
         await job.updateProgress({
             progress: 20,
-            message: "Przetwarzanie audio...",
+            message: `${partsCount} segment(ów)`,
         });
-        // Update status: transcribing
-        await updateJobStatus(jobId, "transcribing", 35, "Transkrypcja audio (może potrwać kilka minut)...");
-        await job.updateProgress({ progress: 35, message: "Transkrypcja..." });
-        // Extract video ID
+        // ETAP 4: Transkrypcja Whisper
+        await updateJobStatus(jobId, "transcription", 25, "Transkrypcja Whisper...");
+        await job.updateProgress({ progress: 25, message: "Transkrypcja..." });
         const videoIdMatch = videoUrl.match(/(?:v=|\/)([\w-]{11})(?:\?|&|$)/);
         const videoId = videoIdMatch?.[1] || "unknown";
-        // Transcribe
-        const transcriptionResult = await downloader.transcribeAndAnalyze(downloadResult.audioPath, videoId, videoTitle, videoUrl, true // enablePreprocessing
-        );
+        const transcriptionResult = await downloader.transcribeAndAnalyze(downloadResult.audioPath, videoId, videoTitle, videoUrl, downloadResult.parts);
         if (!transcriptionResult.success) {
             throw new Error(transcriptionResult.error || "Transkrypcja nie powiodła się");
         }
-        // Update status: analyzing
-        await updateJobStatus(jobId, "analyzing", 70, "Analiza transkrypcji...");
-        await job.updateProgress({ progress: 70, message: "Analiza..." });
-        // Update status: saving
-        await updateJobStatus(jobId, "saving", 85, "Zapisywanie do bazy danych...");
-        await job.updateProgress({ progress: 85, message: "Zapisywanie..." });
+        // ETAP 5: Usuwanie powtórzeń (wykonane w transcribeAndAnalyze)
+        await updateJobStatus(jobId, "deduplication", 62, "Usunięto powtórzenia");
+        await job.updateProgress({ progress: 62, message: "Deduplikacja..." });
+        // ETAP 6: Korekta językowa (wykonana w transcribeAndAnalyze)
+        await updateJobStatus(jobId, "correction", 72, "Korekta językowa zakończona");
+        await job.updateProgress({ progress: 72, message: "Korekta..." });
+        // ETAP 7: Analiza treści (wykonana w transcribeAndAnalyze)
+        await updateJobStatus(jobId, "analysis", 82, "Analiza treści zakończona");
+        await job.updateProgress({ progress: 82, message: "Analiza..." });
+        // ETAP 8: Zapisywanie do RAG
+        await updateJobStatus(jobId, "saving", 90, "Zapisywanie do RAG...");
+        await job.updateProgress({ progress: 90, message: "Zapisywanie..." });
         // Save transcription to RAG
         const documentId = await saveTranscriptionToRAG(userId, jobId, videoTitle, videoUrl, transcriptionResult.formattedTranscript, transcriptionResult.summary);
         // Update job as completed

@@ -12,31 +12,47 @@ import { Queue, QueueEvents } from "bullmq";
 import { Redis } from "ioredis";
 import { randomUUID } from "node:crypto";
 import { setTimeout } from "node:timers/promises";
+import { backgroundTaskService } from "./background-task-service.js";
 export const TRANSCRIPTION_STEPS = [
     {
         name: "download",
-        label: "📥 Pobieranie audio",
-        globalProgressRange: [0, 15],
+        label: "📥 Pobieranie audio z YouTube",
+        globalProgressRange: [0, 10],
     },
     {
-        name: "preprocessing",
-        label: "🎚️ Przetwarzanie audio",
-        globalProgressRange: [15, 25],
+        name: "conversion",
+        label: "🔄 Konwersja do formatu Whisper",
+        globalProgressRange: [10, 18],
+    },
+    {
+        name: "splitting",
+        label: "✂️ Dzielenie na segmenty",
+        globalProgressRange: [18, 22],
     },
     {
         name: "transcription",
-        label: "🎤 Transkrypcja",
-        globalProgressRange: [25, 65],
+        label: "🎤 Transkrypcja Whisper",
+        globalProgressRange: [22, 60],
+    },
+    {
+        name: "deduplication",
+        label: "🧹 Usuwanie powtórzeń",
+        globalProgressRange: [60, 68],
+    },
+    {
+        name: "correction",
+        label: "✏️ Korekta językowa (LLM)",
+        globalProgressRange: [68, 78],
     },
     {
         name: "analysis",
-        label: "🔍 Analiza i identyfikacja",
-        globalProgressRange: [65, 85],
+        label: "🔍 Analiza treści",
+        globalProgressRange: [78, 88],
     },
     {
         name: "saving",
-        label: "💾 Zapisywanie do bazy",
-        globalProgressRange: [85, 100],
+        label: "💾 Zapisywanie do RAG",
+        globalProgressRange: [88, 100],
     },
 ];
 // ============================================================================
@@ -44,6 +60,7 @@ export const TRANSCRIPTION_STEPS = [
 // ============================================================================
 class TranscriptionQueueService {
     static instance = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     queue = null;
     queueEvents = null;
     connection = null;
@@ -86,25 +103,47 @@ class TranscriptionQueueService {
                     removeOnFail: {
                         age: 30 * 86400, // Usuń nieudane po 30 dniach
                     },
-                    timeout: 7200000, // 2 godziny timeout per job
+                    // timeout przeniesiony do Worker options (jobTimeout)
                 },
             });
             this.queueEvents = new QueueEvents("transcription-jobs", {
                 connection: this.connection,
             });
             // Nasłuchuj na ukończone zadania
-            this.queueEvents.on("completed", ({ jobId, returnvalue }) => {
+            this.queueEvents.on("completed", ({ jobId }) => {
                 console.log(`[TranscriptionQueue] Job ${jobId} completed`);
                 this.progressCache.delete(jobId);
+                // Aktualizuj status w background_tasks
+                backgroundTaskService
+                    .updateByJobId(jobId, {
+                    status: "completed",
+                    progress: 100,
+                })
+                    .catch((err) => console.error("[TranscriptionQueue] Background task update error:", err));
             });
             this.queueEvents.on("failed", ({ jobId, failedReason }) => {
                 console.error(`[TranscriptionQueue] Job ${jobId} failed: ${failedReason}`);
                 this.progressCache.delete(jobId);
+                // Aktualizuj status w background_tasks
+                backgroundTaskService
+                    .updateByJobId(jobId, {
+                    status: "failed",
+                    error_message: failedReason,
+                })
+                    .catch((err) => console.error("[TranscriptionQueue] Background task update error:", err));
             });
             this.queueEvents.on("progress", ({ jobId, data }) => {
                 const progressData = data;
                 console.log(`[TranscriptionQueue] Job ${jobId} progress: ${progressData.progress}% - ${progressData.message}`);
                 this.progressCache.set(jobId, progressData);
+                // Aktualizuj progress w background_tasks
+                backgroundTaskService
+                    .updateByJobId(jobId, {
+                    status: "running",
+                    progress: progressData.progress,
+                    description: progressData.message,
+                })
+                    .catch((err) => console.error("[TranscriptionQueue] Background task update error:", err));
             });
             this.initialized = true;
             console.log(`[TranscriptionQueue] Initialized (redis=${redisHost}:${redisPort})`);
@@ -136,6 +175,13 @@ class TranscriptionQueueService {
         await this.queue.add("youtube-transcription", jobData, {
             jobId,
             priority: options.priority ?? 5, // Domyślny priorytet 5 (1=highest)
+        });
+        // Zapisz do background_tasks dla Supabase Realtime
+        await backgroundTaskService.createTask({
+            userId,
+            taskType: "transcription",
+            title: `Transkrypcja: ${videoTitle}`,
+            metadata: { jobId, videoUrl, sessionId: options.sessionId },
         });
         console.log(`[TranscriptionQueue] Added job ${jobId} (video="${videoTitle}")`);
         return jobId;
@@ -218,18 +264,26 @@ class TranscriptionQueueService {
             .filter((job) => job.data.userId === userId)
             .map(async (job) => {
             const state = await job.getState();
-            const progressData = this.progressCache.get(job.id) ?? {
-                progress: 0,
-                message: "Oczekuje w kolejce...",
-            };
-            const jobProgress = typeof job.progress === "object"
-                ? job.progress
-                : progressData;
+            // Preferuj progressCache (aktualizowane przez Redis events w czasie rzeczywistym)
+            // Fallback do job.progress tylko jeśli cache pusty
+            const cachedProgress = this.progressCache.get(job.id);
+            let progress = 0;
+            let progressMessage = "Oczekuje w kolejce...";
+            if (cachedProgress) {
+                progress = cachedProgress.progress;
+                progressMessage = cachedProgress.message;
+            }
+            else if (typeof job.progress === "object" &&
+                job.progress !== null) {
+                const jobProgress = job.progress;
+                progress = jobProgress.progress ?? 0;
+                progressMessage = jobProgress.message ?? "Przetwarzanie...";
+            }
             return {
                 id: job.id,
                 status: state,
-                progress: jobProgress.progress,
-                progressMessage: jobProgress.message,
+                progress,
+                progressMessage,
                 result: job.returnvalue ?? undefined,
                 error: job.failedReason,
                 createdAt: new Date(job.timestamp),
@@ -242,8 +296,7 @@ class TranscriptionQueueService {
     /**
      * Czekaj na wynik zadania (z timeout)
      */
-    async waitForResult(jobId, timeoutMs = 7200000 // 2 godziny
-    ) {
+    async waitForResult(jobId, timeoutMs = 7200000) {
         await this.initialize();
         if (!this.queue) {
             throw new Error("Transcription queue not initialized");

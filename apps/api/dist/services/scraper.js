@@ -418,12 +418,20 @@ async function processScrapedContent(sourceId, userId) {
             }
             // Wyciągnij słowa kluczowe
             const keywords = extractKeywords(content.title, content.raw_content);
+            // Znormalizuj tytuł (zamień angielskie nazwy na polskie)
+            const normalizedTitle = (content.title || "Bez tytułu")
+                .replace(/\bresolution\s+nr\b/gi, "Uchwała nr")
+                .replace(/\bresolution\b/gi, "Uchwała")
+                .replace(/\bprotocol\b/gi, "Protokół")
+                .replace(/\bdraft\b/gi, "Projekt")
+                .replace(/\battachment\b/gi, "Załącznik")
+                .trim();
             // Zapisz przetworzony dokument
             await supabase.from("processed_documents").insert({
                 scraped_content_id: content.id,
                 user_id: userId,
                 document_type: documentType,
-                title: content.title || "Bez tytułu",
+                title: normalizedTitle,
                 content: content.raw_content || "",
                 summary,
                 keywords,

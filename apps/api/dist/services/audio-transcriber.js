@@ -170,6 +170,8 @@ export class AudioTranscriber {
             throw new Error("LLM client not initialized");
         const systemPrompt = `Jesteś ekspertem analizy lingwistycznej i psychologicznej. Przeanalizuj transkrypcję i zwróć szczegółową analizę w formacie JSON.
 
+WAŻNE: Tekst wypowiedzi (pole "text") ZAWSZE musi być w języku polskim. Jeśli oryginalna transkrypcja jest w innym języku, przetłumacz ją na polski.
+
 Dla KAŻDEJ wypowiedzi określ:
 1. **speaker** - identyfikuj rozmówców jako "Rozmówca 1", "Rozmówca 2" itd. na podstawie kontekstu, zmiany tonu, odpowiedzi na pytania
 2. **sentiment** - "positive", "neutral", lub "negative"

@@ -396,15 +396,25 @@ export const chatRoutes = async (fastify) => {
           );
 
           // Sprawdź czy orchestrator udzielił sensownej odpowiedzi
+          const hasActionSuccess = orchestratorResult.toolResults.some(
+            (r) =>
+              r.success &&
+              ((r.data !== undefined && r.data !== null) || (r as any).message),
+          );
+
           const hasValidResponse =
             orchestratorResult.synthesizedResponse &&
             (isActionTool
-              ? orchestratorResult.synthesizedResponse.length > 10
+              ? orchestratorResult.synthesizedResponse.length > 5
               : orchestratorResult.synthesizedResponse.length > 100) &&
             !orchestratorResult.synthesizedResponse.includes(
               "nie udało się znaleźć",
             ) &&
-            orchestratorResult.toolResults.some((r) => r.success && r.data);
+            (isActionTool
+              ? hasActionSuccess
+              : orchestratorResult.toolResults.some(
+                  (r) => r.success && r.data,
+                ));
 
           console.log(
             `[Chat] Orchestrator result: intent=${

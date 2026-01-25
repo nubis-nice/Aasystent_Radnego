@@ -35,11 +35,16 @@ export class LegalSearchAPI {
     }
     async fulltextSearch(query) {
         console.log("[LegalSearchAPI] Fulltext search");
+        const escapeLike = (value) => value
+            .replace(/[%_]/g, "\\$&") // escape wildcardy
+            .replace(/,/g, " ") // przecinki psują parser OR
+            .trim();
+        const pattern = `%${escapeLike(query.query)}%`;
         let dbQuery = supabase
             .from("processed_documents")
             .select("*")
             .eq("user_id", this.userId)
-            .or(`title.ilike.%${query.query}%,content.ilike.%${query.query}%`);
+            .or(`title.ilike.${pattern},content.ilike.${pattern}`);
         dbQuery = this.applyFilters(dbQuery, query.filters);
         const limit = query.maxResults || 10;
         dbQuery = dbQuery.limit(limit);

@@ -74,7 +74,7 @@ export class BaseProviderAdapter {
                     }
                     throw new ProviderError(errorData.message || `HTTP ${response.status}`, "HTTP_ERROR", response.status, errorText);
                 }
-                return await response.json();
+                return (await response.json());
             }
             catch (error) {
                 lastError = error;

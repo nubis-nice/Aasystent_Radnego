@@ -323,12 +323,16 @@ export const chatRoutes = async (fastify) => {
                     ];
                     const isActionTool = actionTools.includes(orchestratorResult.intent.primaryIntent);
                     // Sprawdź czy orchestrator udzielił sensownej odpowiedzi
+                    const hasActionSuccess = orchestratorResult.toolResults.some((r) => r.success &&
+                        ((r.data !== undefined && r.data !== null) || r.message));
                     const hasValidResponse = orchestratorResult.synthesizedResponse &&
                         (isActionTool
-                            ? orchestratorResult.synthesizedResponse.length > 10
+                            ? orchestratorResult.synthesizedResponse.length > 5
                             : orchestratorResult.synthesizedResponse.length > 100) &&
                         !orchestratorResult.synthesizedResponse.includes("nie udało się znaleźć") &&
-                        orchestratorResult.toolResults.some((r) => r.success && r.data);
+                        (isActionTool
+                            ? hasActionSuccess
+                            : orchestratorResult.toolResults.some((r) => r.success && r.data));
                     console.log(`[Chat] Orchestrator result: intent=${orchestratorResult.intent.primaryIntent}, isActionTool=${isActionTool}, hasValidResponse=${hasValidResponse}, responseLen=${orchestratorResult.synthesizedResponse?.length || 0}, successfulTools=${orchestratorResult.toolResults.filter((r) => r.success).length}`);
                     // Debug: pokaż wyniki narzędzi
                     if (isActionTool) {
@@ -363,6 +367,10 @@ export const chatRoutes = async (fastify) => {
                         })
                             .select()
                             .single();
+                        // Wyciągnij uiAction z toolResults (dla akcji kalendarza/zadań)
+                        const uiActions = orchestratorResult.toolResults
+                            .filter((r) => r.uiAction)
+                            .map((r) => r.uiAction);
                         return reply.send({
                             conversationId: currentConversationId,
                             message: assistantMessage || {
@@ -384,6 +392,8 @@ export const chatRoutes = async (fastify) => {
                                 totalTimeMs: orchestratorResult.totalTimeMs,
                                 requiresDeepSearch: orchestratorResult.intent.requiresDeepSearch,
                             },
+                            // Przekaż akcje UI do frontendu (np. odświeżenie kalendarza)
+                            uiActions: uiActions.length > 0 ? uiActions : undefined,
                         });
                     }
                 }
@@ -648,8 +658,7 @@ export const chatRoutes = async (fastify) => {
                 content: msg.content,
             }));
             // Optymalizuj kontekst z kompresją
-            const optimized = optimizeContext(systemPrompt, ragDocuments, ragMunicipalData, conversationHistory, message, model, 2000 // max completion tokens
-            );
+            const optimized = optimizeContext(systemPrompt, ragDocuments, ragMunicipalData, conversationHistory, message, model, 2000);
             // Log oszczędności
             console.log(`[Chat] Context optimization:`, {
                 originalTokens: optimized.savings.originalTokens,

@@ -74,11 +74,12 @@ export async function dashboardRoutes(fastify) {
                 .from("conversations")
                 .select("*", { count: "exact", head: true })
                 .eq("user_id", userId);
-            // Get messages count
+            // Get messages count (tylko wiadomości użytkownika = zapytania AI)
             const { count: messagesCount } = await supabase
                 .from("messages")
                 .select("*", { count: "exact", head: true })
-                .eq("user_id", userId);
+                .eq("user_id", userId)
+                .eq("role", "user");
             // Get recent activity
             const { data: recentDocs } = await supabase
                 .from("processed_documents")
@@ -126,8 +127,100 @@ export async function dashboardRoutes(fastify) {
         }
     });
     // ═══════════════════════════════════════════════════════════════════════════
+    // PRZYPOMNIENIA / NOTIFICATIONS
+    // ═══════════════════════════════════════════════════════════════════════════
+    // GET /api/dashboard/notifications/upcoming - Nadchodzące przypomnienia
+    fastify.get("/dashboard/notifications/upcoming", async (request, reply) => {
+        const userId = request.headers["x-user-id"];
+        if (!userId)
+            return reply.code(401).send({ error: "Unauthorized" });
+        const supabase = getSupabase();
+        const now = new Date();
+        try {
+            // Pobierz wydarzenia z następnych 24h które mają reminder_minutes
+            const next24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+            const { data: events, error } = await supabase
+                .from("user_calendar_events")
+                .select("*")
+                .eq("user_id", userId)
+                .gte("start_date", now.toISOString())
+                .lte("start_date", next24h.toISOString())
+                .order("start_date", { ascending: true });
+            if (error)
+                throw error;
+            // Filtruj wydarzenia gdzie przypomnienie powinno być wyświetlone
+            const notifications = (events || [])
+                .map((event) => {
+                const eventStart = new Date(event.start_date);
+                const reminderMinutes = event.reminder_minutes || [60];
+                // Sprawdź każdy reminder_minutes
+                for (const minutes of reminderMinutes) {
+                    const reminderTime = new Date(eventStart.getTime() - minutes * 60 * 1000);
+                    const minutesUntilReminder = (reminderTime.getTime() - now.getTime()) / (60 * 1000);
+                    // Przypomnienie w ciągu następnych 5 minut lub już minęło (ale max 30 min temu)
+                    if (minutesUntilReminder <= 5 && minutesUntilReminder >= -30) {
+                        const minutesUntilEvent = (eventStart.getTime() - now.getTime()) / (60 * 1000);
+                        return {
+                            id: `${event.id}-${minutes}`,
+                            event_id: event.id,
+                            title: event.title,
+                            event_type: event.event_type,
+                            start_date: event.start_date,
+                            location: event.location,
+                            minutes_until_event: Math.round(minutesUntilEvent),
+                            reminder_type: minutes >= 1440 ? "day" : minutes >= 60 ? "hour" : "minutes",
+                            reminder_minutes: minutes,
+                        };
+                    }
+                }
+                return null;
+            })
+                .filter(Boolean);
+            return reply.send({
+                notifications,
+                count: notifications.length,
+                checked_at: now.toISOString(),
+            });
+        }
+        catch (error) {
+            fastify.log.error(`[Notifications] Error: ${error instanceof Error ? error.message : String(error)}`);
+            return reply.code(500).send({ error: "Failed to fetch notifications" });
+        }
+    });
+    // POST /api/dashboard/notifications/:id/dismiss - Odrzuć przypomnienie
+    fastify.post("/dashboard/notifications/:id/dismiss", async (request, reply) => {
+        const userId = request.headers["x-user-id"];
+        if (!userId)
+            return reply.code(401).send({ error: "Unauthorized" });
+        // W przyszłości można zapisywać dismissed notifications w bazie
+        // Na razie tylko potwierdzamy
+        return reply.send({ dismissed: true, id: request.params.id });
+    });
+    // ═══════════════════════════════════════════════════════════════════════════
     // KALENDARZ - CRUD
     // ═══════════════════════════════════════════════════════════════════════════
+    // GET /api/dashboard/calendar/debug - Wszystkie wydarzenia (do debugowania)
+    fastify.get("/dashboard/calendar/debug", async (request, reply) => {
+        const userId = request.headers["x-user-id"];
+        if (!userId)
+            return reply.code(401).send({ error: "Unauthorized" });
+        const supabase = getSupabase();
+        const { data, error } = await supabase
+            .from("user_calendar_events")
+            .select("id, title, start_date, event_type, location, created_at")
+            .eq("user_id", userId)
+            .order("start_date", { ascending: true })
+            .limit(20);
+        if (error) {
+            return reply.code(500).send({ error: error.message });
+        }
+        return reply.send({
+            userId,
+            totalEvents: data?.length || 0,
+            events: data || [],
+            serverTime: new Date().toISOString(),
+        });
+    });
     // GET /api/dashboard/calendar - Lista wydarzeń
     fastify.get("/dashboard/calendar", async (request, reply) => {
         const userId = request.headers["x-user-id"];
@@ -150,10 +243,12 @@ export async function dashboardRoutes(fastify) {
             const { data, error } = await dbQuery;
             if (error)
                 throw error;
+            // Debug log
+            console.log(`[Calendar] User ${userId} - found ${data?.length || 0} events (from: ${query.from}, to: ${query.to})`);
             return reply.send({ events: data || [] });
         }
         catch (error) {
-            fastify.log.error("[Calendar] Error:", error);
+            fastify.log.error(`[Calendar] Error: ${error instanceof Error ? error.message : String(error)}`);
             return reply.code(500).send({ error: "Failed to fetch calendar events" });
         }
     });
@@ -180,7 +275,7 @@ export async function dashboardRoutes(fastify) {
                     .code(400)
                     .send({ error: "Invalid data", details: error.errors });
             }
-            fastify.log.error("[Calendar] Create error:", error);
+            fastify.log.error(`[Calendar] Create error: ${error instanceof Error ? error.message : String(error)}`);
             return reply.code(500).send({ error: "Failed to create event" });
         }
     });
@@ -206,7 +301,7 @@ export async function dashboardRoutes(fastify) {
             return reply.send({ event: data });
         }
         catch (error) {
-            fastify.log.error("[Calendar] Update error:", error);
+            fastify.log.error(`[Calendar] Update error: ${error instanceof Error ? error.message : String(error)}`);
             return reply.code(500).send({ error: "Failed to update event" });
         }
     });
@@ -222,7 +317,7 @@ export async function dashboardRoutes(fastify) {
             .eq("id", request.params.id)
             .eq("user_id", userId);
         if (error) {
-            fastify.log.error("[Calendar] Delete error:", error);
+            fastify.log.error(`[Calendar] Delete error: ${error.message}`);
             return reply.code(500).send({ error: "Failed to delete event" });
         }
         return reply.code(204).send();
@@ -255,7 +350,7 @@ export async function dashboardRoutes(fastify) {
             return reply.send({ tasks: data || [] });
         }
         catch (error) {
-            fastify.log.error("[Tasks] Error:", error);
+            fastify.log.error(`[Tasks] Error: ${error instanceof Error ? error.message : String(error)}`);
             return reply.code(500).send({ error: "Failed to fetch tasks" });
         }
     });
@@ -282,7 +377,7 @@ export async function dashboardRoutes(fastify) {
                     .code(400)
                     .send({ error: "Invalid data", details: error.errors });
             }
-            fastify.log.error("[Tasks] Create error:", error);
+            fastify.log.error(`[Tasks] Create error: ${error instanceof Error ? error.message : String(error)}`);
             return reply.code(500).send({ error: "Failed to create task" });
         }
     });
@@ -313,7 +408,7 @@ export async function dashboardRoutes(fastify) {
             return reply.send({ task: data });
         }
         catch (error) {
-            fastify.log.error("[Tasks] Update error:", error);
+            fastify.log.error(`[Tasks] Update error: ${error instanceof Error ? error.message : String(error)}`);
             return reply.code(500).send({ error: "Failed to update task" });
         }
     });
@@ -329,7 +424,7 @@ export async function dashboardRoutes(fastify) {
             .eq("id", request.params.id)
             .eq("user_id", userId);
         if (error) {
-            fastify.log.error("[Tasks] Delete error:", error);
+            fastify.log.error(`[Tasks] Delete error: ${error.message}`);
             return reply.code(500).send({ error: "Failed to delete task" });
         }
         return reply.code(204).send();
@@ -368,7 +463,7 @@ export async function dashboardRoutes(fastify) {
             return reply.send({ alerts: data || [], unreadCount: unreadCount || 0 });
         }
         catch (error) {
-            fastify.log.error("[Alerts] Error:", error);
+            fastify.log.error(`[Alerts] Error: ${error instanceof Error ? error.message : String(error)}`);
             return reply.code(500).send({ error: "Failed to fetch alerts" });
         }
     });
@@ -464,7 +559,7 @@ export async function dashboardRoutes(fastify) {
             });
         }
         catch (error) {
-            fastify.log.error("[Upcoming] Error:", error);
+            fastify.log.error(`[Upcoming] Error: ${error instanceof Error ? error.message : String(error)}`);
             return reply.code(500).send({ error: "Failed to fetch upcoming events" });
         }
     });
@@ -485,8 +580,62 @@ export async function dashboardRoutes(fastify) {
             });
         }
         catch (error) {
-            fastify.log.error("[BatchImport] Error:", error);
+            fastify.log.error(`[BatchImport] Error: ${error instanceof Error ? error.message : String(error)}`);
             return reply.code(500).send({ error: "Failed to batch import events" });
+        }
+    });
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STATUS POLLING - Prosty endpoint do sprawdzania statusu systemu
+    // ═══════════════════════════════════════════════════════════════════════════
+    // GET /api/dashboard/status - Status systemu i aktywne zadania
+    fastify.get("/dashboard/status", async (request, reply) => {
+        const userId = request.headers["x-user-id"];
+        if (!userId)
+            return reply.code(401).send({ error: "Unauthorized" });
+        try {
+            const supabase = getSupabase();
+            // Pobierz aktywne zadania z Redis/BullMQ (jeśli dostępne)
+            // Na razie zwracamy pusty array - można rozszerzyć o integrację z kolejką
+            const activeTasks = [];
+            // Pobierz ostatnie powiadomienia GIS (nieprzeczytane)
+            const { data: notifications, error: notifError } = await supabase
+                .from("gis_notifications")
+                .select("id, title, notification_type, priority, created_at")
+                .eq("user_id", userId)
+                .is("read_at", null)
+                .order("created_at", { ascending: false })
+                .limit(5);
+            // Pobierz licznik nieprzeczytanych
+            const { count: unreadCount } = await supabase
+                .from("gis_notifications")
+                .select("*", { count: "exact", head: true })
+                .eq("user_id", userId)
+                .is("read_at", null);
+            return reply.send({
+                status: "ok",
+                timestamp: new Date().toISOString(),
+                activeTasks,
+                notifications: notifError ? [] : notifications || [],
+                unreadNotificationsCount: unreadCount || 0,
+                systemHealth: {
+                    api: "ok",
+                    database: "ok",
+                },
+            });
+        }
+        catch (error) {
+            fastify.log.error(`[Dashboard Status] Error: ${error instanceof Error ? error.message : String(error)}`);
+            return reply.send({
+                status: "ok",
+                timestamp: new Date().toISOString(),
+                activeTasks: [],
+                notifications: [],
+                unreadNotificationsCount: 0,
+                systemHealth: {
+                    api: "ok",
+                    database: "error",
+                },
+            });
         }
     });
 }

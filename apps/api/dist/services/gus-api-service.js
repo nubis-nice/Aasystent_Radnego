@@ -46,7 +46,7 @@ export class GUSApiService {
         if (!response.ok) {
             throw new Error(`GUS API error: ${response.status} ${response.statusText}`);
         }
-        const data = await response.json();
+        const data = (await response.json());
         // Zapisz do cache
         if (this.cacheEnabled) {
             this.cache.set(cacheKey, { data, timestamp: Date.now() });

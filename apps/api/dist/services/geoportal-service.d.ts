@@ -100,5 +100,9 @@ export declare class GeoportalService {
      */
     getGeoportalLink(parcelId: string): string;
     private getUnitType;
+    /**
+     * Parsowanie odpowiedzi GML z WFS
+     */
+    private parseGmlFeatures;
 }
 //# sourceMappingURL=geoportal-service.d.ts.map

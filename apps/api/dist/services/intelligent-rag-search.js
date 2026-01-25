@@ -185,11 +185,12 @@ export class IntelligentRAGSearch {
         let normalized = query;
         const variants = [query];
         // Wykryj i znormalizuj numery sesji (rzymskie → arabskie)
+        // Tolerancja na literówki: sesja, sesji, sesję, sesjie, sesje
         const sessionPatterns = [
-            /sesj[iaęy]\s+(?:nr\.?\s*)?([IVXLC]+)/gi,
-            /sesj[iaęy]\s+(?:nr\.?\s*)?(\d+)/gi,
-            /(?:nr\.?\s*)([IVXLC]+)\s+sesj/gi,
-            /([IVXLC]+)\s+sesj[iaęy]/gi,
+            /sesj[iaęye]{1,2}\s+(?:nr\.?\s*)?([IVXLC]+)/gi,
+            /sesj[iaęye]{1,2}\s+(?:nr\.?\s*)?(\d+)/gi,
+            /(?:nr\.?\s*|numer\s*)([IVXLC]+)/gi,
+            /([IVXLC]+)\s+sesj[iaęye]{1,2}/gi,
         ];
         for (const pattern of sessionPatterns) {
             const matches = query.matchAll(pattern);

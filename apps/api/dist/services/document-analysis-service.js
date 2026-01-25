@@ -196,15 +196,29 @@ export class DocumentAnalysisService {
     buildSearchQuery(ref) {
         switch (ref.type) {
             case "druk":
-                return `druk numer ${ref.number} projekt uchwały załącznik`;
+                return `druk numer ${ref.number} projekt uchwały sesja rady miejskiej załącznik`;
             case "resolution":
-                return `uchwała numer ${ref.number}`;
+                return `uchwała rady miejskiej numer ${ref.number} sesja rady miejskiej`;
             case "protocol":
-                return `protokół sesji numer ${ref.number}`;
+                return `protokół sesji rady miejskiej numer ${ref.number}`;
             case "attachment":
-                return `załącznik numer ${ref.number}`;
+                return `załącznik do uchwały ${ref.number} sesja rady miejskiej`;
             default:
                 return `${ref.type} ${ref.number}`;
+        }
+    }
+    buildReferenceTitle(ref) {
+        switch (ref.type) {
+            case "resolution":
+                return `Sesja Rady Miejskiej – Uchwała nr ${ref.number}`;
+            case "druk":
+                return `Sesja Rady Miejskiej – Druk nr ${ref.number}`;
+            case "protocol":
+                return `Sesja Rady Miejskiej – Protokół nr ${ref.number}`;
+            case "attachment":
+                return `Sesja Rady Miejskiej – Załącznik nr ${ref.number}`;
+            default:
+                return `${ref.type} nr ${ref.number}`;
         }
     }
     // Buduj wzorce URL do wyszukiwania
@@ -270,8 +284,7 @@ export class DocumentAnalysisService {
             const visitedUrls = new Set();
             const foundAttachments = new Map();
             // Głębokie przeszukiwanie strony źródłowej (bez limitu głębokości)
-            await this.crawlSourcePageDeep(sourceUrl, baseUrl, visitedUrls, foundAttachments, missingRefs, 0, 10 // max depth
-            );
+            await this.crawlSourcePageDeep(sourceUrl, baseUrl, visitedUrls, foundAttachments, missingRefs, 0, 10);
             console.log(`[DocumentAnalysis] Source page crawl found ${foundAttachments.size} potential attachments`);
             // Dopasuj znalezione załączniki do referencji
             for (const ref of missingRefs) {
@@ -446,7 +459,7 @@ export class DocumentAnalysisService {
                 .from("processed_documents")
                 .insert({
                 user_id: userId,
-                title: title || `${ref.type} nr ${ref.number}`,
+                title: title || this.buildReferenceTitle(ref),
                 content: content,
                 document_type: documentType,
                 source_url: url,

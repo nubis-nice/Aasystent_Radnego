@@ -44,8 +44,7 @@ export async function processTranscription(job) {
             model: "whisper-1",
             language: "pl",
         });
-        const transcriptionResult = await downloader.transcribeAndAnalyze(downloadResult.audioPath, videoId, videoTitle, videoUrl, true // enablePreprocessing
-        );
+        const transcriptionResult = await downloader.transcribeAndAnalyze(downloadResult.audioPath, videoId, videoTitle, videoUrl, false);
         if (!transcriptionResult.success) {
             await progressTracker.failStep("transcription", transcriptionResult.error || "Błąd transkrypcji");
             throw new Error(transcriptionResult.error || "Błąd transkrypcji");
@@ -341,6 +340,18 @@ async function saveToRAG(userId, formattedTranscript, videoTitle, videoUrl, sess
         .select("id")
         .single();
     if (error) {
+        // Duplikat - dokument już istnieje, nie zapisuj ponownie
+        if (error.code === "23505" || error.message?.includes("duplicate key")) {
+            console.log(`[TranscriptionWorker] Duplikat transkrypcji - brak zapisu: ${videoUrl}`);
+            // Pobierz istniejący dokument
+            const { data: existing } = await supabase
+                .from("processed_documents")
+                .select("id")
+                .eq("source_url", videoUrl)
+                .eq("user_id", userId)
+                .single();
+            return existing?.id || "duplicate";
+        }
         throw new Error(`Błąd zapisu do bazy: ${error.message}`);
     }
     if (sessionId) {

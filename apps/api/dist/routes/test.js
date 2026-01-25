@@ -237,7 +237,8 @@ export async function testRoutes(fastify) {
             return reply.send({ result, response });
         }
         catch (error) {
-            fastify.log.error("Chat test error:", error);
+            fastify.log.error("Chat test error: " +
+                String(error instanceof Error ? error.message : error));
             const result = {
                 test_type: "chat",
                 status: "failed",
@@ -307,7 +308,8 @@ export async function testRoutes(fastify) {
             });
         }
         catch (error) {
-            fastify.log.error("Embeddings test error:", error);
+            fastify.log.error("Embeddings test error: " +
+                String(error instanceof Error ? error.message : error));
             const result = {
                 test_type: "embeddings",
                 status: "failed",
@@ -370,7 +372,8 @@ export async function testRoutes(fastify) {
             return reply.send({ result, models });
         }
         catch (error) {
-            fastify.log.error("Models test error:", error);
+            fastify.log.error("Models test error: " +
+                String(error instanceof Error ? error.message : error));
             const result = {
                 test_type: "models",
                 status: "failed",

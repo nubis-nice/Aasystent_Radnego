@@ -680,7 +680,14 @@ Odpowiedz w formacie JSON:
                     scraped_content_id: content.id,
                     user_id: this.userId,
                     document_type: documentType,
-                    title: content.title || "Bez tytułu",
+                    // Znormalizuj tytuł (zamień angielskie nazwy na polskie)
+                    title: (content.title || "Bez tytułu")
+                        .replace(/\bresolution\s+nr\b/gi, "Uchwała nr")
+                        .replace(/\bresolution\b/gi, "Uchwała")
+                        .replace(/\bprotocol\b/gi, "Protokół")
+                        .replace(/\bdraft\b/gi, "Projekt")
+                        .replace(/\battachment\b/gi, "Załącznik")
+                        .trim(),
                     content: content.raw_content,
                     summary,
                     keywords,
@@ -1017,7 +1024,7 @@ export async function processDeepResearchLinks(userId, links, options) {
             let fileName = link.title || "document";
             if (contentType.includes("pdf")) {
                 fileName += ".pdf";
-                const result = await processor.processFile(buffer, fileName, contentType, buffer.length);
+                const result = await processor.processFile(buffer, fileName, contentType);
                 if (result.success) {
                     text = result.text;
                 }
@@ -1042,11 +1049,7 @@ export async function processDeepResearchLinks(userId, links, options) {
                 errors.push(`Content too short (${text.length} chars): ${link.url}`);
                 continue;
             }
-            const saveResult = await processor.saveToRAG(text, {
-                title: link.title,
-                documentType: "research",
-                sourceUrl: link.url,
-            }, userId);
+            const saveResult = await processor.saveToRAG(userId, text, link.title || "research document", link.url, "research");
             if (saveResult.success) {
                 saved++;
                 console.log(`[DeepResearchLinks] Saved: ${link.title} (${text.length} chars)`);

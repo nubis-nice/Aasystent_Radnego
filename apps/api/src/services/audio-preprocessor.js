@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { setTimeout, clearTimeout } from "node:timers";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -369,23 +370,37 @@ export class AudioPreprocessor {
         }
     }
     /**
-     * Wyciągnij segment audio
+     * Wyciągnij segment audio z timeout (60s) i fallback do re-encode
      */
     extractAudioSegment(inputPath, outputPath, startTime, endTime) {
         return new Promise((resolve, reject) => {
+            // Użyj re-encode zamiast -c copy (copy wisi na dużych WAV)
             const args = [
+                "-y", // Overwrite output
+                "-ss",
+                startTime.toString(), // Seek PRZED input (szybsze)
                 "-i",
                 inputPath,
-                "-ss",
-                startTime.toString(),
-                "-to",
-                endTime.toString(),
-                "-c",
-                "copy",
+                "-t",
+                (endTime - startTime).toString(), // Duration zamiast -to
+                "-acodec",
+                "pcm_s16le", // Re-encode do WAV (stabilniejsze niż copy)
                 outputPath,
             ];
             const ffmpeg = spawn(this.ffmpegPath, args);
+            let killed = false;
+            // Timeout 60s per segment
+            const timeout = setTimeout(() => {
+                if (!killed) {
+                    killed = true;
+                    ffmpeg.kill("SIGKILL");
+                    reject(new Error(`FFmpeg extraction timeout after 60s`));
+                }
+            }, 60000);
             ffmpeg.on("close", (code) => {
+                clearTimeout(timeout);
+                if (killed)
+                    return;
                 if (code === 0) {
                     resolve();
                 }
@@ -393,7 +408,181 @@ export class AudioPreprocessor {
                     reject(new Error(`FFmpeg extraction failed with code ${code}`));
                 }
             });
+            ffmpeg.on("error", (err) => {
+                clearTimeout(timeout);
+                if (!killed)
+                    reject(err);
+            });
+        });
+    }
+    /**
+     * Preprocessing pojedynczego segmentu na TOP QUALITY audio
+     * Stosuje: highpass 80Hz, noise reduction, loudnorm
+     * Zwraca ścieżkę do przetworzonego pliku (nadal top quality)
+     */
+    async preprocessSegment(inputPath) {
+        const outputPath = inputPath.replace(/\.wav$/, "_preprocessed.wav");
+        console.log(`[AudioPreprocessor] Preprocessing segment: ${inputPath}`);
+        return new Promise((resolve, reject) => {
+            // Filtry na top quality audio:
+            // 1. highpass=f=80 - usuwa niskie częstotliwości (buczenie, szum)
+            // 2. afftdn=nf=-25 - noise reduction (FFT-based)
+            // 3. loudnorm - normalizacja głośności do -16 LUFS
+            const filterChain = "highpass=f=80,afftdn=nf=-25,loudnorm=I=-16:TP=-1.5:LRA=11";
+            const args = [
+                "-i",
+                inputPath,
+                "-af",
+                filterChain,
+                "-y", // Overwrite output
+                outputPath,
+            ];
+            console.log(`[AudioPreprocessor] Running: ffmpeg -i input -af "${filterChain}" output`);
+            const ffmpeg = spawn(this.ffmpegPath, args);
+            let stderr = "";
+            ffmpeg.stderr.on("data", (data) => {
+                stderr += data.toString();
+            });
+            ffmpeg.on("close", (code) => {
+                if (code === 0) {
+                    // Usuń oryginalny plik, zachowaj przetworzony
+                    if (fs.existsSync(inputPath) && inputPath !== outputPath) {
+                        fs.unlinkSync(inputPath);
+                    }
+                    console.log(`[AudioPreprocessor] Segment preprocessed: ${outputPath}`);
+                    resolve(outputPath);
+                }
+                else {
+                    console.error(`[AudioPreprocessor] Preprocessing failed:`, stderr);
+                    reject(new Error(`Preprocessing failed with code ${code}`));
+                }
+            });
             ffmpeg.on("error", reject);
+        });
+    }
+    /**
+     * Downsampling do formatu optymalnego dla Whisper (16kHz mono WAV)
+     * Wykonywany PO preprocessingu na top quality audio
+     */
+    async downsampleForWhisper(inputPath) {
+        const outputPath = inputPath.replace(/(_preprocessed)?\.wav$/, "_whisper.wav");
+        console.log(`[AudioPreprocessor] Downsampling for Whisper: ${inputPath}`);
+        return new Promise((resolve, reject) => {
+            const args = [
+                "-i",
+                inputPath,
+                "-ar",
+                "16000", // 16kHz - optimal for Whisper
+                "-ac",
+                "1", // Mono
+                "-y",
+                outputPath,
+            ];
+            const ffmpeg = spawn(this.ffmpegPath, args);
+            let stderr = "";
+            ffmpeg.stderr.on("data", (data) => {
+                stderr += data.toString();
+            });
+            ffmpeg.on("close", (code) => {
+                if (code === 0) {
+                    // Usuń plik preprocessed, zachowaj whisper-ready
+                    if (fs.existsSync(inputPath) && inputPath !== outputPath) {
+                        fs.unlinkSync(inputPath);
+                    }
+                    const stats = fs.statSync(outputPath);
+                    console.log(`[AudioPreprocessor] Downsampled for Whisper: ${outputPath} (${(stats.size / 1024 / 1024).toFixed(2)}MB)`);
+                    resolve(outputPath);
+                }
+                else {
+                    console.error(`[AudioPreprocessor] Downsampling failed:`, stderr);
+                    reject(new Error(`Downsampling failed with code ${code}`));
+                }
+            });
+            ffmpeg.on("error", reject);
+        });
+    }
+    /**
+     * Pełny pipeline: preprocessing + downsampling dla pojedynczego segmentu
+     * 1. Preprocessing na top quality (highpass + noise reduction + loudnorm)
+     * 2. Downsampling do 16kHz mono dla Whisper
+     */
+    async prepareSegmentForWhisper(inputPath) {
+        console.log(`[AudioPreprocessor] Full pipeline for segment: ${inputPath}`);
+        // 1. Preprocessing na top quality
+        const preprocessedPath = await this.preprocessSegment(inputPath);
+        // 2. Downsampling do Whisper format
+        const whisperReadyPath = await this.downsampleForWhisper(preprocessedPath);
+        return whisperReadyPath;
+    }
+    /**
+     * BEST PRACTICE: Konwertuj dowolne audio do formatu optymalnego dla Whisper
+     * - 16kHz sample rate
+     * - Mono (1 channel)
+     * - 16-bit PCM WAV
+     * - Normalizacja głośności (loudnorm)
+     */
+    async convertToWhisperFormat(inputPath, outputPath) {
+        console.log(`[AudioPreprocessor] Converting to Whisper format: ${inputPath}`);
+        return new Promise((resolve, reject) => {
+            // FFmpeg: konwersja do 16kHz mono 16-bit PCM WAV z pełnym preprocessingiem
+            // Filtry dla lepszej jakości transkrypcji:
+            // 1. highpass=f=80 - usuwa niskie szumy/hum
+            // 2. afftdn=nf=-25 - redukcja szumów FFT
+            // 3. acompressor - wyrównuje głośność mówców
+            // 4. loudnorm - normalizacja głośności dla Whisper
+            const filterChain = [
+                "highpass=f=80", // Usuń niskie częstotliwości (hum, szumy)
+                "afftdn=nf=-25", // Redukcja szumów (FFT denoiser)
+                "acompressor=threshold=-20dB:ratio=4:attack=5:release=50", // Kompresja dynamiki
+                "loudnorm=I=-16:TP=-1.5:LRA=11", // Normalizacja głośności
+            ].join(",");
+            const args = [
+                "-y", // Overwrite
+                "-i",
+                inputPath,
+                "-af",
+                filterChain,
+                "-ar",
+                "16000", // 16kHz - optimal dla Whisper
+                "-ac",
+                "1", // Mono
+                "-acodec",
+                "pcm_s16le", // 16-bit PCM
+                outputPath,
+            ];
+            const ffmpeg = spawn(this.ffmpegPath, args);
+            let stderr = "";
+            let killed = false;
+            // Timeout 10 min dla konwersji (długie sesje rady mogą trwać kilka godzin)
+            const timeout = setTimeout(() => {
+                if (!killed) {
+                    killed = true;
+                    ffmpeg.kill("SIGKILL");
+                    reject(new Error("FFmpeg conversion timeout after 600s"));
+                }
+            }, 600000);
+            ffmpeg.stderr.on("data", (data) => {
+                stderr += data.toString();
+            });
+            ffmpeg.on("close", (code) => {
+                clearTimeout(timeout);
+                if (killed)
+                    return;
+                if (code === 0) {
+                    const stats = fs.statSync(outputPath);
+                    console.log(`[AudioPreprocessor] Converted to Whisper format: ${(stats.size / 1024 / 1024).toFixed(2)}MB`);
+                    resolve();
+                }
+                else {
+                    console.error(`[AudioPreprocessor] Conversion failed:`, stderr.slice(-500));
+                    reject(new Error(`FFmpeg conversion failed with code ${code}`));
+                }
+            });
+            ffmpeg.on("error", (err) => {
+                clearTimeout(timeout);
+                if (!killed)
+                    reject(err);
+            });
         });
     }
 }

@@ -72,6 +72,12 @@ export declare class DocumentScorer {
      * Aktualizuj score dokumentu w bazie (opcjonalne - cache)
      */
     updateDocumentScore(documentId: string): Promise<DocumentScore | null>;
+    /**
+     * Normalizacja tytułu dokumentu
+     * - Usuwa śmieci (| Urząd Miejski..., System Rada...)
+     * - Zamienia angielskie nazwy na polskie
+     */
+    private normalizeTitle;
 }
 export declare const documentScorer: DocumentScorer;
 //# sourceMappingURL=document-scorer.d.ts.map

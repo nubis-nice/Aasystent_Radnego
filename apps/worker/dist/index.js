@@ -7,6 +7,7 @@ import { processAnalysis } from "./jobs/analysis.js";
 import { processRelations } from "./jobs/relations.js";
 import { processVision, } from "./jobs/vision.js";
 import { processTranscription } from "./jobs/transcription.js";
+import { processDocumentJob, } from "./jobs/document-process.js";
 const redisHost = process.env.REDIS_HOST ?? "localhost";
 const redisPort = Number(process.env.REDIS_PORT ?? 6379);
 const connection = new Redis({
@@ -23,6 +24,7 @@ export const userQueue = new Queue("user-jobs", {
 });
 export const visionQueue = new Queue("vision-jobs", { connection: connection });
 export const transcriptionQueue = new Queue("transcription-jobs", { connection: connection });
+export const documentProcessQueue = new Queue("document-process-jobs", { connection: connection });
 // Worker dla zadań dokumentów
 const documentWorker = new Worker("document-jobs", async (job) => {
     console.log(`[document-worker] Processing job ${job.name} (${job.id})`);
@@ -41,6 +43,19 @@ const documentWorker = new Worker("document-jobs", async (job) => {
     concurrency: 2, // Maksymalnie 2 zadania równolegle (OpenAI rate limits)
     limiter: {
         max: 10, // Maksymalnie 10 zadań
+        duration: 60000, // na minutę
+    },
+});
+// Worker dla przetwarzania dokumentów (OCR/transkrypcja) - Redis queue
+const documentProcessWorker = new Worker("document-process-jobs", async (job) => {
+    console.log(`[document-process-worker] Processing job ${job.id} (file=${job.data.fileName})`);
+    return await processDocumentJob(job);
+}, {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    connection: connection,
+    concurrency: 2, // Max 2 równoczesne zadania
+    limiter: {
+        max: 10, // Max 10 zadań
         duration: 60000, // na minutę
     },
 });
@@ -94,6 +109,16 @@ transcriptionWorker.on("progress", (job, progress) => {
     const progressData = progress;
     console.log(`[transcription-worker] 📊 Progress ${job.id}: ${progressData.progress}% - ${progressData.message}`);
 });
+// Event handlers dla document-process worker
+documentProcessWorker.on("completed", (job) => {
+    console.log(`[document-process-worker] ✅ Completed ${job.id}`);
+});
+documentProcessWorker.on("failed", (job, err) => {
+    console.error(`[document-process-worker] ❌ Failed ${job?.id}: ${err.message}`);
+});
+documentProcessWorker.on("progress", (job, progress) => {
+    console.log(`[document-process-worker] 📊 Progress ${job.id}: ${progress}%`);
+});
 // Event handlers dla document worker
 documentWorker.on("completed", (job, result) => {
     console.log(`[document-worker] ✅ Completed ${job.name} (${job.id})`);
@@ -118,6 +143,7 @@ userWorker.on("failed", (job, err) => {
 process.on("SIGTERM", async () => {
     console.log("[worker] SIGTERM received, closing workers...");
     await documentWorker.close();
+    await documentProcessWorker.close();
     await userWorker.close();
     await visionWorker.close();
     await transcriptionWorker.close();
@@ -125,6 +151,6 @@ process.on("SIGTERM", async () => {
     process.exit(0);
 });
 console.log(`[worker] 🚀 Started (redis=${redisHost}:${redisPort})`);
-console.log("[worker] 📋 Queues: document-jobs, user-jobs, vision-jobs, transcription-jobs");
-console.log("[worker] 🔧 Jobs: extraction, analysis, relations, vision-ocr, youtube-transcription");
+console.log("[worker] 📋 Queues: document-jobs, document-process-jobs, user-jobs, vision-jobs, transcription-jobs");
+console.log("[worker] 🔧 Jobs: extraction, analysis, relations, document-process, vision-ocr, youtube-transcription");
 //# sourceMappingURL=index.js.map

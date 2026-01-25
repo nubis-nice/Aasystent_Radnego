@@ -72,7 +72,16 @@ export declare class YouTubeDownloader {
      * Transkrybuj pojedynczy chunk audio z timeout
      */
     private transcribeChunk;
-    transcribeAndAnalyze(audioPath: string, videoId: string, videoTitle: string, videoUrl: string, enablePreprocessing?: boolean): Promise<TranscriptionWithAnalysis>;
+    transcribeAndAnalyze(audioPath: string, videoId: string, videoTitle: string, videoUrl: string, precomputedParts?: AudioPart[]): Promise<TranscriptionWithAnalysis>;
+    /**
+     * Usuwa powtarzające się frazy z transkrypcji (halucynacje Whisper)
+     * V3: Algorytm iteracyjny dla fraz wielowyrazowych
+     */
+    private removeRepetitions;
+    /**
+     * Oblicza podobieństwo dwóch stringów (0-1)
+     */
+    private stringSimilarity;
     private correctTranscript;
     private analyzeTranscript;
     private formatTranscriptMarkdown;

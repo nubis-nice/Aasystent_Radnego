@@ -632,6 +632,7 @@ export class DeepResearchService {
             };
             const { error } = await this.supabase
                 .from("research_reports")
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 .insert(insertData);
             if (error)
                 throw error;

@@ -2,6 +2,7 @@ import "dotenv/config";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
+import websocket from "@fastify/websocket";
 import { authRoutes } from "./routes/auth.js";
 import { documentsRoutes } from "./routes/documents.js";
 import { testApiRoutes } from "./routes/test-api.js";
@@ -25,9 +26,12 @@ import { terytRoutes } from "./routes/teryt.js";
 import { krsRoutes } from "./routes/krs.js";
 import { ceidgRoutes } from "./routes/ceidg.js";
 import { gdosRoutes } from "./routes/gdos.js";
+import { webSearchRoutes } from "./routes/web-search.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { initializeTranscriptionRecovery } from "./services/transcription-recovery.js";
 import { initializeTranscriptionWorker } from "./services/transcription-worker.js";
+import { websocketRoutes } from "./routes/websocket.js";
+import { sseRoutes } from "./routes/sse.js";
 const port = Number(process.env.API_PORT ?? 3001);
 const app = Fastify({
     logger: {
@@ -42,7 +46,17 @@ const app = Fastify({
     },
 });
 app.register(cors, {
-    origin: true,
+    origin: (origin, cb) => {
+        // Allow requests with no origin (mobile apps, curl, etc.)
+        if (!origin)
+            return cb(null, true);
+        // Allow localhost on any port
+        if (origin.startsWith("http://localhost:") ||
+            origin.startsWith("http://127.0.0.1:")) {
+            return cb(null, true);
+        }
+        cb(new Error("Not allowed by CORS"), false);
+    },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "x-user-id"],
@@ -52,6 +66,8 @@ app.register(multipart, {
         fileSize: 10 * 1024 * 1024,
     },
 });
+// WebSocket support
+app.register(websocket);
 app.get("/health", async () => {
     return {
         status: "ok",
@@ -80,11 +96,14 @@ app.register(async (protectedApp) => {
     protectedApp.register(krsRoutes, { prefix: "/api" });
     protectedApp.register(ceidgRoutes, { prefix: "/api" });
     protectedApp.register(gdosRoutes, { prefix: "/api" });
+    protectedApp.register(webSearchRoutes, { prefix: "/api" });
     protectedApp.register(testRoutes, { prefix: "/api" });
 });
 app.register(testApiRoutes, { prefix: "/api" });
 app.register(apiModelsRoutes, { prefix: "/api" });
 app.register(providerRoutes, { prefix: "/api" });
+app.register(websocketRoutes, { prefix: "/api" });
+app.register(sseRoutes, { prefix: "/api" });
 app.setErrorHandler((error, request, reply) => {
     app.log.error(error);
     reply.status(error.statusCode || 500).send({

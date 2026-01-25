@@ -6,9 +6,10 @@
 import { BaseResearchProvider } from "./base-provider.js";
 export class TavilyProvider extends BaseResearchProvider {
     async search(query, options = {}) {
+        const searchDepth = options.searchType === "keyword" ? "basic" : "advanced";
         const request = {
             query,
-            search_depth: options.searchType === "deep" ? "advanced" : "basic",
+            search_depth: searchDepth,
             include_domains: options.domains,
             exclude_domains: options.excludeDomains,
             max_results: options.maxResults || 5,

@@ -3,6 +3,7 @@
  *
  * Zarządza kolejką zadań scrapingu z limitem równoczesnych procesów.
  * Implementuje priorytetyzację źródeł i równoległe przetwarzanie.
+ * Używa BullMQ + Redis dla persistence.
  */
 import EventEmitter from "events";
 export interface ScrapingJob {
@@ -81,6 +82,20 @@ export declare class ScrapingQueueManager extends EventEmitter {
     getParallelConfig(): {
         maxPagesParallel: number;
     };
+    /**
+     * Dodaj wiele źródeł do kolejki naraz (bulk enqueue)
+     * Używane przez przycisk "Scrapuj wszystkie"
+     */
+    enqueueBulk(sources: Array<{
+        sourceId: string;
+        userId: string;
+        priority?: number;
+        sourceType?: string;
+    }>): Promise<{
+        queued: string[];
+        skipped: string[];
+        totalQueued: number;
+    }>;
 }
 /**
  * Oblicz priorytet źródła na podstawie metadanych

@@ -68,23 +68,35 @@ export interface TranscriptionJobStatus {
 }
 export declare const TRANSCRIPTION_STEPS: readonly [{
     readonly name: "download";
-    readonly label: "📥 Pobieranie audio";
+    readonly label: "📥 Pobieranie audio z YouTube";
     readonly globalProgressRange: [number, number];
 }, {
-    readonly name: "preprocessing";
-    readonly label: "🎚️ Przetwarzanie audio";
+    readonly name: "conversion";
+    readonly label: "🔄 Konwersja do formatu Whisper";
+    readonly globalProgressRange: [number, number];
+}, {
+    readonly name: "splitting";
+    readonly label: "✂️ Dzielenie na segmenty";
     readonly globalProgressRange: [number, number];
 }, {
     readonly name: "transcription";
-    readonly label: "🎤 Transkrypcja";
+    readonly label: "🎤 Transkrypcja Whisper";
+    readonly globalProgressRange: [number, number];
+}, {
+    readonly name: "deduplication";
+    readonly label: "🧹 Usuwanie powtórzeń";
+    readonly globalProgressRange: [number, number];
+}, {
+    readonly name: "correction";
+    readonly label: "✏️ Korekta językowa (LLM)";
     readonly globalProgressRange: [number, number];
 }, {
     readonly name: "analysis";
-    readonly label: "🔍 Analiza i identyfikacja";
+    readonly label: "🔍 Analiza treści";
     readonly globalProgressRange: [number, number];
 }, {
     readonly name: "saving";
-    readonly label: "💾 Zapisywanie do bazy";
+    readonly label: "💾 Zapisywanie do RAG";
     readonly globalProgressRange: [number, number];
 }];
 declare class TranscriptionQueueService {

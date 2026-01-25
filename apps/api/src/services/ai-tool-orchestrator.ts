@@ -79,6 +79,13 @@ export interface ToolExecutionResult {
   success: boolean;
   data: unknown;
   executionTimeMs: number;
+  message?: string;
+  uiAction?: {
+    type: string;
+    target?: string;
+    data?: unknown;
+  };
+  navigationTarget?: string;
   error?: string;
 }
 
@@ -92,6 +99,14 @@ export interface OrchestratorResult {
 }
 
 const INTENT_DETECTION_PROMPT = `Jesteś ekspertem od analizy intencji użytkownika. Wybierz JEDNO narzędzie jako primaryIntent.
+
+# ZASADY ROZUMOWANIA KONTEKSTOWEGO:
+- Stosuj rozumowanie semantyczne, nie tylko słowa kluczowe. Jeśli użytkownik pyta o dane statystyczne, populację, bezrobocie itp. → gus_statistics, nawet gdy nie pada słowo "GUS".
+- Jeśli pytanie dotyczy ochrony środowiska, obszarów chronionych, map, parceli → rozważ geoportal_spatial / gdos_environmental.
+- Jeśli prosi o przepisy/akty prawne → isap_legal, nawet bez słowa "ustawa".
+- Jeśli chce dane finansowe gminy/budżet → budget_analysis lub rag_search (dokumenty lokalne) w zależności od treści.
+- Jeśli prosi o "wyszukaj"/"znajdź informacje" w wielu źródłach → verified_web_search lub exhaustive_search.
+- Unikaj simple_answer, jeśli jakiekolwiek narzędzie może dostarczyć danych.
 
 # NARZĘDZIA I KIEDY ICH UŻYWAĆ:
 
@@ -339,11 +354,43 @@ export class AIToolOrchestrator {
     for (const tool of tools) {
       const startTime = Date.now();
       try {
-        const data = await this.executeSingleTool(tool, userMessage, intent);
+        const rawResult = await this.executeSingleTool(
+          tool,
+          userMessage,
+          intent,
+        );
+
+        let normalizedData: unknown = rawResult;
+        let message: string | undefined;
+        let uiAction: ToolExecutionResult["uiAction"];
+        let navigationTarget: string | undefined;
+
+        if (rawResult && typeof rawResult === "object") {
+          const obj = rawResult as Record<string, unknown>;
+          if ("message" in obj && typeof obj.message === "string") {
+            message = obj.message;
+          }
+          if ("uiAction" in obj) {
+            uiAction = obj.uiAction as ToolExecutionResult["uiAction"];
+          }
+          if (
+            "navigationTarget" in obj &&
+            typeof obj.navigationTarget === "string"
+          ) {
+            navigationTarget = obj.navigationTarget;
+          }
+          if ("data" in obj) {
+            normalizedData = obj.data as unknown;
+          }
+        }
+
         results.push({
           tool,
           success: true,
-          data,
+          data: normalizedData,
+          message,
+          uiAction,
+          navigationTarget,
           executionTimeMs: Date.now() - startTime,
         });
 
@@ -359,7 +406,7 @@ export class AIToolOrchestrator {
         ];
 
         if (searchTools.includes(tool)) {
-          const searchData = data as {
+          const searchData = normalizedData as {
             results?: unknown[];
             documents?: unknown[];
             ragResults?: unknown[];
@@ -596,14 +643,25 @@ export class AIToolOrchestrator {
             subjects: subjects.slice(0, 20),
           };
         }
-        const unit = await gusService.findGmina(gminaName);
+        let unit = await gusService.findGmina(gminaName);
+
+        // Fallback: spróbuj województwo (level 2) gdy użytkownik podał np. "woj. mazowieckie"
+        if (!unit) {
+          const voivodeships = await gusService.getUnits({ level: 2 });
+          unit =
+            voivodeships.find((u) =>
+              u.name.toLowerCase().includes(gminaName.toLowerCase()),
+            ) || null;
+        }
+
         if (!unit) {
           return {
             type: "not_found",
-            message: `Nie znaleziono jednostki terytorialnej: ${gminaName}`,
-            suggestion: "Spróbuj podać pełną nazwę gminy",
+            message: `Nie znaleziono jednostki "${gminaName}" w bazie GUS BDL`,
+            suggestion: "Podaj pełną nazwę gminy lub województwa",
           };
         }
+
         const stats = await gusService.getGminaStats(unit.id);
         return {
           type: "gmina_stats",
@@ -997,12 +1055,37 @@ export class AIToolOrchestrator {
   }> {
     if (!this.llmClient) throw new Error("LLM client not initialized");
 
-    const successfulResults = toolResults.filter((r) => r.success && r.data);
+    const successfulResults = toolResults.filter(
+      (r) =>
+        r.success && ((r.data !== undefined && r.data !== null) || r.message),
+    );
     if (successfulResults.length === 0) {
       return {
         response: "Przepraszam, nie udało się znaleźć odpowiednich informacji.",
         sources: [],
       };
+    }
+
+    // Jeśli to akcja (kalendarz/zadania/nawigacja) z komunikatem, zwróć go bez dalszej syntezy
+    for (const result of successfulResults) {
+      if (
+        result.message &&
+        [
+          "calendar_add",
+          "calendar_list",
+          "calendar_edit",
+          "calendar_delete",
+          "task_add",
+          "task_list",
+          "task_complete",
+          "task_delete",
+          "alert_check",
+          "quick_tool",
+          "app_navigate",
+        ].includes(result.tool)
+      ) {
+        return { response: result.message, sources: [] };
+      }
     }
 
     const sources: Array<{ title: string; url?: string; type: string }> = [];
