@@ -7,7 +7,6 @@ import {
   DocumentScorer,
   type DocumentPriority,
 } from "../services/document-scorer.js";
-import { DocumentAnalysisService } from "../services/document-analysis-service.js";
 import {
   addDocumentProcessJob,
   getUserDocumentJobs,
@@ -16,6 +15,7 @@ import {
   retryDocumentJob,
   getDocumentQueueStats,
 } from "../services/document-process-queue.js";
+import { addAnalysisJob } from "../services/analysis-queue.js";
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -627,7 +627,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // POST /documents/:id/analyze - Profesjonalna analiza dokumentu z kontekstem RAG
+  // POST /documents/:id/analyze - Profesjonalna analiza dokumentu z kontekstem RAG (ASYNC)
   fastify.post<{ Params: { id: string } }>(
     "/documents/:id/analyze",
     async (request, reply) => {
@@ -639,71 +639,55 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       try {
-        // Inicjalizuj serwis analizy
-        const analysisService = new DocumentAnalysisService();
-        await analysisService.initialize(userId);
-
-        // Zbuduj pełny kontekst analizy (dokument + druki + załączniki z RAG)
-        const analysisContext = await analysisService.buildAnalysisContext(
-          userId,
-          id,
-        );
-
-        if (!analysisContext) {
-          return reply.status(404).send({ error: "Document not found" });
-        }
-
-        // Oblicz score dokumentu
-        const scorer = new DocumentScorer();
-        const { data: docForScore } = await supabase
+        // Pobierz podstawowe info o dokumencie
+        const { data: doc } = await supabase
           .from("processed_documents")
-          .select("*")
+          .select("id, title, document_type, publish_date, summary")
           .eq("id", id)
           .eq("user_id", userId)
           .single();
 
-        const score = docForScore ? scorer.calculateScore(docForScore) : null;
+        if (!doc) {
+          return reply.status(404).send({ error: "Document not found" });
+        }
 
-        // Generuj profesjonalny prompt analizy
-        const analysisResult =
-          analysisService.generateAnalysisPrompt(analysisContext);
+        // Dodaj zadanie do kolejki BullMQ
+        const { jobId, taskId } = await addAnalysisJob({
+          userId,
+          documentId: id,
+          documentTitle: doc.title || "Dokument",
+        });
 
-        // Zwróć dane do analizy
+        console.log(
+          `[Documents] Analysis job ${jobId} created for document ${id}`,
+        );
+
+        // Zwróć natychmiast - przetwarzanie przez worker
         return reply.send({
           success: true,
+          async: true,
+          taskId,
+          jobId,
+          message: "Analiza rozpoczęta. Śledź postęp na Dashboard.",
           document: {
-            id: analysisContext.mainDocument.id,
-            title: analysisContext.mainDocument.title,
-            document_type: analysisContext.mainDocument.documentType,
-            publish_date: analysisContext.mainDocument.publishDate,
-            summary: analysisContext.mainDocument.summary,
-            contentPreview:
-              analysisContext.mainDocument.content?.substring(0, 500) + "...",
-          },
-          score,
-          // Informacje o znalezionych referencjach
-          references: {
-            found: analysisContext.references.filter((r) => r.found).length,
-            missing: analysisContext.missingReferences.length,
-            details: analysisContext.references,
-          },
-          // Prompt i system prompt do chatu
-          analysisPrompt: analysisResult.prompt,
-          systemPrompt: analysisResult.systemPrompt,
-          chatContext: {
-            type: "document_analysis",
-            documentId: analysisContext.mainDocument.id,
-            documentTitle: analysisContext.mainDocument.title,
-            hasAdditionalContext: analysisContext.additionalContext.length > 0,
-            missingReferences: analysisContext.missingReferences,
+            id: doc.id,
+            title: doc.title,
+            document_type: doc.document_type,
+            publish_date: doc.publish_date,
           },
         });
       } catch (error) {
-        fastify.log.error(error);
-        return reply.status(500).send({ error: "Internal server error" });
+        fastify.log.error(String(error));
+        return reply.status(500).send({
+          error: "Internal server error",
+          message: error instanceof Error ? error.message : "Unknown error",
+        });
       }
     },
   );
+
+  // NOTE: Analiza dokumentów jest teraz przetwarzana przez worker BullMQ
+  // Zobacz: apps/worker/src/jobs/analysis.ts
 
   // POST /documents/process - Przetwarzanie pliku z OCR
   fastify.post("/documents/process", async (request, reply) => {

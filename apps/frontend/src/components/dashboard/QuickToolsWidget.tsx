@@ -31,17 +31,7 @@ export function QuickToolsWidget() {
       description: "Kreator interpelacji radnego",
       icon: <FileEdit className="h-5 w-5" />,
       color: "from-purple-500 to-purple-600",
-      action: () => {
-        router.push("/chat");
-        setTimeout(() => {
-          const event = new CustomEvent("chat-preset", {
-            detail: {
-              message: "Pomóż mi przygotować interpelację radnego w sprawie:",
-            },
-          });
-          window.dispatchEvent(event);
-        }, 500);
-      },
+      action: () => router.push("/chat?tool=interpelation"),
     },
     {
       id: "protocol",
@@ -49,18 +39,7 @@ export function QuickToolsWidget() {
       description: "AI tworzy protokół z notatek",
       icon: <FileText className="h-5 w-5" />,
       color: "from-blue-500 to-blue-600",
-      action: () => {
-        router.push("/chat");
-        setTimeout(() => {
-          const event = new CustomEvent("chat-preset", {
-            detail: {
-              message:
-                "Przygotuj protokół z posiedzenia na podstawie moich notatek:",
-            },
-          });
-          window.dispatchEvent(event);
-        }, 500);
-      },
+      action: () => router.push("/chat?tool=protocol"),
     },
     {
       id: "search",
@@ -76,17 +55,7 @@ export function QuickToolsWidget() {
       description: "Generuj raport z dokumentów",
       icon: <BarChart3 className="h-5 w-5" />,
       color: "from-orange-500 to-orange-600",
-      action: () => {
-        router.push("/chat");
-        setTimeout(() => {
-          const event = new CustomEvent("chat-preset", {
-            detail: {
-              message: "Przygotuj raport dla komisji na temat:",
-            },
-          });
-          window.dispatchEvent(event);
-        }, 500);
-      },
+      action: () => router.push("/chat?tool=report"),
     },
     {
       id: "legal",
@@ -94,17 +63,7 @@ export function QuickToolsWidget() {
       description: "Sprawdź zgodność z przepisami",
       icon: <Scale className="h-5 w-5" />,
       color: "from-indigo-500 to-indigo-600",
-      action: () => {
-        router.push("/chat");
-        setTimeout(() => {
-          const event = new CustomEvent("chat-preset", {
-            detail: {
-              message: "Przeprowadź analizę prawną dokumentu/uchwały:",
-            },
-          });
-          window.dispatchEvent(event);
-        }, 500);
-      },
+      action: () => router.push("/chat?tool=resolution"),
     },
     {
       id: "budget",
@@ -112,18 +71,7 @@ export function QuickToolsWidget() {
       description: "Analiza wydatków i wykonania",
       icon: <Wallet className="h-5 w-5" />,
       color: "from-yellow-500 to-yellow-600",
-      action: () => {
-        router.push("/chat");
-        setTimeout(() => {
-          const event = new CustomEvent("chat-preset", {
-            detail: {
-              message:
-                "Przeanalizuj wykonanie budżetu gminy i wskaż kluczowe informacje:",
-            },
-          });
-          window.dispatchEvent(event);
-        }, 500);
-      },
+      action: () => router.push("/chat?tool=budget"),
     },
     {
       id: "speech",
@@ -131,30 +79,15 @@ export function QuickToolsWidget() {
       description: "Przygotuj projekt wystąpienia",
       icon: <Mic className="h-5 w-5" />,
       color: "from-pink-500 to-pink-600",
-      action: () => {
-        router.push("/chat");
-        setTimeout(() => {
-          const event = new CustomEvent("chat-preset", {
-            detail: {
-              message:
-                "Przygotuj projekt wystąpienia radnego na sesji Rady w sprawie:",
-            },
-          });
-          window.dispatchEvent(event);
-        }, 500);
-      },
+      action: () => router.push("/chat?tool=speech"),
     },
     {
-      id: "tasks",
-      label: "Lista zadań",
-      description: "Zarządzaj zadaniami",
+      id: "letter",
+      label: "Pismo urzędowe",
+      description: "Generator pism i wniosków",
       icon: <ClipboardList className="h-5 w-5" />,
       color: "from-teal-500 to-teal-600",
-      action: () => {
-        // Scroll to tasks widget
-        const tasksWidget = document.querySelector('[data-widget="tasks"]');
-        tasksWidget?.scrollIntoView({ behavior: "smooth" });
-      },
+      action: () => router.push("/chat?tool=letter"),
     },
   ];
 

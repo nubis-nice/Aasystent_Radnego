@@ -1,5 +1,6 @@
 import { z, ZodError } from "zod";
 import { createClient } from "@supabase/supabase-js";
+import { randomUUID } from "crypto";
 import { DocumentProcessor } from "../services/document-processor.js";
 import { AudioTranscriber } from "../services/audio-transcriber.js";
 import { DocumentScorer, } from "../services/document-scorer.js";
@@ -492,68 +493,158 @@ export const documentsRoutes = async (fastify) => {
             return reply.status(500).send({ error: "Internal server error" });
         }
     });
-    // POST /documents/:id/analyze - Profesjonalna analiza dokumentu z kontekstem RAG
+    // POST /documents/:id/analyze - Profesjonalna analiza dokumentu z kontekstem RAG (ASYNC)
     fastify.post("/documents/:id/analyze", async (request, reply) => {
         const { id } = request.params;
         const userId = request.headers["x-user-id"];
         if (!userId) {
             return reply.status(401).send({ error: "Unauthorized" });
         }
+        const taskId = randomUUID();
         try {
-            // Inicjalizuj serwis analizy
-            const analysisService = new DocumentAnalysisService();
-            await analysisService.initialize(userId);
-            // Zbuduj pełny kontekst analizy (dokument + druki + załączniki z RAG)
-            const analysisContext = await analysisService.buildAnalysisContext(userId, id);
-            if (!analysisContext) {
+            // Pobierz podstawowe info o dokumencie
+            const { data: doc } = await supabase
+                .from("processed_documents")
+                .select("id, title, document_type, publish_date, summary")
+                .eq("id", id)
+                .eq("user_id", userId)
+                .single();
+            if (!doc) {
                 return reply.status(404).send({ error: "Document not found" });
             }
-            // Oblicz score dokumentu
+            // Utwórz zadanie w tle
+            await supabase.from("background_tasks").insert({
+                id: taskId,
+                user_id: userId,
+                task_type: "analysis",
+                status: "running",
+                title: `Analiza: ${doc.title?.substring(0, 50) || "Dokument"}`,
+                description: "Inicjalizacja analizy...",
+                progress: 0,
+                metadata: { documentId: id, documentTitle: doc.title },
+            });
+            // Zwróć natychmiast - przetwarzanie asynchroniczne
+            reply.send({
+                success: true,
+                async: true,
+                taskId,
+                message: "Analiza rozpoczęta. Śledź postęp na Dashboard.",
+                document: {
+                    id: doc.id,
+                    title: doc.title,
+                    document_type: doc.document_type,
+                    publish_date: doc.publish_date,
+                },
+            });
+            // Uruchom analizę asynchronicznie
+            void processAnalysisAsync(taskId, userId, id, fastify.log);
+            return reply;
+        }
+        catch (error) {
+            fastify.log.error(String(error));
+            try {
+                await supabase
+                    .from("background_tasks")
+                    .update({
+                    status: "failed",
+                    error_message: error instanceof Error ? error.message : "Unknown error",
+                    completed_at: new Date().toISOString(),
+                })
+                    .eq("id", taskId);
+            }
+            catch {
+                // Ignoruj błędy aktualizacji
+            }
+            return reply.status(500).send({ error: "Internal server error" });
+        }
+    });
+    // Asynchroniczna funkcja analizy dokumentu
+    async function processAnalysisAsync(taskId, userId, documentId, log) {
+        try {
+            const analysisService = new DocumentAnalysisService();
+            await analysisService.initialize(userId);
+            await supabase
+                .from("background_tasks")
+                .update({ progress: 20, description: "Budowanie kontekstu RAG..." })
+                .eq("id", taskId);
+            const analysisContext = await analysisService.buildAnalysisContext(userId, documentId);
+            if (!analysisContext) {
+                await supabase
+                    .from("background_tasks")
+                    .update({
+                    status: "failed",
+                    error_message: "Nie znaleziono dokumentu",
+                    completed_at: new Date().toISOString(),
+                })
+                    .eq("id", taskId);
+                return;
+            }
+            await supabase
+                .from("background_tasks")
+                .update({ progress: 70, description: "Generowanie analizy..." })
+                .eq("id", taskId);
             const scorer = new DocumentScorer();
             const { data: docForScore } = await supabase
                 .from("processed_documents")
                 .select("*")
-                .eq("id", id)
+                .eq("id", documentId)
                 .eq("user_id", userId)
                 .single();
             const score = docForScore ? scorer.calculateScore(docForScore) : null;
-            // Generuj profesjonalny prompt analizy
             const analysisResult = analysisService.generateAnalysisPrompt(analysisContext);
-            // Zwróć dane do analizy
-            return reply.send({
-                success: true,
-                document: {
-                    id: analysisContext.mainDocument.id,
-                    title: analysisContext.mainDocument.title,
-                    document_type: analysisContext.mainDocument.documentType,
-                    publish_date: analysisContext.mainDocument.publishDate,
-                    summary: analysisContext.mainDocument.summary,
-                    contentPreview: analysisContext.mainDocument.content?.substring(0, 500) + "...",
-                },
-                score,
-                // Informacje o znalezionych referencjach
-                references: {
-                    found: analysisContext.references.filter((r) => r.found).length,
-                    missing: analysisContext.missingReferences.length,
-                    details: analysisContext.references,
-                },
-                // Prompt i system prompt do chatu
-                analysisPrompt: analysisResult.prompt,
-                systemPrompt: analysisResult.systemPrompt,
-                chatContext: {
-                    type: "document_analysis",
-                    documentId: analysisContext.mainDocument.id,
+            await supabase
+                .from("background_tasks")
+                .update({
+                status: "completed",
+                progress: 100,
+                description: `Analiza zakończona: ${analysisContext.mainDocument.title}`,
+                completed_at: new Date().toISOString(),
+                metadata: {
+                    documentId,
                     documentTitle: analysisContext.mainDocument.title,
-                    hasAdditionalContext: analysisContext.additionalContext.length > 0,
-                    missingReferences: analysisContext.missingReferences,
+                    result: {
+                        document: {
+                            id: analysisContext.mainDocument.id,
+                            title: analysisContext.mainDocument.title,
+                            document_type: analysisContext.mainDocument.documentType,
+                            publish_date: analysisContext.mainDocument.publishDate,
+                            summary: analysisContext.mainDocument.summary,
+                            contentPreview: analysisContext.mainDocument.content?.substring(0, 500) +
+                                "...",
+                        },
+                        score,
+                        references: {
+                            found: analysisContext.references.filter((r) => r.found).length,
+                            missing: analysisContext.missingReferences.length,
+                            details: analysisContext.references,
+                        },
+                        analysisPrompt: analysisResult.prompt,
+                        systemPrompt: analysisResult.systemPrompt,
+                        chatContext: {
+                            type: "document_analysis",
+                            documentId: analysisContext.mainDocument.id,
+                            documentTitle: analysisContext.mainDocument.title,
+                            hasAdditionalContext: analysisContext.additionalContext.length > 0,
+                            missingReferences: analysisContext.missingReferences,
+                        },
+                    },
                 },
-            });
+            })
+                .eq("id", taskId);
+            log.info(`[DocumentAnalysis] Completed task ${taskId} for document ${documentId}`);
         }
         catch (error) {
-            fastify.log.error(error);
-            return reply.status(500).send({ error: "Internal server error" });
+            log.error(`[DocumentAnalysis] Task ${taskId} failed: ${error instanceof Error ? error.message : String(error)}`);
+            await supabase
+                .from("background_tasks")
+                .update({
+                status: "failed",
+                error_message: error instanceof Error ? error.message : "Unknown error",
+                completed_at: new Date().toISOString(),
+            })
+                .eq("id", taskId);
         }
-    });
+    }
     // POST /documents/process - Przetwarzanie pliku z OCR
     fastify.post("/documents/process", async (request, reply) => {
         try {

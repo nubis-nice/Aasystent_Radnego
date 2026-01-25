@@ -1,77 +1,168 @@
-import { Job } from "bullmq";
-import {
-  createOpenAIClient,
-  generateSummary,
-  scanForRisks,
-} from "@aasystent-radnego/shared";
+/**
+ * Analysis Worker - Przetwarza zadania analizy dokumentów z kolejki BullMQ
+ */
 
-interface AnalysisJobData {
-  documentId: string;
-  text: string;
-  analysisTypes: Array<"summary" | "risk_scan">;
+import { Job } from "bullmq";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
+
+// Lazy initialization - unikamy błędów przy braku env vars podczas importu
+let supabase: SupabaseClient | null = null;
+
+function getSupabase(): SupabaseClient {
+  if (!supabase) {
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!supabaseUrl || !supabaseServiceKey) {
+      throw new Error(
+        "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required",
+      );
+    }
+
+    supabase = createClient(supabaseUrl, supabaseServiceKey);
+  }
+  return supabase;
 }
 
-export async function processAnalysis(job: Job<AnalysisJobData>) {
-  const { documentId, text, analysisTypes } = job.data;
+// Typ danych zadania analizy
+export interface AnalysisJobData {
+  userId: string;
+  documentId: string;
+  documentTitle: string;
+}
 
-  job.log(`Starting analysis for document ${documentId}`);
-  await job.updateProgress(10);
+export interface AnalysisJobResult {
+  success: boolean;
+  documentId: string;
+  documentTitle: string;
+  analysisPrompt?: string;
+  systemPrompt?: string;
+  score?: {
+    relevanceScore: number;
+    urgencyScore: number;
+    typeScore: number;
+    totalScore: number;
+    priority: string;
+  };
+  references?: {
+    found: number;
+    missing: number;
+  };
+  error?: string;
+}
 
-  const openai = createOpenAIClient();
-  const results: Record<string, unknown> = {};
+/**
+ * Główna funkcja przetwarzania zadania analizy dokumentu
+ */
+export async function processDocumentAnalysis(
+  job: Job<AnalysisJobData, AnalysisJobResult>,
+): Promise<AnalysisJobResult> {
+  const { userId, documentId, documentTitle } = job.data;
+
+  console.log(`[AnalysisWorker] Starting analysis for document ${documentId}`);
+  job.log(`Starting analysis for document: ${documentTitle}`);
 
   try {
-    // 1. Streszczenie i punkty kluczowe
-    if (analysisTypes.includes("summary")) {
-      job.log("Generating summary...");
-      const summary = await generateSummary(openai, text);
+    // Inicjalizacja - dynamiczne importy aby uniknąć problemów z env vars
+    await job.updateProgress({ progress: 10, description: "Inicjalizacja..." });
 
-      results.summary = {
-        analysis_type: "summary",
-        result: {
-          summary: summary.summary,
-          keyPoints: summary.keyPoints,
-        },
-        tokens_used: summary.tokensUsed,
-        model_used: "gpt-4-turbo-preview",
-        prompt_version: "v1",
-      };
+    const { DocumentAnalysisService } =
+      await import("../../../api/src/services/document-analysis-service.js");
+    const { DocumentScorer } =
+      await import("../../../api/src/services/document-scorer.js");
 
-      await job.updateProgress(50);
+    const analysisService = new DocumentAnalysisService();
+    await analysisService.initialize(userId);
+
+    // Budowanie kontekstu RAG
+    await job.updateProgress({
+      progress: 30,
+      description: "Budowanie kontekstu RAG...",
+    });
+    job.log("Building RAG context...");
+
+    const analysisContext = await analysisService.buildAnalysisContext(
+      userId,
+      documentId,
+    );
+
+    if (!analysisContext) {
+      throw new Error("Nie znaleziono dokumentu lub błąd budowania kontekstu");
     }
 
-    // 2. Skanowanie ryzyk
-    if (analysisTypes.includes("risk_scan")) {
-      job.log("Scanning for risks...");
-      const risks = await scanForRisks(openai, text);
+    // Scoring dokumentu
+    await job.updateProgress({
+      progress: 60,
+      description: "Obliczanie scoringu...",
+    });
+    job.log("Calculating document score...");
 
-      results.risk_scan = {
-        analysis_type: "risk_scan",
-        result: {
-          risks: risks.risks,
-          totalRisks: risks.risks.length,
-          highSeverityCount: risks.risks.filter(
-            (r: any) => r.severity === "high"
-          ).length,
-        },
-        tokens_used: risks.tokensUsed,
-        model_used: "gpt-4-turbo-preview",
-        prompt_version: "v1",
-      };
+    const scorer = new DocumentScorer();
+    const { data: docForScore } = await getSupabase()
+      .from("processed_documents")
+      .select("*")
+      .eq("id", documentId)
+      .eq("user_id", userId)
+      .single();
 
-      await job.updateProgress(100);
-    }
+    const score = docForScore ? scorer.calculateScore(docForScore) : null;
 
-    // 3. Zapisz analizy do bazy
-    // TODO: Insert analyses into database
-    job.log(`Saving ${Object.keys(results).length} analyses to database`);
+    // Generowanie promptu analizy
+    await job.updateProgress({
+      progress: 80,
+      description: "Generowanie analizy...",
+    });
+    job.log("Generating analysis prompt...");
+
+    const analysisResult =
+      analysisService.generateAnalysisPrompt(analysisContext);
+
+    // Zakończenie
+    await job.updateProgress({
+      progress: 100,
+      description: `Analiza zakończona: ${documentTitle}`,
+    });
+    job.log(`Analysis completed for document ${documentId}`);
+
+    console.log(
+      `[AnalysisWorker] ✅ Completed analysis for document ${documentId}`,
+    );
 
     return {
+      success: true,
       documentId,
-      analyses: results,
+      documentTitle: analysisContext.mainDocument.title,
+      analysisPrompt: analysisResult.prompt,
+      systemPrompt: analysisResult.systemPrompt,
+      score: score
+        ? {
+            relevanceScore: score.relevanceScore,
+            urgencyScore: score.urgencyScore,
+            typeScore: score.typeScore,
+            totalScore: score.totalScore,
+            priority: score.priority,
+          }
+        : undefined,
+      references: {
+        found: analysisContext.references.filter(
+          (r: { found: boolean }) => r.found,
+        ).length,
+        missing: analysisContext.missingReferences.length,
+      },
     };
   } catch (error) {
-    job.log(`Analysis failed: ${error}`);
-    throw error;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[AnalysisWorker] ❌ Failed analysis for document ${documentId}:`,
+      errorMessage,
+    );
+    job.log(`Analysis failed: ${errorMessage}`);
+
+    return {
+      success: false,
+      documentId,
+      documentTitle,
+      error: errorMessage,
+    };
   }
 }

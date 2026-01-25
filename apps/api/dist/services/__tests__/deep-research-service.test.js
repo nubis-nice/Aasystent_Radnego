@@ -21,6 +21,7 @@ describe("DeepResearchService - Provider Fallback", () => {
         // Test that verifies fallback behavior is implemented correctly
         // The multiProviderSearch method has try-catch blocks that log errors
         // but continue with remaining providers
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const request = {
             query: "test query",
             researchType: "legal",
@@ -38,6 +39,7 @@ describe("DeepResearchService - Provider Fallback", () => {
     it("should handle all providers failing gracefully", async () => {
         // When all providers fail, service should return empty results
         // rather than throwing an error that breaks the entire research
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const request = {
             query: "test query",
             researchType: "legal",
@@ -50,6 +52,7 @@ describe("DeepResearchService - Provider Fallback", () => {
     it("should aggregate results from multiple providers", async () => {
         // Test that results from successful providers are combined
         // even if some providers failed
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const request = {
             query: "ustawa o samorządzie",
             researchType: "legal",
@@ -66,7 +69,9 @@ describe("DeepResearchService - Error Handling", () => {
         // The multiProviderSearch method (lines 336-346) uses try-catch
         // to catch individual provider errors and log them via console.error
         // This ensures one provider's failure doesn't break the entire search
-        const mockConsoleError = vi.spyOn(console, "error").mockImplementation();
+        const mockConsoleError = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => { });
         // Verify error logging is implemented
         expect(mockConsoleError).toBeDefined();
         mockConsoleError.mockRestore();

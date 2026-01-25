@@ -129,6 +129,14 @@ Katalog: `apps/api/src/routes/`
 - Enqueue m.in. w:
   - `apps/api/src/services/document-processor.ts` (fallback OCR przez Vision API)
 
+### Asynchroniczna analiza dokumentów
+
+- Endpoint: `POST /documents/:id/analyze`
+- Zwraca natychmiast: `{ async: true, taskId, message }`
+- Przetwarzanie w tle: funkcja `processAnalysisAsync()` w `documents.ts`
+- Postęp zapisywany w `background_tasks` (0% → 20% → 70% → 100%)
+- Wyniki w `background_tasks.metadata.result`
+
 ## Kluczowe serwisy (wybrane)
 
 Katalog: `apps/api/src/services/`
@@ -142,6 +150,20 @@ Katalog: `apps/api/src/services/`
   - OCR/Tesseract + Poppler
   - Vision fallback przez `vision-queue`
   - opcjonalny etap 2: „OCR tekst → struktura JSON”
+
+- **DocumentAnalysisService**: `document-analysis-service.ts`
+  - Profesjonalna analiza dokumentów z kontekstem RAG
+  - Budowanie kontekstu: dokument + załączniki + referencje
+  - Generowanie promptów analizy
+
+- **ToolPromptService**: `tool-prompt-service.ts`
+  - Dedykowane prompty systemowe dla narzędzi ChatAI
+  - 8 typów: speech, interpelation, letter, protocol, budget, application, resolution, report
+
+- **VoiceActionService**: `voice-action-service.ts`
+  - Obsługa poleceń głosowych
+  - Ekstrakcja intencji i encji z tekstu
+  - Mapowanie na akcje UI (nawigacja, narzędzia, wyszukiwanie)
 
 - **ScrapingQueueManager**: `scraping-queue.ts`
   - kolejka in-memory (brak BullMQ w implementacji)

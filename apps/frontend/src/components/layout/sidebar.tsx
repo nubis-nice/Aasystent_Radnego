@@ -188,10 +188,14 @@ export function Sidebar() {
         },
         (payload) => {
           if (payload.new) {
-            setUserName((payload.new as any).full_name);
-            setUserPosition((payload.new as any).position || "Radny");
+            const newData = payload.new as {
+              full_name?: string;
+              position?: string;
+            };
+            if (newData.full_name) setUserName(newData.full_name);
+            setUserPosition(newData.position || "Radny");
           }
-        }
+        },
       )
       .subscribe();
 

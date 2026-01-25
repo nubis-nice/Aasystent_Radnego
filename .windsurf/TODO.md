@@ -10,6 +10,15 @@ Automatyzacja pozyskiwania i analizy dokumentów JST z pełnym śledzeniem źró
 - [ ] Testy E2E czatu na realnych dokumentach (Drawno)
 - [ ] System uprawnień użytkowników (role, RLS)
 
+### CI/CD (nowe)
+
+- [x] GitHub Actions: Lint + TypeCheck + Build
+- [ ] Setup Vitest dla testów jednostkowych
+- [ ] Testy jednostkowe: ai-client-factory, document-processor
+- [ ] Testy integracyjne: API endpoints
+- [ ] Testy E2E: Playwright (login, chat, analiza)
+- [ ] Preview deployments (Vercel/Netlify)
+
 ### Ważne
 
 - [ ] ePUAP live sync + webhooki

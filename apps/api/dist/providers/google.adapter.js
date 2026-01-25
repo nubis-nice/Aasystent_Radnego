@@ -11,7 +11,8 @@ export class GoogleGeminiAdapter extends BaseProviderAdapter {
         // Detect if using OpenAI-compatible endpoint
         this.useOpenAICompatible =
             config.baseUrl.includes("/openai") ||
-                config.chatEndpoint?.includes("/openai");
+                config.chatEndpoint?.includes("/openai") ||
+                false;
     }
     buildHeaders() {
         const headers = {
@@ -86,6 +87,7 @@ export class GoogleGeminiAdapter extends BaseProviderAdapter {
             top_p: options.top_p,
             stream: false,
         };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const response = await this.makeRequest(url, {
             method: "POST",
             headers: this.buildHeaders(),
@@ -109,6 +111,7 @@ export class GoogleGeminiAdapter extends BaseProviderAdapter {
             parts: [{ text: msg.content }],
         }));
         const systemInstruction = messages.find((msg) => msg.role === "system");
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const body = {
             contents,
             generationConfig: {
@@ -122,6 +125,7 @@ export class GoogleGeminiAdapter extends BaseProviderAdapter {
                 parts: [{ text: systemInstruction.content }],
             };
         }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const response = await this.makeRequest(url, {
             method: "POST",
             headers: this.buildHeaders(),
@@ -160,6 +164,7 @@ export class GoogleGeminiAdapter extends BaseProviderAdapter {
             model: this.config.embeddingModel || "text-embedding-004",
             input: text,
         };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const response = await this.makeRequest(url, {
             method: "POST",
             headers: this.buildHeaders(),
@@ -176,6 +181,7 @@ export class GoogleGeminiAdapter extends BaseProviderAdapter {
                 parts: [{ text }],
             },
         };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const response = await this.makeRequest(url, {
             method: "POST",
             headers: this.buildHeaders(),
@@ -187,12 +193,14 @@ export class GoogleGeminiAdapter extends BaseProviderAdapter {
         try {
             const endpoint = this.config.modelsEndpoint || "/models";
             const url = this.buildUrl(endpoint);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const response = await this.makeRequest(url, {
                 method: "GET",
                 headers: this.buildHeaders(),
             });
             // Handle both formats: {data: [...]} and {models: [...]}
             const models = response.data || response.models || [];
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return models.map((model) => ({
                 id: model.id || model.name,
                 name: model.displayName || model.name || model.id,

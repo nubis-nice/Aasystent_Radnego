@@ -84,7 +84,9 @@ class VisionQueueService {
         maxRetriesPerRequest: null,
       });
 
+      // @ts-expect-error - bullmq Queue type mismatch
       this.queue = new Queue<VisionJobData, VisionJobResult>("vision-jobs", {
+        // @ts-expect-error - ioredis version mismatch with bullmq
         connection: this.connection,
         defaultJobOptions: {
           attempts: 3, // 3 próby przy błędach
@@ -103,6 +105,7 @@ class VisionQueueService {
       });
 
       this.queueEvents = new QueueEvents("vision-jobs", {
+        // @ts-expect-error - ioredis version mismatch with bullmq
         connection: this.connection,
       });
 
@@ -110,11 +113,14 @@ class VisionQueueService {
       this.queueEvents.on("completed", ({ jobId, returnvalue }) => {
         console.log(`[VisionQueue] Job ${jobId} completed`);
         if (returnvalue) {
-          this.resultsCache.set(jobId, returnvalue as VisionJobResult);
+          this.resultsCache.set(
+            jobId,
+            returnvalue as unknown as VisionJobResult,
+          );
           // Usuń z cache po 5 minutach
           globalThis.setTimeout(
             () => this.resultsCache.delete(jobId),
-            5 * 60 * 1000
+            5 * 60 * 1000,
           );
         }
       });
@@ -130,7 +136,7 @@ class VisionQueueService {
 
       this.initialized = true;
       console.log(
-        `[VisionQueue] Initialized (redis=${redisHost}:${redisPort})`
+        `[VisionQueue] Initialized (redis=${redisHost}:${redisPort})`,
       );
     } catch (error) {
       console.error("[VisionQueue] Failed to initialize:", error);
@@ -151,7 +157,7 @@ class VisionQueueService {
       pageNumber?: number;
       fileName?: string;
       priority?: number;
-    }
+    },
   ): Promise<string> {
     await this.initialize();
 
@@ -178,7 +184,7 @@ class VisionQueueService {
     });
 
     console.log(
-      `[VisionQueue] Added job ${jobId} (provider=${options.provider}, model=${options.model})`
+      `[VisionQueue] Added job ${jobId} (provider=${options.provider}, model=${options.model})`,
     );
 
     return jobId;
@@ -198,7 +204,7 @@ class VisionQueueService {
       provider: string;
       model: string;
       fileName?: string;
-    }
+    },
   ): Promise<string[]> {
     await this.initialize();
 
@@ -235,7 +241,7 @@ class VisionQueueService {
     await this.queue.addBulk(jobs);
 
     console.log(
-      `[VisionQueue] Added batch of ${jobs.length} jobs (provider=${options.provider})`
+      `[VisionQueue] Added batch of ${jobs.length} jobs (provider=${options.provider})`,
     );
 
     return jobIds;
@@ -283,7 +289,7 @@ class VisionQueueService {
    */
   async waitForResult(
     jobId: string,
-    timeoutMs: number = 60000
+    timeoutMs: number = 60000,
   ): Promise<VisionJobResult> {
     await this.initialize();
 
@@ -403,7 +409,7 @@ export async function addVisionJob(
     model: string;
     pageNumber?: number;
     fileName?: string;
-  }
+  },
 ): Promise<string> {
   return visionQueue.addJob(userId, imageBase64, prompt, options);
 }
@@ -412,20 +418,20 @@ export async function addVisionBatch(
   userId: string,
   pages: Array<{ imageBase64: string; pageNumber: number }>,
   prompt: string,
-  options: { provider: string; model: string; fileName?: string }
+  options: { provider: string; model: string; fileName?: string },
 ): Promise<string[]> {
   return visionQueue.addBatch(userId, pages, prompt, options);
 }
 
 export async function getVisionJobStatus(
-  jobId: string
+  jobId: string,
 ): Promise<VisionJobStatus> {
   return visionQueue.getJobStatus(jobId);
 }
 
 export async function waitForVisionResult(
   jobId: string,
-  timeoutMs?: number
+  timeoutMs?: number,
 ): Promise<VisionJobResult> {
   return visionQueue.waitForResult(jobId, timeoutMs);
 }

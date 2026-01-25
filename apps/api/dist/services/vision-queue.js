@@ -43,7 +43,9 @@ class VisionQueueService {
                 port: redisPort,
                 maxRetriesPerRequest: null,
             });
+            // @ts-expect-error - bullmq Queue type mismatch
             this.queue = new Queue("vision-jobs", {
+                // @ts-expect-error - ioredis version mismatch with bullmq
                 connection: this.connection,
                 defaultJobOptions: {
                     attempts: 3, // 3 próby przy błędach
@@ -61,6 +63,7 @@ class VisionQueueService {
                 },
             });
             this.queueEvents = new QueueEvents("vision-jobs", {
+                // @ts-expect-error - ioredis version mismatch with bullmq
                 connection: this.connection,
             });
             // Nasłuchuj na ukończone zadania

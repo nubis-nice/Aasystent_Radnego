@@ -1,0 +1,423 @@
+openapi: 3.1.0
+info:
+  title: Asystent Radnego API
+  description: |
+    API dla aplikacji Asystent Radnego - narzędzia wspierającego pracę radnych samorządowych.
+
+    ## Autoryzacja
+    Wszystkie endpointy (poza /health i /auth) wymagają tokena JWT w nagłówku Authorization.
+
+    ## Rate Limiting
+    API stosuje rate limiting dla ochrony przed nadużyciami.
+  version: 1.0.0
+  contact:
+    name: API Support
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:3001
+    description: Development server
+  - url: https://api.asystent-radnego.pl
+    description: Production server
+
+tags:
+  - name: Health
+    description: Endpointy diagnostyczne
+  - name: Auth
+    description: Autoryzacja i uwierzytelnianie
+  - name: Documents
+    description: Zarządzanie dokumentami
+  - name: Chat
+    description: Chat AI
+  - name: Research
+    description: Deep Research
+  - name: Data Sources
+    description: Źródła danych zewnętrznych
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Sprawdza czy API działa poprawnie
+      responses:
+        "200":
+          description: API działa
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /diagnostics/status:
+    get:
+      tags: [Health]
+      summary: Pełna diagnostyka systemu
+      description: Zwraca status wszystkich komponentów systemu
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Status systemu
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiagnosticsStatus"
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Logowanie użytkownika
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: Zalogowano pomyślnie
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  user:
+                    $ref: "#/components/schemas/User"
+        "401":
+          description: Nieprawidłowe dane logowania
+
+  /documents:
+    get:
+      tags: [Documents]
+      summary: Lista dokumentów
+      description: Pobiera listę dokumentów użytkownika
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [resolution, protocol, session, attachment, other]
+      responses:
+        "200":
+          description: Lista dokumentów
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Document"
+                  total:
+                    type: integer
+                  page:
+                    type: integer
+
+  /documents/{id}:
+    get:
+      tags: [Documents]
+      summary: Szczegóły dokumentu
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Dokument
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
+        "404":
+          description: Dokument nie znaleziony
+
+  /documents/{id}/analyze:
+    post:
+      tags: [Documents]
+      summary: Analizuj dokument
+      description: Uruchamia asynchroniczną analizę dokumentu z AI
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "202":
+          description: Analiza rozpoczęta
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  async:
+                    type: boolean
+                    example: true
+                  taskId:
+                    type: string
+                    format: uuid
+                  message:
+                    type: string
+
+  /chat:
+    post:
+      tags: [Chat]
+      summary: Wyślij wiadomość do AI
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  type: string
+                conversationId:
+                  type: string
+                  format: uuid
+                context:
+                  type: object
+                tool:
+                  type: string
+                  enum:
+                    [
+                      speech,
+                      interpelation,
+                      letter,
+                      protocol,
+                      budget,
+                      application,
+                      resolution,
+                      report,
+                    ]
+      responses:
+        "200":
+          description: Odpowiedź AI
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+
+  /deep-research:
+    post:
+      tags: [Research]
+      summary: Uruchom deep research
+      description: Wykonuje pogłębione badanie tematu z wielu źródeł
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                researchType:
+                  type: string
+                  enum: [legal, budget, general]
+                depth:
+                  type: string
+                  enum: [quick, standard, deep]
+                maxResults:
+                  type: integer
+                  default: 10
+      responses:
+        "202":
+          description: Research rozpoczęty
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  taskId:
+                    type: string
+                  status:
+                    type: string
+
+  /data-sources:
+    get:
+      tags: [Data Sources]
+      summary: Lista źródeł danych
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Lista źródeł
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DataSource"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          type: string
+          enum: [user, admin]
+
+    Document:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        content:
+          type: string
+        document_type:
+          type: string
+        summary:
+          type: string
+          nullable: true
+        keywords:
+          type: array
+          items:
+            type: string
+        publish_date:
+          type: string
+          format: date
+          nullable: true
+        source_url:
+          type: string
+          format: uri
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        score:
+          $ref: "#/components/schemas/DocumentScore"
+
+    DocumentScore:
+      type: object
+      properties:
+        relevanceScore:
+          type: number
+        urgencyScore:
+          type: number
+        typeScore:
+          type: number
+        totalScore:
+          type: number
+        priority:
+          type: string
+          enum: [critical, high, medium, low]
+
+    ChatResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        conversationId:
+          type: string
+        uiActions:
+          type: array
+          items:
+            type: object
+
+    DataSource:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive, error]
+        lastSync:
+          type: string
+          format: date-time
+
+    DiagnosticsStatus:
+      type: object
+      properties:
+        rag:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [healthy, degraded, error]
+            message:
+              type: string
+        ai:
+          type: object
+          properties:
+            status:
+              type: string
+            providers:
+              type: array
+              items:
+                type: string
+        database:
+          type: object
+          properties:
+            status:
+              type: string
+            connected:
+              type: boolean

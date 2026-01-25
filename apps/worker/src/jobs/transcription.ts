@@ -144,7 +144,7 @@ export async function processTranscription(
       videoId,
       videoTitle,
       videoUrl,
-      false, // enablePreprocessing - wyłączone (problemy z FFmpeg)
+      undefined, // precomputedParts - brak preprocessingu
     );
 
     if (!transcriptionResult.success) {

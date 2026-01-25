@@ -37,17 +37,19 @@ function LoginContent() {
       const decodedError = decodeURIComponent(errorParam);
 
       // Przyjazne komunikaty dla typowych błędów
+      /* eslint-disable react-hooks/set-state-in-effect */
       if (decodedError === "session_expired") {
         setError("Sesja logowania wygasła. Spróbuj zalogować się ponownie.");
       } else if (decodedError.includes("invalid flow state")) {
         setError(
-          "Link logowania wygasł lub jest nieprawidłowy. Zaloguj się ponownie."
+          "Link logowania wygasł lub jest nieprawidłowy. Zaloguj się ponownie.",
         );
       } else if (decodedError.includes("access_denied")) {
         setError("Anulowano logowanie.");
       } else {
         setError(decodedError);
       }
+      /* eslint-enable react-hooks/set-state-in-effect */
     }
 
     return () => {

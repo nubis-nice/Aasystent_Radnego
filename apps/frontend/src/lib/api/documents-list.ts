@@ -88,7 +88,7 @@ export interface GetDocumentsResponse {
  * Pobierz listę dokumentów z bazy
  */
 export async function getDocuments(
-  request: GetDocumentsRequest = {}
+  request: GetDocumentsRequest = {},
 ): Promise<GetDocumentsResponse> {
   const token = await getAccessToken();
 
@@ -116,7 +116,7 @@ export async function getDocuments(
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-    }
+    },
   );
 
   if (!response.ok) {
@@ -173,23 +173,29 @@ export interface DocumentReference {
  */
 export interface AnalyzeDocumentResponse {
   success: boolean;
+  // Async response fields
+  async?: boolean;
+  taskId?: string;
+  message?: string;
+  // Document info (always present)
   document: {
     id: string;
     title: string;
-    document_type: string;
-    publish_date: string | null;
-    summary: string | null;
-    contentPreview: string;
+    document_type?: string;
+    publish_date?: string | null;
+    summary?: string | null;
+    contentPreview?: string;
   };
-  score: DocumentScore | null;
-  references: {
+  // Sync response fields (only when async=false)
+  score?: DocumentScore | null;
+  references?: {
     found: number;
     missing: number;
     details: DocumentReference[];
   };
-  analysisPrompt: string;
-  systemPrompt: string;
-  chatContext: {
+  analysisPrompt?: string;
+  systemPrompt?: string;
+  chatContext?: {
     type: string;
     documentId: string;
     documentTitle: string;
@@ -199,7 +205,7 @@ export interface AnalyzeDocumentResponse {
 }
 
 export async function analyzeDocument(
-  id: string
+  id: string,
 ): Promise<AnalyzeDocumentResponse> {
   const token = await getAccessToken();
 
@@ -267,7 +273,7 @@ export interface RelatedDocument {
 export async function getRelatedDocuments(
   documentId: string,
   maxDepth: number = 3,
-  minStrength: number = 0.3
+  minStrength: number = 0.3,
 ): Promise<RelatedDocument[]> {
   const token = await getAccessToken();
 
@@ -284,7 +290,7 @@ export async function getRelatedDocuments(
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-      }
+      },
     );
 
     if (!response.ok) {

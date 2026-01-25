@@ -27,7 +27,7 @@ export interface VoiceActionResult {
     pendingAction?: PendingAction;
     navigationTarget?: string;
     uiAction?: {
-        type: "open_modal" | "show_toast" | "navigate" | "refresh";
+        type: "open_modal" | "show_toast" | "navigate" | "refresh" | "open_tool_with_data";
         target?: string;
         data?: unknown;
     };

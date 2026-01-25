@@ -99,6 +99,26 @@ W praktyce oznacza to, że w repozytorium istnieją **dwie implementacje workera
 - Integruje się z real-time (WebSocketHub + `background_tasks`).
 - UWAGA: komentarz w pliku mówi o BullMQ/Redis, ale w aktualnym kodzie _nie ma_ BullMQ dla scrapingu.
 
+### 6) Analiza dokumentów (asynchroniczna)
+
+- Endpoint: `POST /documents/:id/analyze`
+- Zwraca natychmiast `{ async: true, taskId }` — bez czekania na wynik
+- Przetwarzanie w tle: `processAnalysisAsync()` w `apps/api/src/routes/documents.ts`
+- Pipeline:
+  1. Inicjalizacja `DocumentAnalysisService`
+  2. Budowanie kontekstu RAG (dokument + załączniki + referencje)
+  3. Obliczenie score dokumentu
+  4. Generowanie promptu analizy
+- Postęp zapisywany w `background_tasks` (0% → 20% → 70% → 100%)
+- Wyniki w `background_tasks.metadata.result`
+
+### 7) Narzędzia ChatAI (Quick Tools)
+
+- 8 typów narzędzi: speech, interpelation, letter, protocol, budget, application, resolution, report
+- Aktywacja przez URL (`/chat?tool=speech`), czat lub głos
+- Backend: `ToolPromptService` generuje dedykowane prompty systemowe
+- AI może auto-wypełniać formularze danymi z kontekstu rozmowy
+
 ## System providerów AI
 
 - W `apps/api/src/ai/*` zaimplementowano warstwę konfiguracji providerów AI.

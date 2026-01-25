@@ -54,7 +54,12 @@ export interface VoiceActionResult {
   pendingAction?: PendingAction;
   navigationTarget?: string;
   uiAction?: {
-    type: "open_modal" | "show_toast" | "navigate" | "refresh";
+    type:
+      | "open_modal"
+      | "show_toast"
+      | "navigate"
+      | "refresh"
+      | "open_tool_with_data";
     target?: string;
     data?: unknown;
   };
@@ -86,7 +91,13 @@ const VOICE_ACTION_PROMPT = `Jesteś asystentem głosowym Stefan. Analizujesz po
 - **document_open** → "otwórz dokument", "pokaż mi [nazwa]"
 
 ## SZYBKIE NARZĘDZIA:
-- **quick_tool** → "utwórz interpelację", "napisz pismo", "generuj protokół", "analiza budżetu"
+- **quick_tool** → "utwórz interpelację", "napisz pismo", "generuj protokół", "analiza budżetu", "przygotuj wystąpienie", "projekt uchwały", "raport"
+
+Dla quick_tool ZAWSZE wyciągnij:
+- toolName: typ narzędzia (interpelacja/pismo/protokół/budżet/wystąpienie/uchwała/raport)
+- toolTopic: temat/przedmiot (np. "remont ul. Głównej")
+- toolContext: dodatkowy kontekst z rozmowy
+- toolRecipient: adresat jeśli wspomniany
 
 ## NAWIGACJA:
 - **navigate** → "przejdź do", "otwórz stronę", "pokaż pulpit/dokumenty/chat/ustawienia"
@@ -132,7 +143,10 @@ const VOICE_ACTION_PROMPT = `Jesteś asystentem głosowym Stefan. Analizujesz po
     "eventLocation": "miejsce lub null",
     "taskTitle": "opcjonalnie",
     "documentQuery": "opcjonalnie",
-    "toolName": "opcjonalnie",
+    "toolName": "typ narzędzia",
+    "toolTopic": "temat/przedmiot",
+    "toolContext": "kontekst z rozmowy",
+    "toolRecipient": "adresat jeśli wspomniany",
     "targetPage": "opcjonalnie"
   },
   "missingInfo": ["lista brakujących informacji"],
@@ -891,13 +905,45 @@ export class VoiceActionService {
       };
     }
 
+    // Przygotuj dane formularza z kontekstu
+    const formData: Record<string, string> = {};
+    const toolTopic = entities.toolTopic as string;
+    const toolContext = entities.toolContext as string;
+    const toolRecipient = entities.toolRecipient as string;
+
+    // Mapuj dane na pola formularza w zależności od narzędzia
+    if (toolTopic) {
+      // Uniwersalne pole "topic" lub "subject" lub "title"
+      formData.topic = toolTopic;
+      formData.subject = toolTopic;
+      formData.title = toolTopic;
+    }
+    if (toolContext) {
+      // Uniwersalne pole "context" lub "content" lub "justification"
+      formData.context = toolContext;
+      formData.content = toolContext;
+      formData.justification = toolContext;
+    }
+    if (toolRecipient) {
+      formData.recipient = toolRecipient;
+    }
+
+    // Wyciągnij typ narzędzia z path (np. "/chat?tool=interpelation" -> "interpelation")
+    const toolType = tool.path.split("tool=")[1];
+
     return {
       success: true,
       actionType: "quick_tool",
-      message: `Uruchamiam: ${tool.name}`,
+      message: `Uruchamiam: ${tool.name}${toolTopic ? ` - "${toolTopic}"` : ""}`,
       uiAction: {
-        type: "navigate",
-        target: tool.path,
+        type: "open_tool_with_data",
+        target: toolType,
+        data: {
+          toolType,
+          formData,
+          topic: toolTopic,
+          context: toolContext,
+        },
       },
     };
   }

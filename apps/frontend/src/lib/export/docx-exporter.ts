@@ -35,7 +35,7 @@ function parseMarkdownToParagraphs(content: string): Paragraph[] {
           text: line.substring(2),
           heading: HeadingLevel.HEADING_1,
           spacing: { before: 400, after: 200 },
-        })
+        }),
       );
     }
     // Nagłówki H2
@@ -45,7 +45,7 @@ function parseMarkdownToParagraphs(content: string): Paragraph[] {
           text: line.substring(3),
           heading: HeadingLevel.HEADING_2,
           spacing: { before: 300, after: 150 },
-        })
+        }),
       );
     }
     // Nagłówki H3
@@ -55,7 +55,7 @@ function parseMarkdownToParagraphs(content: string): Paragraph[] {
           text: line.substring(4),
           heading: HeadingLevel.HEADING_3,
           spacing: { before: 200, after: 100 },
-        })
+        }),
       );
     }
     // Listy
@@ -65,7 +65,7 @@ function parseMarkdownToParagraphs(content: string): Paragraph[] {
           text: line.substring(2),
           bullet: { level: 0 },
           spacing: { before: 50, after: 50 },
-        })
+        }),
       );
     }
     // Listy numerowane
@@ -75,7 +75,7 @@ function parseMarkdownToParagraphs(content: string): Paragraph[] {
           text: line.replace(/^\d+\.\s/, ""),
           numbering: { reference: "default-numbering", level: 0 },
           spacing: { before: 50, after: 50 },
-        })
+        }),
       );
     }
     // Puste linie
@@ -84,13 +84,13 @@ function parseMarkdownToParagraphs(content: string): Paragraph[] {
         new Paragraph({
           text: "",
           spacing: { before: 100, after: 100 },
-        })
+        }),
       );
     }
     // Tekst z formatowaniem
     else {
       const runs: TextRun[] = [];
-      let currentText = line;
+      const currentText = line;
 
       // Uproszczone parsowanie bold (**text**)
       const boldRegex = /\*\*(.*?)\*\*/g;
@@ -103,7 +103,7 @@ function parseMarkdownToParagraphs(content: string): Paragraph[] {
           runs.push(
             new TextRun({
               text: line.substring(lastIndex, match.index),
-            })
+            }),
           );
         }
         // Bold text
@@ -111,7 +111,7 @@ function parseMarkdownToParagraphs(content: string): Paragraph[] {
           new TextRun({
             text: match[1],
             bold: true,
-          })
+          }),
         );
         lastIndex = match.index + match[0].length;
       }
@@ -121,7 +121,7 @@ function parseMarkdownToParagraphs(content: string): Paragraph[] {
         runs.push(
           new TextRun({
             text: line.substring(lastIndex),
-          })
+          }),
         );
       }
 
@@ -134,7 +134,7 @@ function parseMarkdownToParagraphs(content: string): Paragraph[] {
         new Paragraph({
           children: runs,
           spacing: { before: 100, after: 100 },
-        })
+        }),
       );
     }
   }
@@ -148,7 +148,7 @@ function parseMarkdownToParagraphs(content: string): Paragraph[] {
 export async function exportToDOCX(
   content: string,
   citations: Citation[] = [],
-  options: ExportOptions = {}
+  options: ExportOptions = {},
 ): Promise<void> {
   const {
     title = "Dokument",
@@ -166,7 +166,7 @@ export async function exportToDOCX(
         heading: HeadingLevel.TITLE,
         alignment: AlignmentType.CENTER,
         spacing: { after: 200 },
-      })
+      }),
     );
 
     sections.push(
@@ -175,7 +175,7 @@ export async function exportToDOCX(
         heading: HeadingLevel.HEADING_1,
         alignment: AlignmentType.CENTER,
         spacing: { after: 400 },
-      })
+      }),
     );
 
     const date = new Date().toLocaleString("pl-PL", {
@@ -205,7 +205,7 @@ export async function exportToDOCX(
             size: 6,
           },
         },
-      })
+      }),
     );
   }
 
@@ -227,7 +227,7 @@ export async function exportToDOCX(
             size: 6,
           },
         },
-      })
+      }),
     );
 
     sections.push(
@@ -235,7 +235,7 @@ export async function exportToDOCX(
         text: "📚 Źródła",
         heading: HeadingLevel.HEADING_2,
         spacing: { before: 200, after: 300 },
-      })
+      }),
     );
 
     citations.forEach((citation, index) => {
@@ -249,7 +249,7 @@ export async function exportToDOCX(
             }),
           ],
           spacing: { before: 200, after: 100 },
-        })
+        }),
       );
 
       // Treść cytatu
@@ -265,7 +265,7 @@ export async function exportToDOCX(
             }),
           ],
           spacing: { before: 50, after: 50 },
-        })
+        }),
       );
 
       // Trafność
@@ -279,7 +279,7 @@ export async function exportToDOCX(
               }),
             ],
             spacing: { before: 50, after: 100 },
-          })
+          }),
         );
       }
     });
@@ -312,7 +312,7 @@ export async function exportToDOCX(
  */
 export async function exportConversationToDOCX(
   messages: Array<{ role: string; content: string; citations?: Citation[] }>,
-  title: string = "Konwersacja"
+  title: string = "Konwersacja",
 ): Promise<void> {
   let fullContent = "";
   const allCitations: Citation[] = [];
@@ -328,7 +328,7 @@ export async function exportConversationToDOCX(
         msg.citations.forEach((citation) => {
           if (
             !allCitations.find(
-              (c) => c.documentTitle === citation.documentTitle
+              (c) => c.documentTitle === citation.documentTitle,
             )
           ) {
             allCitations.push(citation);
