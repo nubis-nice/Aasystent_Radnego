@@ -34,7 +34,16 @@ export async function saveGUSApiKey(apiKey: string): Promise<{
     const headers = await getAuthHeaders();
 
     console.log("[GUS API] Saving API key to:", `${API_URL}/api/gus/api-key`);
-    console.log("[GUS API] Headers:", headers);
+    console.log("[GUS API] Headers present:", {
+      hasAuth: !!headers.Authorization,
+      hasUserId: !!headers["x-user-id"],
+      authLength: headers.Authorization?.length || 0,
+    });
+
+    // Sprawdź czy mamy token
+    if (!headers.Authorization || headers.Authorization === "Bearer ") {
+      throw new Error("Brak sesji użytkownika. Zaloguj się ponownie.");
+    }
 
     const response = await fetch(`${API_URL}/api/gus/api-key`, {
       method: "POST",
@@ -54,13 +63,22 @@ export async function saveGUSApiKey(apiKey: string): Promise<{
 
     return response.json();
   } catch (error) {
-    console.error("[GUS API] Fetch error:", error);
+    // Lepsze logowanie błędu
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error("[GUS API] Fetch error:", errorMessage, error);
+
     if (error instanceof TypeError && error.message.includes("fetch")) {
       throw new Error(
-        "Backend API nie odpowiada. Sprawdź czy serwer działa na http://localhost:3001"
+        "Backend API nie odpowiada. Sprawdź czy serwer działa na http://localhost:3001",
       );
     }
-    throw error;
+
+    // Jeśli to Response error (np. 401), przekaż dalej
+    if (error instanceof Error) {
+      throw error;
+    }
+
+    throw new Error(errorMessage || "Nieznany błąd podczas zapisu klucza API");
   }
 }
 
@@ -81,7 +99,7 @@ export async function searchGmina(name: string): Promise<{
     {
       method: "GET",
       headers,
-    }
+    },
   );
 
   if (!response.ok) {
@@ -97,7 +115,7 @@ export async function searchGmina(name: string): Promise<{
  */
 export async function getGminaStats(
   gminaId: string,
-  year?: number
+  year?: number,
 ): Promise<{
   stats: {
     unitId: string;

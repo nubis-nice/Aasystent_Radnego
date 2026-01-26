@@ -64,7 +64,7 @@ export function TasksWidget() {
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [filter, setFilter] = useState<"all" | "pending" | "completed">(
-    "pending"
+    "pending",
   );
 
   const [newTask, setNewTask] = useState<{
@@ -110,6 +110,28 @@ export function TasksWidget() {
 
   useEffect(() => {
     loadTasks();
+
+    // Auto-refresh co 30 sekund
+    const interval = setInterval(() => {
+      loadTasks();
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [loadTasks]);
+
+  // Nasłuchuj na zdarzenie tasks-refresh
+  useEffect(() => {
+    const handleRefresh = () => {
+      console.log("[TasksWidget] Received refresh event");
+      loadTasks();
+    };
+
+    window.addEventListener("tasks-refresh", handleRefresh);
+    window.addEventListener("dashboard-refresh", handleRefresh);
+    return () => {
+      window.removeEventListener("tasks-refresh", handleRefresh);
+      window.removeEventListener("dashboard-refresh", handleRefresh);
+    };
   }, [loadTasks]);
 
   const handleAddTask = async () => {
@@ -249,8 +271,8 @@ export function TasksWidget() {
               {f === "pending"
                 ? "Do zrobienia"
                 : f === "completed"
-                ? "Ukończone"
-                : "Wszystkie"}
+                  ? "Ukończone"
+                  : "Wszystkie"}
             </button>
           ))}
         </div>

@@ -66,6 +66,7 @@ class BackgroundTaskService {
       const insertData: Record<string, unknown> = {
         user_id: params.userId,
         task_type: params.taskType,
+        type: params.taskType, // Kolumna 'type' jest NOT NULL w schemacie
         status: "queued",
         title: params.title,
         description: params.description,

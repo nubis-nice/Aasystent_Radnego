@@ -17,6 +17,7 @@ interface SendMessageRequest {
   includeDocuments?: boolean;
   includeMunicipalData?: boolean;
   temperature?: number;
+  toolType?: string; // Typ narzędzia dla specjalistycznego generowania
 }
 
 interface Citation {

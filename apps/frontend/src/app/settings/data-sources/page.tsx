@@ -451,7 +451,6 @@ function SourcesTab({
             onAdd={onAdd}
           />
           <GUSSourceCard
-            onAdd={onAdd}
             showApiKeyDialog={showGusApiKeyDialog}
             setShowApiKeyDialog={setShowGusApiKeyDialog}
           />
@@ -517,14 +516,6 @@ function SourcesTab({
             sourceType="statistics"
             onAdd={onAdd}
             badge="API"
-          />
-          <PredefinedSourceCard
-            name="Monitor Polski"
-            description="Dziennik urzędowy RP"
-            category="Prawo"
-            url="https://monitorpolski.gov.pl"
-            sourceType="legal"
-            onAdd={onAdd}
           />
           <PredefinedSourceCard
             name="YouTube - Sesje Rady"
@@ -832,11 +823,10 @@ function PredefinedSourceCard({
 }
 
 function GUSSourceCard({
-  onAdd,
   showApiKeyDialog,
   setShowApiKeyDialog,
 }: {
-  onAdd: (data: {
+  onAdd?: (data: {
     name: string;
     base_url: string;
     source_type: string;
@@ -844,29 +834,13 @@ function GUSSourceCard({
   showApiKeyDialog: boolean;
   setShowApiKeyDialog: (show: boolean) => void;
 }) {
-  const [adding, setAdding] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [savingKey, setSavingKey] = useState(false);
   const toast = useToast();
 
-  const handleAdd = async () => {
-    setAdding(true);
-    try {
-      await onAdd({
-        name: "GUS - Bank Danych Lokalnych",
-        base_url: "https://bdl.stat.gov.pl",
-        source_type: "statistics",
-      });
-      toast.success("Dodano źródło GUS", "Teraz dodaj swój klucz API");
-      setShowApiKeyDialog(true);
-    } catch (error) {
-      toast.error(
-        "Błąd",
-        error instanceof Error ? error.message : "Nie udało się dodać źródła",
-      );
-    } finally {
-      setAdding(false);
-    }
+  // GUS jest teraz predefiniowany jako API - od razu otwieramy dialog klucza
+  const handleConfigure = () => {
+    setShowApiKeyDialog(true);
   };
 
   const handleSaveApiKey = async () => {
@@ -902,17 +876,19 @@ function GUSSourceCard({
               <span className="px-2 py-0.5 bg-background-secondary text-text-secondary text-xs rounded">
                 Statystyki
               </span>
+              <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded font-medium">
+                API
+              </span>
             </div>
             <p className="text-sm text-text-secondary">
               Dane demograficzne, ekonomiczne, społeczne
             </p>
           </div>
           <button
-            onClick={handleAdd}
-            disabled={adding}
-            className="ml-4 px-3 py-1.5 bg-primary-500 text-white text-sm rounded-lg hover:bg-primary-600 disabled:opacity-50 flex items-center gap-1"
+            onClick={handleConfigure}
+            className="ml-4 px-3 py-1.5 bg-primary-500 text-white text-sm rounded-lg hover:bg-primary-600 flex items-center gap-1"
           >
-            {adding && <Loader2 className="h-3 w-3 animate-spin" />}Dodaj
+            Konfiguruj
           </button>
         </div>
       </div>

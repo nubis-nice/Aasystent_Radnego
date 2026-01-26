@@ -36,6 +36,17 @@ export const ConversationWithMessagesSchema = ConversationSchema.extend({
 // ============================================================================
 // Chat Request/Response Types
 // ============================================================================
+export const ToolTypeSchema = z.enum([
+    "speech",
+    "interpelation",
+    "letter",
+    "protocol",
+    "budget",
+    "application",
+    "resolution",
+    "report",
+    "script",
+]);
 export const ChatRequestSchema = z.object({
     message: z.string().min(1).max(100000), // Zwiększony limit dla profesjonalnej analizy dokumentów z pełnym kontekstem
     conversationId: z.string().uuid().optional().nullable(), // Może być undefined, null lub prawidłowy UUID
@@ -43,6 +54,7 @@ export const ChatRequestSchema = z.object({
     includeMunicipalData: z.boolean().default(true),
     temperature: z.number().min(0).max(2).default(0.7),
     systemPrompt: z.string().max(100000).optional(), // Opcjonalny system prompt dla kontekstu analizy
+    toolType: ToolTypeSchema.optional(), // Typ narzędzia do generowania treści (używa ToolPromptService)
 });
 export const ChatResponseSchema = z.object({
     conversationId: z.string().uuid(),

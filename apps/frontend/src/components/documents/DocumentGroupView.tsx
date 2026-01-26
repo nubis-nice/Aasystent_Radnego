@@ -9,6 +9,7 @@ import {
   AlertTriangle,
   Brain,
   Loader2,
+  Video,
 } from "lucide-react";
 import Link from "next/link";
 import type { Document, DocumentPriority } from "@/lib/api/documents-list";
@@ -95,6 +96,28 @@ const DocumentCard = memo(function DocumentCard({
                 Score: {doc.score.totalScore.toFixed(1)}
               </span>
             )}
+            {/* Wskaźnik dostępności transkrypcji YouTube */}
+            {(() => {
+              const meta = doc.metadata as Record<string, unknown>;
+              const linkedTranscription = meta?.linkedTranscription as
+                | { documentId?: string; videoUrl?: string }
+                | undefined;
+              const hasTranscription =
+                linkedTranscription ||
+                meta?.youtubeTranscription ||
+                meta?.transcription ||
+                meta?.videoUrl;
+              if (!hasTranscription) return null;
+              return (
+                <span
+                  className="flex items-center gap-1 text-red-600 font-medium"
+                  title="Dostępna transkrypcja wideo"
+                >
+                  <Video className="h-3 w-3" />
+                  Transkrypcja
+                </span>
+              );
+            })()}
           </div>
         </div>
 

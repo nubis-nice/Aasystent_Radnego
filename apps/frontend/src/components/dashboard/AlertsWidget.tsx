@@ -92,6 +92,28 @@ export function AlertsWidget() {
 
   useEffect(() => {
     loadAlerts();
+
+    // Auto-refresh co 30 sekund
+    const interval = setInterval(() => {
+      loadAlerts();
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [loadAlerts]);
+
+  // Nasłuchuj na zdarzenie alerts-refresh
+  useEffect(() => {
+    const handleRefresh = () => {
+      console.log("[AlertsWidget] Received refresh event");
+      loadAlerts();
+    };
+
+    window.addEventListener("alerts-refresh", handleRefresh);
+    window.addEventListener("dashboard-refresh", handleRefresh);
+    return () => {
+      window.removeEventListener("alerts-refresh", handleRefresh);
+      window.removeEventListener("dashboard-refresh", handleRefresh);
+    };
   }, [loadAlerts]);
 
   const handleMarkAsRead = async (alertId: string) => {
@@ -106,7 +128,7 @@ export function AlertsWidget() {
       });
 
       setAlerts((prev) =>
-        prev.map((a) => (a.id === alertId ? { ...a, is_read: true } : a))
+        prev.map((a) => (a.id === alertId ? { ...a, is_read: true } : a)),
       );
       setUnreadCount((prev) => Math.max(0, prev - 1));
     } catch (error) {

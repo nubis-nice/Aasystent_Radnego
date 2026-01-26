@@ -124,9 +124,16 @@ const INTENT_DETECTION_PROMPT = `Jesteś ekspertem od analizy intencji użytkown
 
 ## LOKALNE DOKUMENTY:
 - **session_search** → sesja rady + NUMER (np. "sesja 15", "sesja nr 8")
-- **rag_search** → uchwała, protokół, dokument lokalny (bez numeru sesji)
+- **rag_search** → uchwała, protokół, dokument lokalny, posiedzenie komisji, komisja budżetowa (bez numeru sesji)
 - **document_fetch** → pobranie konkretnego dokumentu po numerze/referencji
 - **budget_analysis** → budżet gminy, wydatki, dochody, finanse
+
+⚠️ UWAGA: Pytania o "posiedzenie", "komisja", "committee", "relacja", "artykuł", "gazeta", "Drawnowiny" BEZ słów "utwórz/generuj/napisz" → **rag_search** (szuka dokumentów)
+  - "posiedzenie komisji budżetowej" → rag_search
+  - "co było na komisji" → rag_search  
+  - "protokół z sesji" → rag_search (szuka istniejącego)
+  - "relacja z sesji" → rag_search (szuka artykułu/relacji)
+  - "Drawnowiny relacja z sesji" → rag_search (szuka w gazecie lokalnej)
 
 ## ŹRÓDŁA DANYCH:
 - **data_sources_search** → "przeszukaj źródła", "scraping", "pobierz dane ze źródeł", "wyszukaj w źródłach danych", "aktualizuj dane", "synchronizuj źródła", "uruchom wyszukiwanie"
@@ -159,7 +166,9 @@ const INTENT_DETECTION_PROMPT = `Jesteś ekspertem od analizy intencji użytkown
 
 ## ALERTY I NAWIGACJA:
 - **alert_check** → "sprawdź alerty", "czy są powiadomienia", "co nowego"
-- **quick_tool** → "utwórz interpelację", "napisz pismo", "generuj protokół", "analiza budżetu", "przygotuj wystąpienie", "wystąpienie na sesji", "przemówienie", "speech", "projekt wystąpienia"
+- **quick_tool** → WYMAGA słów akcji: "utwórz", "napisz", "generuj", "przygotuj", "stwórz"
+  Przykłady: "utwórz interpelację", "napisz pismo", "generuj protokół", "przygotuj wystąpienie"
+  ⚠️ BEZ słów akcji → użyj rag_search (wyszukiwanie)
 - **app_navigate** → "przejdź do pulpitu", "otwórz dokumenty", "pokaż ustawienia", "idź do czatu"
 
 # PRZYKŁADY MAPOWANIA:

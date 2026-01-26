@@ -218,6 +218,8 @@ export declare const ConversationWithMessagesSchema: z.ZodObject<{
     }[];
 }>;
 export type ConversationWithMessages = z.infer<typeof ConversationWithMessagesSchema>;
+export declare const ToolTypeSchema: z.ZodEnum<["speech", "interpelation", "letter", "protocol", "budget", "application", "resolution", "report", "script"]>;
+export type ToolType = z.infer<typeof ToolTypeSchema>;
 export declare const ChatRequestSchema: z.ZodObject<{
     message: z.ZodString;
     conversationId: z.ZodNullable<z.ZodOptional<z.ZodString>>;
@@ -225,6 +227,7 @@ export declare const ChatRequestSchema: z.ZodObject<{
     includeMunicipalData: z.ZodDefault<z.ZodBoolean>;
     temperature: z.ZodDefault<z.ZodNumber>;
     systemPrompt: z.ZodOptional<z.ZodString>;
+    toolType: z.ZodOptional<z.ZodEnum<["speech", "interpelation", "letter", "protocol", "budget", "application", "resolution", "report", "script"]>>;
 }, "strip", z.ZodTypeAny, {
     message: string;
     includeDocuments: boolean;
@@ -232,6 +235,7 @@ export declare const ChatRequestSchema: z.ZodObject<{
     temperature: number;
     conversationId?: string | null | undefined;
     systemPrompt?: string | undefined;
+    toolType?: "resolution" | "protocol" | "report" | "speech" | "interpelation" | "letter" | "budget" | "application" | "script" | undefined;
 }, {
     message: string;
     conversationId?: string | null | undefined;
@@ -239,6 +243,7 @@ export declare const ChatRequestSchema: z.ZodObject<{
     includeMunicipalData?: boolean | undefined;
     temperature?: number | undefined;
     systemPrompt?: string | undefined;
+    toolType?: "resolution" | "protocol" | "report" | "speech" | "interpelation" | "letter" | "budget" | "application" | "script" | undefined;
 }>;
 export type ChatRequest = z.infer<typeof ChatRequestSchema>;
 export declare const ChatResponseSchema: z.ZodObject<{

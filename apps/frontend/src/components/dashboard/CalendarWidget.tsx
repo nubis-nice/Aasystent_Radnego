@@ -541,20 +541,28 @@ export function CalendarWidget({ onEventClick }: CalendarWidgetProps) {
 
   useEffect(() => {
     loadEvents();
+
+    // Auto-refresh co 60 sekund
+    const interval = setInterval(() => {
+      loadEvents();
+    }, 60000);
+
+    return () => clearInterval(interval);
   }, [loadEvents]);
 
-  // Nasłuchuj na zdarzenie calendar-refresh (z chatu AI)
+  // Nasłuchuj na zdarzenia refresh
   useEffect(() => {
-    const handleCalendarRefresh = () => {
-      console.log(
-        "[CalendarWidget] Received calendar-refresh event, reloading...",
-      );
+    const handleRefresh = () => {
+      console.log("[CalendarWidget] Received refresh event, reloading...");
       loadEvents();
     };
 
-    window.addEventListener("calendar-refresh", handleCalendarRefresh);
-    return () =>
-      window.removeEventListener("calendar-refresh", handleCalendarRefresh);
+    window.addEventListener("calendar-refresh", handleRefresh);
+    window.addEventListener("dashboard-refresh", handleRefresh);
+    return () => {
+      window.removeEventListener("calendar-refresh", handleRefresh);
+      window.removeEventListener("dashboard-refresh", handleRefresh);
+    };
   }, [loadEvents]);
 
   const handleAddEvent = async () => {

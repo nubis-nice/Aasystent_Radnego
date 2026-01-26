@@ -1326,6 +1326,7 @@ export default function ChatPage() {
                     conversationId,
                     includeDocuments: true,
                     includeMunicipalData: true,
+                    toolType: toolMode.state.toolType || undefined,
                   });
 
                   if (response.conversationId && !conversationId) {

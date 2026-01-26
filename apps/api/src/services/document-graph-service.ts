@@ -69,6 +69,36 @@ const REFERENCE_PATTERNS = {
   sesja: /sesj[aęi]\s+([IVXLCDM]+|\d+)/gi,
 };
 
+// Wzorce do wykrywania relacji prawnych (zmienia/uchyla/wykonuje)
+const LEGAL_RELATION_PATTERNS: Record<DocumentRelationType, RegExp[]> = {
+  // Zmienia uchwałę
+  amends: [
+    /zmienia(?:jąc[aąey]?)?\s+uchwa[łl][ęę]?\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+    /w\s+sprawie\s+zmiany\s+uchwa[łl]y\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+    /nowelizuj[ąe]\s+uchwa[łl][ęę]?\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+  ],
+  // Uchyla uchwałę
+  supersedes: [
+    /uchyla(?:jąc[aąey]?)?\s+uchwa[łl][ęę]?\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+    /traci\s+moc\s+uchwa[łl]a\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+    /w\s+sprawie\s+uchylenia\s+uchwa[łl]y\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+  ],
+  // Wykonuje uchwałę / ustawę
+  implements: [
+    /wykonuj[ąe]\s+uchwa[łl][ęę]?\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+    /na\s+podstawie\s+(?:art\.\s*\d+\s+)?uchwa[łl]y\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+    /w\s+wykonaniu\s+uchwa[łl]y\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+    /realizuj[ąe]\s+uchwa[łl][ęę]?\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+  ],
+  // Puste tablice dla pozostałych typów (nieużywane tutaj)
+  references: [],
+  contains: [],
+  attachment: [],
+  related: [],
+  responds_to: [],
+  derived_from: [],
+};
+
 export class DocumentGraphService {
   /**
    * Pobierz wszystkie dokumenty powiązane z danym dokumentem
@@ -76,7 +106,7 @@ export class DocumentGraphService {
   async getRelatedDocuments(
     documentId: string,
     maxDepth: number = 3,
-    minStrength: number = 0.3
+    minStrength: number = 0.3,
   ): Promise<RelatedDocument[]> {
     const { data, error } = await supabase.rpc("get_related_documents", {
       p_document_id: documentId,
@@ -107,8 +137,8 @@ export class DocumentGraphService {
               publish_date: string | null;
               summary: string | null;
               filename?: string;
-            }) => [d.id, d]
-          )
+            }) => [d.id, d],
+          ),
         );
         return data.map((r: RelatedDocument) => ({
           ...r,
@@ -126,7 +156,7 @@ export class DocumentGraphService {
   async findPath(
     sourceId: string,
     targetId: string,
-    maxDepth: number = 5
+    maxDepth: number = 5,
   ): Promise<{
     path: string[];
     depth: number;
@@ -159,7 +189,7 @@ export class DocumentGraphService {
       context?: string;
       referenceText?: string;
       detectedAutomatically?: boolean;
-    }
+    },
   ): Promise<DocumentRelation | null> {
     const { data, error } = await supabase
       .from("document_relations")
@@ -175,7 +205,7 @@ export class DocumentGraphService {
         },
         {
           onConflict: "source_document_id,target_document_id,relation_type",
-        }
+        },
       )
       .select()
       .single();
@@ -251,7 +281,7 @@ export class DocumentGraphService {
           {
             referenceText: match[0],
             strength: 0.9,
-          }
+          },
         );
         if (result) addedCount++;
       }
@@ -276,7 +306,7 @@ export class DocumentGraphService {
           {
             referenceText: match[0],
             strength: 0.95,
-          }
+          },
         );
         if (result) addedCount++;
       }
@@ -301,15 +331,80 @@ export class DocumentGraphService {
           {
             referenceText: match[0],
             strength: 0.8,
-          }
+          },
         );
         if (result) addedCount++;
       }
     }
 
+    // Wykryj relacje prawne (zmienia/uchyla/wykonuje)
+    addedCount += await this.detectLegalRelations(documentId, content);
+
     console.log(
-      `[DocumentGraph] Detected ${addedCount} references for document ${documentId}`
+      `[DocumentGraph] Detected ${addedCount} references for document ${documentId}`,
     );
+    return addedCount;
+  }
+
+  /**
+   * Wykryj relacje prawne w treści dokumentu (zmienia/uchyla/wykonuje)
+   */
+  async detectLegalRelations(
+    documentId: string,
+    content: string,
+  ): Promise<number> {
+    let addedCount = 0;
+    const relationsToCheck: DocumentRelationType[] = [
+      "amends",
+      "supersedes",
+      "implements",
+    ];
+
+    for (const relationType of relationsToCheck) {
+      const patterns = LEGAL_RELATION_PATTERNS[relationType];
+      if (!patterns || patterns.length === 0) continue;
+
+      for (const pattern of patterns) {
+        // Reset regex lastIndex
+        pattern.lastIndex = 0;
+        const matches = [...content.matchAll(pattern)];
+
+        for (const match of matches) {
+          const uchwalaRef = match[1];
+          if (!uchwalaRef) continue;
+
+          // Szukaj dokumentu po numerze uchwały
+          const { data: targets } = await supabase
+            .from("documents")
+            .select("id")
+            .or(
+              `title.ilike.%${uchwalaRef}%,metadata->>resolution_number.ilike.%${uchwalaRef}%`,
+            )
+            .neq("id", documentId)
+            .limit(5);
+
+          for (const target of targets || []) {
+            const result = await this.addRelation(
+              documentId,
+              target.id,
+              relationType,
+              {
+                referenceText: match[0],
+                strength: 1.0, // Relacje prawne mają najwyższą siłę
+                context: `Dokument ${relationType === "amends" ? "zmienia" : relationType === "supersedes" ? "uchyla" : "wykonuje"} uchwałę ${uchwalaRef}`,
+              },
+            );
+            if (result) {
+              addedCount++;
+              console.log(
+                `[DocumentGraph] Found ${relationType} relation: ${documentId} -> ${target.id} (${uchwalaRef})`,
+              );
+            }
+          }
+        }
+      }
+    }
+
     return addedCount;
   }
 
@@ -323,12 +418,12 @@ export class DocumentGraphService {
       description?: string;
       clusterType?: string;
       maxDepth?: number;
-    }
+    },
   ): Promise<DocumentCluster | null> {
     // Pobierz powiązane dokumenty
     const related = await this.getRelatedDocuments(
       rootDocumentId,
-      options?.maxDepth ?? 3
+      options?.maxDepth ?? 3,
     );
 
     // Utwórz klaster
@@ -396,7 +491,7 @@ export class DocumentGraphService {
       // Pobierz powiązane dokumenty
       const related = await this.getRelatedDocuments(docId, 2, 0.5);
       const clusterDocs = related.filter((r) =>
-        documentIds.includes(r.document_id)
+        documentIds.includes(r.document_id),
       );
 
       if (clusterDocs.length > 0) {
@@ -415,7 +510,7 @@ export class DocumentGraphService {
           document_count: clusterDocs.length + 1,
           total_strength: clusterDocs.reduce(
             (sum, r) => sum + r.total_strength,
-            0
+            0,
           ),
           documents: [
             {
@@ -443,7 +538,7 @@ export class DocumentGraphService {
    */
   async verifyRelation(
     relationId: string,
-    verified: boolean
+    verified: boolean,
   ): Promise<boolean> {
     const { error } = await supabase
       .from("document_relations")

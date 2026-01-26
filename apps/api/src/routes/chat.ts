@@ -17,6 +17,10 @@ import {
   AIToolOrchestrator,
   shouldUseOrchestrator,
 } from "../services/ai-tool-orchestrator.js";
+import {
+  ToolPromptService,
+  type ToolType as BackendToolType,
+} from "../services/tool-prompt-service.js";
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -112,6 +116,7 @@ export const chatRoutes = async (fastify) => {
         includeDocuments,
         includeMunicipalData,
         temperature,
+        toolType,
       } = validatedData;
       // Pobierz użytkownika z headera (zakładamy że auth middleware dodaje user_id)
       const userId = request.headers["x-user-id"];
@@ -702,7 +707,25 @@ export const chatRoutes = async (fastify) => {
         voivodeship: systemPromptContext.voivodeship,
       });
 
-      const systemPrompt = buildSystemPrompt(systemPromptContext);
+      // Wybierz odpowiedni system prompt - specjalistyczny dla narzędzia lub standardowy
+      let systemPrompt: string;
+      if (toolType) {
+        // Użyj specjalistycznego promptu dla narzędzia
+        const toolPromptConfig = ToolPromptService.getPromptConfig(
+          toolType as BackendToolType,
+        );
+        if (toolPromptConfig) {
+          console.log(`[Chat] Using tool-specific prompt for: ${toolType}`);
+          systemPrompt = `${toolPromptConfig.systemPrompt}\n\n## WYMAGANY FORMAT ODPOWIEDZI:\n${toolPromptConfig.outputFormat}`;
+        } else {
+          console.warn(
+            `[Chat] No prompt config for tool: ${toolType}, using default`,
+          );
+          systemPrompt = buildSystemPrompt(systemPromptContext);
+        }
+      } else {
+        systemPrompt = buildSystemPrompt(systemPromptContext);
+      }
       // ========================================================================
       // CONTEXT COMPRESSION - optymalizacja kontekstu dla oszczędności tokenów
       // ========================================================================

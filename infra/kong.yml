@@ -1,0 +1,143 @@
+# Kong API Gateway Configuration for Supabase Self-hosted
+_format_version: "2.1"
+_transform: true
+
+consumers:
+  - username: DASHBOARD
+  - username: anon
+    keyauth_credentials:
+      - key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzA2MDAwMDAwLCJleHAiOjIwMjEzNzYwMDB9._HkPi-l0dFNLHk1wWQWgALaJ2rCa77OgUzIjZF2Su1Q
+  - username: service_role
+    keyauth_credentials:
+      - key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3MDYwMDAwMDAsImV4cCI6MjAyMTM3NjAwMH0.qvLgKJIOxHXR2g58fXGlZoBHXbFf5CGrVrKnh0c2ba8
+
+acls:
+  - consumer: anon
+    group: anon
+  - consumer: service_role
+    group: admin
+
+services:
+  # Auth service
+  - name: auth-v1-open
+    url: http://auth:9999/verify
+    routes:
+      - name: auth-v1-open
+        strip_path: true
+        paths:
+          - /auth/v1/verify
+    plugins:
+      - name: cors
+
+  - name: auth-v1-open-callback
+    url: http://auth:9999/callback
+    routes:
+      - name: auth-v1-open-callback
+        strip_path: true
+        paths:
+          - /auth/v1/callback
+    plugins:
+      - name: cors
+
+  - name: auth-v1-open-authorize
+    url: http://auth:9999/authorize
+    routes:
+      - name: auth-v1-open-authorize
+        strip_path: true
+        paths:
+          - /auth/v1/authorize
+    plugins:
+      - name: cors
+
+  - name: auth-v1
+    url: http://auth:9999/
+    routes:
+      - name: auth-v1
+        strip_path: true
+        paths:
+          - /auth/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+
+  # REST (PostgREST)
+  - name: rest-v1
+    url: http://rest:3000/
+    routes:
+      - name: rest-v1
+        strip_path: true
+        paths:
+          - /rest/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+
+  # Realtime (WebSocket)
+  - name: realtime-v1
+    url: http://realtime:4000/socket/
+    routes:
+      - name: realtime-v1
+        strip_path: true
+        paths:
+          - /realtime/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+
+  # Storage
+  - name: storage-v1
+    url: http://storage:5000/
+    routes:
+      - name: storage-v1
+        strip_path: true
+        paths:
+          - /storage/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+
+  # Meta (for Studio)
+  - name: meta
+    url: http://meta:8080/
+    routes:
+      - name: meta
+        strip_path: true
+        paths:
+          - /pg/
+
+plugins:
+  - name: cors
+    config:
+      origins:
+        - "*"
+      methods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - OPTIONS
+      headers:
+        - Accept
+        - Accept-Version
+        - Content-Length
+        - Content-MD5
+        - Content-Type
+        - Date
+        - X-Auth-Token
+        - Authorization
+        - apikey
+        - X-Client-Info
+      exposed_headers:
+        - X-Total-Count
+        - Content-Range
+      credentials: true
+      max_age: 3600

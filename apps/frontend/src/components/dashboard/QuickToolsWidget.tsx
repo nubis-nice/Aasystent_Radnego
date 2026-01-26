@@ -10,6 +10,7 @@ import {
   Wallet,
   Mic,
   ClipboardList,
+  Video,
 } from "lucide-react";
 
 interface QuickTool {
@@ -89,6 +90,14 @@ export function QuickToolsWidget() {
       color: "from-teal-500 to-teal-600",
       action: () => router.push("/chat?tool=letter"),
     },
+    {
+      id: "script",
+      label: "Scenopis na rolkę",
+      description: "TikTok/YouTube Shorts",
+      icon: <Video className="h-5 w-5" />,
+      color: "from-red-500 to-red-600",
+      action: () => router.push("/chat?tool=script"),
+    },
   ];
 
   return (
@@ -104,7 +113,7 @@ export function QuickToolsWidget() {
       </div>
 
       {/* Tools Grid */}
-      <div className="p-4 grid grid-cols-2 gap-3 flex-1 overflow-y-auto">
+      <div className="p-4 grid grid-cols-2 gap-3 flex-1 overflow-y-auto min-h-0">
         {tools.map((tool) => (
           <button
             key={tool.id}

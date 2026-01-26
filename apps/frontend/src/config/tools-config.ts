@@ -12,6 +12,7 @@ import {
   Scale,
   BarChart3,
   Send,
+  Video,
 } from "lucide-react";
 
 export type ToolType =
@@ -22,7 +23,8 @@ export type ToolType =
   | "budget"
   | "application"
   | "resolution"
-  | "report";
+  | "report"
+  | "script";
 
 export interface ToolFieldConfig {
   id: string;
@@ -470,6 +472,81 @@ export const TOOLS_CONFIG: Record<ToolType, ToolConfig> = {
       "Analiza danych",
       "Wnioski",
       "Rekomendacje",
+    ],
+  },
+
+  script: {
+    id: "script",
+    name: "Scenopis na rolkę",
+    description: "Generator scenopisów na YouTube Shorts/TikTok/Reels",
+    icon: Video,
+    color: "from-red-500 to-red-600",
+    fields: [
+      {
+        id: "platform",
+        label: "Platforma",
+        type: "select",
+        options: [
+          { value: "tiktok", label: "TikTok" },
+          { value: "youtube", label: "YouTube Shorts" },
+          { value: "reels", label: "Instagram Reels" },
+          { value: "all", label: "Uniwersalny" },
+        ],
+        defaultValue: "all",
+        required: true,
+      },
+      {
+        id: "topic",
+        label: "Temat rolki",
+        type: "text",
+        placeholder: "np. Co zmieniło się w budżecie gminy?",
+        required: true,
+      },
+      {
+        id: "duration",
+        label: "Długość",
+        type: "select",
+        options: [
+          { value: "15", label: "15 sekund" },
+          { value: "30", label: "30 sekund" },
+          { value: "60", label: "60 sekund" },
+          { value: "90", label: "90 sekund" },
+        ],
+        defaultValue: "60",
+      },
+      {
+        id: "style",
+        label: "Styl",
+        type: "select",
+        options: [
+          { value: "educational", label: "Edukacyjny" },
+          { value: "news", label: "Informacyjny/News" },
+          { value: "storytelling", label: "Storytelling" },
+          { value: "explainer", label: "Wyjaśniający" },
+        ],
+        defaultValue: "educational",
+      },
+      {
+        id: "context",
+        label: "Dodatkowy kontekst / kluczowe punkty",
+        type: "textarea",
+        placeholder: "Jakie informacje mają być zawarte? Jakie dane/fakty?",
+      },
+      {
+        id: "callToAction",
+        label: "Call to Action",
+        type: "text",
+        placeholder: "np. Obserwuj, skomentuj, udostępnij",
+      },
+    ],
+    generateButtonLabel: "Generuj scenopis",
+    outputSections: [
+      "Hook (pierwsze 3 sekundy)",
+      "Treść główna",
+      "Wizualizacje/Kadr",
+      "Tekst na ekranie",
+      "Call to Action",
+      "Hashtagi",
     ],
   },
 };

@@ -20,6 +20,10 @@ import { documentGraphRoutes } from "./routes/document-graph.js";
 import { voiceRoutes } from "./routes/voice.js";
 import { gusRoutes } from "./routes/gus.js";
 import { isapRoutes } from "./routes/isap.js";
+import { nsaRoutes } from "./routes/nsa.js";
+import { rioRoutes } from "./routes/rio.js";
+import { epuapRoutes } from "./routes/epuap.js";
+import { reportsRoutes } from "./routes/reports.js";
 import { euFundsRoutes } from "./routes/eu-funds.js";
 import { geoportalRoutes } from "./routes/geoportal.js";
 import { terytRoutes } from "./routes/teryt.js";
@@ -32,6 +36,7 @@ import { initializeTranscriptionRecovery } from "./services/transcription-recove
 import { initializeTranscriptionWorker } from "./services/transcription-worker.js";
 import { websocketRoutes } from "./routes/websocket.js";
 import { sseRoutes } from "./routes/sse.js";
+import { traceIdPlugin } from "./middleware/trace-id.js";
 
 const port = Number(process.env.API_PORT ?? 3001);
 
@@ -75,6 +80,9 @@ app.register(multipart, {
 // WebSocket support
 app.register(websocket);
 
+// TraceId middleware for request tracing
+app.register(traceIdPlugin);
+
 app.get("/health", async () => {
   return {
     status: "ok",
@@ -99,6 +107,10 @@ app.register(async (protectedApp) => {
   protectedApp.register(voiceRoutes, { prefix: "/api" });
   protectedApp.register(gusRoutes, { prefix: "/api" });
   protectedApp.register(isapRoutes, { prefix: "/api" });
+  protectedApp.register(nsaRoutes, { prefix: "/api" });
+  protectedApp.register(rioRoutes, { prefix: "/api" });
+  protectedApp.register(epuapRoutes, { prefix: "/api" });
+  protectedApp.register(reportsRoutes, { prefix: "/api" });
   protectedApp.register(euFundsRoutes, { prefix: "/api" });
   protectedApp.register(geoportalRoutes, { prefix: "/api" });
   protectedApp.register(terytRoutes, { prefix: "/api" });

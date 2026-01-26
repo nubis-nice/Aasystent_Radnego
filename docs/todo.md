@@ -8,8 +8,8 @@ _Brak aktywnych zadań_
 
 ### Testy
 
-- [ ] Testy `ai-client-factory` (wymaga mockowania Supabase)
-- [ ] Testy `document-processor`
+- [x] Testy `ai-client-factory` (12 testów)
+- [x] Testy `document-processor` (28 testów)
 - [x] Testy `document-scorer` (11 testów)
 - [x] E2E: Documents (6 testów)
 - [x] E2E: Chat/Dashboard/Settings (8 testów)
@@ -31,7 +31,7 @@ _Brak aktywnych zadań_
 ### 2026-01-25
 
 - [x] Pipeline CI/CD (GitHub Actions)
-- [x] Unit tests: 37 testów (4 pliki)
+- [x] Unit tests: 77 testów (6 plików)
   - deep-research-service (7)
   - document-scorer (11)
   - tool-prompt-service (13)
