@@ -47,7 +47,14 @@ export function useCalendarNotifications(
       setLoading(true);
       const {
         data: { session },
+        error: sessionError,
       } = await supabase.auth.getSession();
+
+      if (sessionError) {
+        console.error("[CalendarNotifications] Session error:", sessionError);
+        setNotifications([]);
+        return;
+      }
 
       if (!session?.access_token) {
         setNotifications([]);
