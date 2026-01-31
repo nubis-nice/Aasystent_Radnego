@@ -1,14 +1,38 @@
 import { z, ZodError } from "zod";
 import { createClient } from "@supabase/supabase-js";
-import { randomUUID } from "crypto";
 import { DocumentProcessor } from "../services/document-processor.js";
 import { AudioTranscriber } from "../services/audio-transcriber.js";
 import { DocumentScorer, } from "../services/document-scorer.js";
-import { DocumentAnalysisService } from "../services/document-analysis-service.js";
 import { addDocumentProcessJob, getUserDocumentJobs, getDocumentJob, deleteDocumentJob, retryDocumentJob, getDocumentQueueStats, } from "../services/document-process-queue.js";
+import { addAnalysisJob } from "../services/analysis-queue.js";
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
+// Konwersja liczb rzymskich na arabskie
+function romanToArabic(roman) {
+    const romanNumerals = {
+        I: 1,
+        V: 5,
+        X: 10,
+        L: 50,
+        C: 100,
+        D: 500,
+        M: 1000,
+    };
+    let result = 0;
+    const upperRoman = roman.toUpperCase();
+    for (let i = 0; i < upperRoman.length; i++) {
+        const current = romanNumerals[upperRoman[i]] || 0;
+        const next = romanNumerals[upperRoman[i + 1]] || 0;
+        if (current < next) {
+            result -= current;
+        }
+        else {
+            result += current;
+        }
+    }
+    return result;
+}
 const ALLOWED_MIME_TYPES = [
     "image/jpeg",
     "image/png",
@@ -99,8 +123,58 @@ export const documentsRoutes = async (fastify) => {
                 limit: query.limit,
                 offset: query.offset,
             });
+            // Pobierz wszystkie transkrypcje użytkownika (batch query)
+            const { data: transcriptions } = await supabase
+                .from("processed_documents")
+                .select("id, title, metadata, session_number")
+                .eq("user_id", userId)
+                .eq("document_type", "transkrypcja");
+            // Mapuj transkrypcje do dokumentów po session_number
+            const transcriptionMap = new Map();
+            if (transcriptions) {
+                for (const t of transcriptions) {
+                    // Wyciągnij session_number z tytułu transkrypcji (np. "Transkrypcja: Sesja Nr XXII")
+                    const sessionMatch = t.title?.match(/sesja\s*(?:nr\s*)?(\d+|[IVXLCDM]+)/i);
+                    let sessionNum = t.session_number;
+                    if (!sessionNum && sessionMatch) {
+                        const numStr = sessionMatch[1];
+                        // Konwertuj rzymskie na arabskie jeśli potrzeba
+                        if (/^[IVXLCDM]+$/i.test(numStr)) {
+                            sessionNum = romanToArabic(numStr);
+                        }
+                        else {
+                            sessionNum = parseInt(numStr, 10);
+                        }
+                    }
+                    if (sessionNum) {
+                        const meta = t.metadata;
+                        transcriptionMap.set(sessionNum, {
+                            id: t.id,
+                            title: t.title,
+                            videoUrl: meta?.videoUrl,
+                            duration: meta?.duration,
+                            speakerCount: meta?.speakerCount,
+                        });
+                    }
+                }
+            }
+            // Dodaj info o transkrypcji do dokumentów
+            const documentsWithTranscription = result.documents.map((doc) => {
+                const sessionNum = doc.session_number;
+                if (sessionNum && transcriptionMap.has(sessionNum)) {
+                    const transcriptionInfo = transcriptionMap.get(sessionNum);
+                    return {
+                        ...doc,
+                        metadata: {
+                            ...doc.metadata,
+                            linkedTranscription: transcriptionInfo,
+                        },
+                    };
+                }
+                return doc;
+            });
             return reply.send({
-                documents: result.documents,
+                documents: documentsWithTranscription,
                 total: result.total,
             });
         }
@@ -130,6 +204,92 @@ export const documentsRoutes = async (fastify) => {
                 .single();
             if (error || !document) {
                 return reply.status(404).send({ error: "Document not found" });
+            }
+            // Sprawdź czy istnieje powiązana transkrypcja
+            let transcriptionInfo = null;
+            // 1. Szukaj przez document_relations (transkrypcja -> sesja)
+            const { data: relations } = await supabase
+                .from("document_relations")
+                .select("source_document_id")
+                .eq("target_session_id", id)
+                .eq("user_id", userId)
+                .eq("relation_type", "transcription_of")
+                .limit(1);
+            if (relations && relations.length > 0) {
+                const { data: transcriptionDoc } = await supabase
+                    .from("processed_documents")
+                    .select("id, title, metadata, source_url")
+                    .eq("id", relations[0].source_document_id)
+                    .single();
+                if (transcriptionDoc) {
+                    const meta = transcriptionDoc.metadata;
+                    transcriptionInfo = {
+                        documentId: transcriptionDoc.id,
+                        title: transcriptionDoc.title,
+                        videoUrl: meta?.videoUrl || transcriptionDoc.source_url,
+                        duration: meta?.duration,
+                        speakerCount: meta?.speakerCount,
+                        speakers: meta?.speakers,
+                    };
+                }
+            }
+            // 2. Fallback: szukaj transkrypcji po podobnym tytule sesji
+            if (!transcriptionInfo && document.session_number) {
+                const { data: transcriptionDocs } = await supabase
+                    .from("processed_documents")
+                    .select("id, title, metadata, source_url")
+                    .eq("user_id", userId)
+                    .eq("document_type", "transkrypcja")
+                    .ilike("title", `%Sesja%${document.session_number}%`)
+                    .limit(1);
+                if (transcriptionDocs && transcriptionDocs.length > 0) {
+                    const transcriptionDoc = transcriptionDocs[0];
+                    const meta = transcriptionDoc.metadata;
+                    transcriptionInfo = {
+                        documentId: transcriptionDoc.id,
+                        title: transcriptionDoc.title,
+                        videoUrl: meta?.videoUrl || transcriptionDoc.source_url,
+                        duration: meta?.duration,
+                        speakerCount: meta?.speakerCount,
+                        speakers: meta?.speakers,
+                    };
+                }
+            }
+            // 3. Szukaj w scraped_content po source_url dokumentu
+            if (!transcriptionInfo && document.source_url) {
+                const { data: scrapedContent } = await supabase
+                    .from("scraped_content")
+                    .select("metadata")
+                    .eq("url", document.source_url)
+                    .maybeSingle();
+                if (scrapedContent?.metadata) {
+                    const scMeta = scrapedContent.metadata;
+                    if (scMeta.transcriptionDocumentId) {
+                        const { data: transcriptionDoc } = await supabase
+                            .from("processed_documents")
+                            .select("id, title, metadata, source_url")
+                            .eq("id", scMeta.transcriptionDocumentId)
+                            .single();
+                        if (transcriptionDoc) {
+                            const meta = transcriptionDoc.metadata;
+                            transcriptionInfo = {
+                                documentId: transcriptionDoc.id,
+                                title: transcriptionDoc.title,
+                                videoUrl: meta?.videoUrl || transcriptionDoc.source_url,
+                                duration: meta?.duration,
+                                speakerCount: meta?.speakerCount,
+                                speakers: meta?.speakers,
+                            };
+                        }
+                    }
+                }
+            }
+            // Dodaj info o transkrypcji do metadata dokumentu
+            if (transcriptionInfo) {
+                document.metadata = {
+                    ...(document.metadata || {}),
+                    linkedTranscription: transcriptionInfo,
+                };
             }
             return reply.send({ document });
         }
@@ -500,7 +660,6 @@ export const documentsRoutes = async (fastify) => {
         if (!userId) {
             return reply.status(401).send({ error: "Unauthorized" });
         }
-        const taskId = randomUUID();
         try {
             // Pobierz podstawowe info o dokumencie
             const { data: doc } = await supabase
@@ -512,22 +671,19 @@ export const documentsRoutes = async (fastify) => {
             if (!doc) {
                 return reply.status(404).send({ error: "Document not found" });
             }
-            // Utwórz zadanie w tle
-            await supabase.from("background_tasks").insert({
-                id: taskId,
-                user_id: userId,
-                task_type: "analysis",
-                status: "running",
-                title: `Analiza: ${doc.title?.substring(0, 50) || "Dokument"}`,
-                description: "Inicjalizacja analizy...",
-                progress: 0,
-                metadata: { documentId: id, documentTitle: doc.title },
+            // Dodaj zadanie do kolejki BullMQ
+            const { jobId, taskId } = await addAnalysisJob({
+                userId,
+                documentId: id,
+                documentTitle: doc.title || "Dokument",
             });
-            // Zwróć natychmiast - przetwarzanie asynchroniczne
-            reply.send({
+            console.log(`[Documents] Analysis job ${jobId} created for document ${id}`);
+            // Zwróć natychmiast - przetwarzanie przez worker
+            return reply.send({
                 success: true,
                 async: true,
                 taskId,
+                jobId,
                 message: "Analiza rozpoczęta. Śledź postęp na Dashboard.",
                 document: {
                     id: doc.id,
@@ -536,115 +692,17 @@ export const documentsRoutes = async (fastify) => {
                     publish_date: doc.publish_date,
                 },
             });
-            // Uruchom analizę asynchronicznie
-            void processAnalysisAsync(taskId, userId, id, fastify.log);
-            return reply;
         }
         catch (error) {
             fastify.log.error(String(error));
-            try {
-                await supabase
-                    .from("background_tasks")
-                    .update({
-                    status: "failed",
-                    error_message: error instanceof Error ? error.message : "Unknown error",
-                    completed_at: new Date().toISOString(),
-                })
-                    .eq("id", taskId);
-            }
-            catch {
-                // Ignoruj błędy aktualizacji
-            }
-            return reply.status(500).send({ error: "Internal server error" });
+            return reply.status(500).send({
+                error: "Internal server error",
+                message: error instanceof Error ? error.message : "Unknown error",
+            });
         }
     });
-    // Asynchroniczna funkcja analizy dokumentu
-    async function processAnalysisAsync(taskId, userId, documentId, log) {
-        try {
-            const analysisService = new DocumentAnalysisService();
-            await analysisService.initialize(userId);
-            await supabase
-                .from("background_tasks")
-                .update({ progress: 20, description: "Budowanie kontekstu RAG..." })
-                .eq("id", taskId);
-            const analysisContext = await analysisService.buildAnalysisContext(userId, documentId);
-            if (!analysisContext) {
-                await supabase
-                    .from("background_tasks")
-                    .update({
-                    status: "failed",
-                    error_message: "Nie znaleziono dokumentu",
-                    completed_at: new Date().toISOString(),
-                })
-                    .eq("id", taskId);
-                return;
-            }
-            await supabase
-                .from("background_tasks")
-                .update({ progress: 70, description: "Generowanie analizy..." })
-                .eq("id", taskId);
-            const scorer = new DocumentScorer();
-            const { data: docForScore } = await supabase
-                .from("processed_documents")
-                .select("*")
-                .eq("id", documentId)
-                .eq("user_id", userId)
-                .single();
-            const score = docForScore ? scorer.calculateScore(docForScore) : null;
-            const analysisResult = analysisService.generateAnalysisPrompt(analysisContext);
-            await supabase
-                .from("background_tasks")
-                .update({
-                status: "completed",
-                progress: 100,
-                description: `Analiza zakończona: ${analysisContext.mainDocument.title}`,
-                completed_at: new Date().toISOString(),
-                metadata: {
-                    documentId,
-                    documentTitle: analysisContext.mainDocument.title,
-                    result: {
-                        document: {
-                            id: analysisContext.mainDocument.id,
-                            title: analysisContext.mainDocument.title,
-                            document_type: analysisContext.mainDocument.documentType,
-                            publish_date: analysisContext.mainDocument.publishDate,
-                            summary: analysisContext.mainDocument.summary,
-                            contentPreview: analysisContext.mainDocument.content?.substring(0, 500) +
-                                "...",
-                        },
-                        score,
-                        references: {
-                            found: analysisContext.references.filter((r) => r.found).length,
-                            missing: analysisContext.missingReferences.length,
-                            details: analysisContext.references,
-                        },
-                        analysisPrompt: analysisResult.prompt,
-                        systemPrompt: analysisResult.systemPrompt,
-                        chatContext: {
-                            type: "document_analysis",
-                            documentId: analysisContext.mainDocument.id,
-                            documentTitle: analysisContext.mainDocument.title,
-                            hasAdditionalContext: analysisContext.additionalContext.length > 0,
-                            missingReferences: analysisContext.missingReferences,
-                        },
-                    },
-                },
-            })
-                .eq("id", taskId);
-            log.info(`[DocumentAnalysis] Completed task ${taskId} for document ${documentId}`);
-        }
-        catch (error) {
-            log.error(`[DocumentAnalysis] Task ${taskId} failed: ${error instanceof Error ? error.message : String(error)}`);
-            await supabase
-                .from("background_tasks")
-                .update({
-                status: "failed",
-                error_message: error instanceof Error ? error.message : "Unknown error",
-                completed_at: new Date().toISOString(),
-            })
-                .eq("id", taskId);
-        }
-    }
+    // NOTE: Analiza dokumentów jest teraz przetwarzana przez worker BullMQ
+    // Zobacz: apps/worker/src/jobs/analysis.ts
     // POST /documents/process - Przetwarzanie pliku z OCR
     fastify.post("/documents/process", async (request, reply) => {
         try {
@@ -1325,7 +1383,8 @@ Zawrzyj:
             let errors = 0;
             for (const doc of docs) {
                 try {
-                    const textToEmbed = `${doc.title || ""}\n\n${doc.content || ""}`.substring(0, 8000);
+                    // nomic-embed-text ma limit ~2000 tokenów (~4000 znaków)
+                    const textToEmbed = `${doc.title || ""}\n\n${doc.content || ""}`.substring(0, 4000);
                     const embeddingResponse = await embeddingsClient.embeddings.create({
                         model: embConfig.modelName,
                         input: textToEmbed,

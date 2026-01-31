@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  reactCompiler: true,
+  // reactCompiler: true, // WYŁĄCZONE - może powodować problemy z Fast Refresh
   allowedDevOrigins: ["http://127.0.0.1:*", "http://localhost:*"],
   async rewrites() {
     return [

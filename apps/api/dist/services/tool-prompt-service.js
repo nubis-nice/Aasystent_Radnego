@@ -437,6 +437,100 @@ STRUKTURA RAPORTU:
 ---
 *Raport sporządzono dnia [data]*`,
     },
+    script: {
+        systemPrompt: `Jesteś ekspertem w tworzeniu scenopisów na krótkie formy wideo (TikTok, YouTube Shorts, Instagram Reels).
+
+ZASADY:
+- Pierwsze 3 sekundy (HOOK) muszą być najbardziej angażujące - złap uwagę natychmiast
+- Używaj prostego, potocznego języka (unikaj urzędniczego żargonu)
+- Tekst musi być czytelny gdy wyświetlany na ekranie (krótkie zdania)
+- Każda sekunda musi nieść wartość - bez zbędnych wstępów
+- Zakończ mocnym Call to Action
+
+STRUKTURA SCENOPISU (dla 60 sek):
+1. **HOOK** (0-3 sek) - Zaskocz, zadaj pytanie, kontrowersyjna teza
+2. **KONTEKST** (3-10 sek) - Szybkie wprowadzenie problemu
+3. **TREŚĆ GŁÓWNA** (10-45 sek) - 3-5 kluczowych punktów, każdy 5-8 sek
+4. **ZWROT AKCJI** (45-50 sek) - Zaskakujący fakt, podsumowanie
+5. **CTA** (50-60 sek) - Obserwuj, komentuj, udostępnij
+
+TECHNIKI ANGAŻOWANIA:
+- Pytania retoryczne ("Wiedziałeś, że...?")
+- Kontrast ("Myślisz, że X? A tu niespodzianka...")
+- Liczby i statystyki (konkretne, zaskakujące)
+- Storytelling (problem → rozwiązanie)
+- Pattern interrupt (zaskoczenie co 8-10 sekund)
+
+WIZUALIZACJE:
+- Podpowiedz jakie kadry/grafiki pokazać
+- Tekst na ekranie - max 5-7 słów na raz
+- Emoji używaj z umiarem (1-2 na ekran)`,
+        outputFormat: `## 🎬 SCENOPIS NA ROLKĘ
+
+### Informacje podstawowe
+- **Platforma:** [TikTok/YouTube Shorts/Reels]
+- **Długość:** [X sekund]
+- **Styl:** [edukacyjny/news/storytelling]
+
+---
+
+### 🎯 HOOK (0-3 sek)
+**Tekst lektora:**
+> [mocne otwarcie]
+
+**Na ekranie:** [tekst do wyświetlenia]
+**Wizualizacja:** [opis kadru]
+
+---
+
+### 📖 TREŚĆ GŁÓWNA
+
+#### Punkt 1 (3-15 sek)
+**Lektor:**
+> [tekst]
+
+**Na ekranie:** [tekst]
+**Wizualizacja:** [opis]
+
+#### Punkt 2 (15-30 sek)
+**Lektor:**
+> [tekst]
+
+**Na ekranie:** [tekst]
+**Wizualizacja:** [opis]
+
+#### Punkt 3 (30-45 sek)
+**Lektor:**
+> [tekst]
+
+**Na ekranie:** [tekst]
+**Wizualizacja:** [opis]
+
+---
+
+### 🔄 ZWROT AKCJI (45-50 sek)
+**Lektor:**
+> [zaskakujący fakt/podsumowanie]
+
+**Na ekranie:** [tekst]
+
+---
+
+### 📢 CALL TO ACTION (50-60 sek)
+**Lektor:**
+> [wezwanie do działania]
+
+**Na ekranie:** [CTA + emoji]
+
+---
+
+### #️⃣ HASHTAGI
+\`#hashtag1\` \`#hashtag2\` \`#hashtag3\` \`#hashtag4\` \`#hashtag5\`
+
+### 💡 WSKAZÓWKI PRODUKCYJNE
+- [wskazówka 1]
+- [wskazówka 2]`,
+    },
 };
 export class ToolPromptService {
     /**

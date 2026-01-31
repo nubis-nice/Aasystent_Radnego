@@ -17,6 +17,17 @@ import {
   AIToolOrchestrator,
   shouldUseOrchestrator,
 } from "../services/ai-tool-orchestrator.js";
+import { UniversalToolOrchestrator } from "../orchestrator/index.js";
+import { registerAllTools } from "../tools/index.js";
+
+// Zarejestruj narzędzia przy starcie
+let toolsRegistered = false;
+function ensureToolsRegistered() {
+  if (!toolsRegistered) {
+    registerAllTools();
+    toolsRegistered = true;
+  }
+}
 import {
   ToolPromptService,
   type ToolType as BackendToolType,
@@ -363,13 +374,41 @@ export const chatRoutes = async (fastify) => {
       // PHASE 0.5: AI TOOL ORCHESTRATOR - Zaawansowane wyszukiwanie
       // Sprawdzamy czy pytanie wymaga głębokiego researchu z wieloma narzędziami
       // ========================================================================
-      if (shouldUseOrchestrator(message)) {
+
+      // Orchestrator v2 z function calling - DOMYŚLNIE WŁĄCZONY
+      // Model sam decyduje które narzędzia użyć, bez regexowych triggerów
+      // Ustaw USE_ORCHESTRATOR_V1=true aby wrócić do starego systemu
+      const USE_ORCHESTRATOR_V2 = process.env.USE_ORCHESTRATOR_V1 !== "true";
+
+      // v2: zawsze aktywny, model decyduje czy użyć narzędzi
+      // v1: regexowe triggery w shouldUseOrchestrator
+      const shouldUseTools =
+        USE_ORCHESTRATOR_V2 || shouldUseOrchestrator(message);
+
+      if (shouldUseTools) {
         console.log(
-          `[Chat] Deep research detected, using AI Tool Orchestrator`,
+          `[Chat] Tool orchestration triggered (v${USE_ORCHESTRATOR_V2 ? "2" : "1"})`,
         );
 
         try {
-          const orchestrator = new AIToolOrchestrator(userId as string);
+          // Zarejestruj narzędzia dla v2
+          if (USE_ORCHESTRATOR_V2) {
+            ensureToolsRegistered();
+          }
+
+          // Pobierz konfigurację AI dla v2 (używamy "llm" jako functionType)
+          const orchConfig = USE_ORCHESTRATOR_V2
+            ? await getAIConfig(userId as string, "llm")
+            : null;
+
+          const orchestrator = USE_ORCHESTRATOR_V2
+            ? new UniversalToolOrchestrator(userId as string, {
+                provider: (orchConfig?.provider || provider) as any,
+                model: orchConfig?.model || model,
+                baseUrl: orchConfig?.baseUrl || baseUrl,
+                apiKey: orchConfig?.apiKey || apiKey,
+              })
+            : new AIToolOrchestrator(userId as string);
 
           // Pobierz kontekst konwersacji
           const conversationContext = (history || [])
@@ -377,10 +416,32 @@ export const chatRoutes = async (fastify) => {
             .map((m) => `${m.role}: ${m.content}`)
             .join("\n");
 
-          const orchestratorResult = await orchestrator.process(
+          const rawResult = await orchestrator.process(
             message,
             conversationContext,
           );
+
+          // Normalizuj wynik - różne struktury dla v1 i v2
+          const orchestratorResult = USE_ORCHESTRATOR_V2
+            ? {
+                // Adapter dla v2 -> format v1
+                intent: {
+                  primaryIntent:
+                    (rawResult as any).toolsUsed?.[0] || "simple_answer",
+                  requiresDeepSearch: false,
+                },
+                toolResults:
+                  (rawResult as any).toolsUsed?.map((t: string) => ({
+                    tool: t,
+                    success: true,
+                    data: (rawResult as any).response,
+                  })) || [],
+                synthesizedResponse: (rawResult as any).response || "",
+                sources: [],
+                totalTimeMs: (rawResult as any).executionTimeMs || 0,
+                warnings: [],
+              }
+            : rawResult;
 
           // Sprawdź czy to akcja kalendarza/zadań (krótka odpowiedź OK)
           const actionTools = [

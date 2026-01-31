@@ -1743,9 +1743,10 @@ Zawrzyj:
 
       for (const doc of docs) {
         try {
+          // nomic-embed-text ma limit ~2000 tokenów (~4000 znaków)
           const textToEmbed = `${doc.title || ""}\n\n${
             doc.content || ""
-          }`.substring(0, 8000);
+          }`.substring(0, 4000);
 
           const embeddingResponse = await embeddingsClient.embeddings.create({
             model: embConfig.modelName,

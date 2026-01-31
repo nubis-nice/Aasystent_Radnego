@@ -64,6 +64,10 @@ app.register(cors, {
     ) {
       return cb(null, true);
     }
+    // Allow production domains
+    if (origin === "https://app.ozzilab.online") {
+      return cb(null, true);
+    }
     cb(new Error("Not allowed by CORS"), false);
   },
   credentials: true,

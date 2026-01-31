@@ -4,7 +4,7 @@ import { getEmbeddingsClient, getAIConfig } from "../ai/index.js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
 interface DiagnosticStatus {
@@ -89,9 +89,10 @@ export const diagnosticsRoutes: FastifyPluginAsync = async (fastify) => {
 
       for (const doc of docsWithoutEmbeddings) {
         try {
+          // nomic-embed-text ma limit ~2000 tokenów (~4000 znaków)
           const textToEmbed = `${doc.title || ""}\n\n${
             doc.content || ""
-          }`.slice(0, 8000);
+          }`.slice(0, 4000);
 
           const embeddingResponse = await embeddingsClient.embeddings.create({
             model: embConfig.modelName,
@@ -114,7 +115,7 @@ export const diagnosticsRoutes: FastifyPluginAsync = async (fastify) => {
           errors.push(
             `${doc.title}: ${
               err instanceof Error ? err.message : "Unknown error"
-            }`
+            }`,
           );
         }
       }
@@ -278,7 +279,7 @@ async function checkRAGStatus(userId: string): Promise<RAGDiagnostic> {
  * Sprawdza status providerów Research
  */
 async function checkResearchStatus(
-  userId: string
+  userId: string,
 ): Promise<ResearchDiagnostic> {
   type ProviderRow = {
     provider: string | null;
@@ -350,7 +351,7 @@ async function checkResearchStatus(
 
         return acc;
       },
-      {}
+      {},
     );
 
     const totalProviders = Object.keys(providers).length;
@@ -402,7 +403,7 @@ async function checkResearchStatus(
  * Sprawdza status modelu transkrypcji
  */
 async function checkTranscriptionStatus(
-  userId: string
+  userId: string,
 ): Promise<TranscriptionDiagnostic> {
   try {
     // Pobierz domyślną konfigurację API
@@ -449,7 +450,7 @@ async function checkTranscriptionStatus(
  * Sprawdza status modelu embedding
  */
 async function checkEmbeddingStatus(
-  userId: string
+  userId: string,
 ): Promise<EmbeddingDiagnostic> {
   try {
     // Pobierz domyślną konfigurację API

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   CheckCircle2,
   Circle,
@@ -12,6 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -66,6 +67,8 @@ export function TasksWidget() {
   const [filter, setFilter] = useState<"all" | "pending" | "completed">(
     "pending",
   );
+  const channelRef = useRef<RealtimeChannel | null>(null);
+  const userIdRef = useRef<string | null>(null);
 
   const [newTask, setNewTask] = useState<{
     title: string;
@@ -108,31 +111,57 @@ export function TasksWidget() {
     }
   }, [filter]);
 
+  // Supabase Realtime zamiast polling
   useEffect(() => {
-    loadTasks();
+    let mounted = true;
 
-    // Auto-refresh co 30 sekund
-    const interval = setInterval(() => {
-      loadTasks();
-    }, 30000);
+    const setup = async () => {
+      // Pobierz początkowe dane
+      await loadTasks();
 
-    return () => clearInterval(interval);
-  }, [loadTasks]);
+      // Pobierz userId
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!mounted || !user) return;
+      userIdRef.current = user.id;
 
-  // Nasłuchuj na zdarzenie tasks-refresh
-  useEffect(() => {
-    const handleRefresh = () => {
-      console.log("[TasksWidget] Received refresh event");
-      loadTasks();
+      // Utwórz subscription WebSocket
+      const channel = supabase
+        .channel("tasks-changes")
+        .on(
+          "postgres_changes",
+          {
+            event: "*", // INSERT, UPDATE, DELETE
+            schema: "public",
+            table: "user_tasks",
+            filter: `user_id=eq.${user.id}`,
+          },
+          () => {
+            if (mounted) {
+              console.log("[TasksWidget] Realtime update received");
+              loadTasks();
+            }
+          },
+        )
+        .subscribe((status) => {
+          console.log("[TasksWidget] Realtime status:", status);
+        });
+
+      channelRef.current = channel;
     };
 
-    window.addEventListener("tasks-refresh", handleRefresh);
-    window.addEventListener("dashboard-refresh", handleRefresh);
+    setup();
+
     return () => {
-      window.removeEventListener("tasks-refresh", handleRefresh);
-      window.removeEventListener("dashboard-refresh", handleRefresh);
+      mounted = false;
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
     };
-  }, [loadTasks]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter]); // Tylko filter jako zależność
 
   const handleAddTask = async () => {
     if (!newTask.title) return;

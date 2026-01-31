@@ -61,8 +61,15 @@ export interface GeoportalSearchParams {
 const GEOPORTAL_SERVICES = {
   ULDK: "https://uldk.gugik.gov.pl",
   PRG: "https://mapy.geoportal.gov.pl/wss/service/PZGIK/PRG/WFS/AdministrativeBoundaries",
-  BDOT: "https://mapy.geoportal.gov.pl/wss/service/PZGIK/BDOT/WFS/Topographic",
-  EMUiA: "https://mapy.geoportal.gov.pl/wss/service/PZGIK/EMUiA/WFS/Addresses",
+  BDOT_BUDYNKI:
+    "https://mapy.geoportal.gov.pl/wss/service/PZGIK/BDOT10k/WFS/StatystykiBudynkow",
+  BDOT_DROGI:
+    "https://mapy.geoportal.gov.pl/wss/service/PZGIK/BDOT10k/WFS/StatystykiSieciKomunikacyjnej",
+  BDOT_WODY:
+    "https://mapy.geoportal.gov.pl/wss/service/PZGIK/BDOT10k/WFS/StatystykiSieciWodnej",
+  ADRESY:
+    "https://mapy.geoportal.gov.pl/wss/ext/KrajowaIntegracjaNumeracjiAdresowej",
+  PRNG: "https://mapy.geoportal.gov.pl/wss/service/PZGiK/PRNG/WFS/GeographicalNames",
   MPZP: "https://integracja.gugik.gov.pl/cgi-bin/KraijsowaBazaMPZP",
   ORTHOPHOTO:
     "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMTS/StandardResolution",
@@ -147,15 +154,23 @@ export class GeoportalService {
     if (cached) return cached;
 
     try {
+      // ULDK API domyślnie używa EPSG:2180, dodajemy SRID=4326 dla WGS84
       const response = await this.httpClient.get(
         `${GEOPORTAL_SERVICES.ULDK}/`,
         {
           params: {
             request: "GetParcelByXY",
-            xy: `${lon},${lat}`,
-            result: "teryt,voivodeship,county,commune,region,parcel,geom_wkt",
+            xy: `${lon},${lat},4326`,
+            result: "teryt,voivodeship,county,commune,region,parcel",
           },
         },
+      );
+
+      console.log(
+        `[GeoportalService] ULDK response for ${lat},${lon}:`,
+        typeof response.data === "string"
+          ? response.data.substring(0, 100)
+          : "not string",
       );
 
       if (response.data && response.data !== "-1") {
@@ -182,7 +197,7 @@ export class GeoportalService {
   }
 
   /**
-   * Wyszukiwanie adresów (EMUiA)
+   * Wyszukiwanie adresów - GUGIK geocoder z fallback na Nominatim (OpenStreetMap)
    */
   async searchAddress(
     query: string,
@@ -192,8 +207,11 @@ export class GeoportalService {
     const cached = this.getCached<AddressPoint[]>(cacheKey);
     if (cached) return cached;
 
+    let results: AddressPoint[] = [];
+
+    // 1. Próbuj GUGIK geocoder (niestabilny, timeout 8s)
     try {
-      // Użycie GUGIK geocoder API
+      console.log(`[GeoportalService] Trying GUGIK geocoder for: "${query}"`);
       const response = await this.httpClient.get(
         "https://services.gugik.gov.pl/uug/",
         {
@@ -201,33 +219,92 @@ export class GeoportalService {
             request: "GetAddress",
             address: query,
           },
+          timeout: 8000, // 8s timeout
         },
       );
 
-      const results: AddressPoint[] = [];
       if (response.data?.results) {
-        for (const item of response.data.results.slice(0, limit)) {
+        for (const item of Object.values(response.data.results).slice(
+          0,
+          limit,
+        )) {
+          const r = item as Record<string, string>;
           results.push({
-            id: item.id || `addr_${results.length}`,
-            street: item.street,
-            houseNumber: item.number,
-            postalCode: item.postcode,
-            city: item.city || item.locality,
-            voivodeship: item.voivodeship,
+            id: r.id || `gugik_${results.length}`,
+            street: r.street,
+            houseNumber: r.number,
+            postalCode: r.postcode,
+            city: r.city || r.locality,
+            voivodeship: r.voivodeship,
             coordinates: {
-              lat: parseFloat(item.y),
-              lon: parseFloat(item.x),
+              lat: parseFloat(r.y),
+              lon: parseFloat(r.x),
             },
           });
         }
+        console.log(
+          `[GeoportalService] GUGIK returned ${results.length} results`,
+        );
       }
-
-      this.setCache(cacheKey, results);
-      return results;
-    } catch (error) {
-      console.error("[GeoportalService] Error searching address:", error);
-      return [];
+    } catch {
+      console.warn(
+        "[GeoportalService] GUGIK geocoder timeout/error - trying Photon API fallback",
+      );
     }
+
+    // 2. Fallback: Photon API (Komoot) - stabilny, bez limitu User-Agent
+    if (results.length === 0) {
+      try {
+        console.log(`[GeoportalService] Trying Photon API for: "${query}"`);
+        const photonResponse = await this.httpClient.get(
+          "https://photon.komoot.io/api/",
+          {
+            params: {
+              q: query,
+              limit: limit,
+              lat: 52.0, // Centrum Polski dla lepszych wyników
+              lon: 19.0,
+            },
+            timeout: 10000,
+          },
+        );
+
+        if (
+          photonResponse.data?.features &&
+          Array.isArray(photonResponse.data.features)
+        ) {
+          for (const feature of photonResponse.data.features) {
+            const props = feature.properties || {};
+            const coords = feature.geometry?.coordinates || [];
+            // Filtruj tylko wyniki z Polski
+            if (props.country === "Poland" || props.country === "Polska") {
+              results.push({
+                id: `photon_${props.osm_id || results.length}`,
+                street: props.street,
+                houseNumber: props.housenumber,
+                postalCode: props.postcode,
+                city: props.city || props.town || props.village || props.name,
+                voivodeship: props.state,
+                coordinates: {
+                  lat: coords[1],
+                  lon: coords[0],
+                },
+              });
+            }
+          }
+          console.log(
+            `[GeoportalService] Photon returned ${results.length} results`,
+          );
+        }
+      } catch (photonError) {
+        console.error("[GeoportalService] Photon also failed:", photonError);
+      }
+    }
+
+    if (results.length > 0) {
+      this.setCache(cacheKey, results);
+    }
+    return results;
   }
 
   /**
@@ -394,19 +471,26 @@ export class GeoportalService {
         if (parcel) results.parcels.push(parcel);
       }
 
-      // Wyszukaj adresy
-      if (params.address || params.query) {
-        results.addresses = await this.searchAddress(
-          params.address || params.query || "",
-          10,
-        );
-      }
-
-      // Wyszukaj gminy
+      // Wyszukaj gminy (PRG WFS - stabilne)
       if (params.municipality || params.query) {
         results.units = await this.searchMunicipalities(
           params.municipality || params.query || "",
         );
+      }
+
+      // GUGIK geocoder - próbuj wyszukać adresy (niestabilny, timeout 8s)
+      if (params.address || params.query) {
+        try {
+          results.addresses = await this.searchAddress(
+            params.address || params.query || "",
+            10,
+          );
+        } catch {
+          // Geocoder niestabilny - loguj warning
+          console.warn(
+            "[GeoportalService] GUGIK geocoder timeout - service unstable",
+          );
+        }
       }
     } catch (error) {
       console.error("[GeoportalService] Search error:", error);
@@ -497,6 +581,119 @@ export class GeoportalService {
     } catch (error) {
       console.error("[GeoportalService] Error parsing GML:", error);
       return [];
+    }
+  }
+
+  /**
+   * Pobierz statystyki budynków dla gminy (BDOT10k)
+   */
+  async getBuildingStats(terytCode: string): Promise<{
+    totalBuildings: number;
+    residentialBuildings: number;
+    commercialBuildings: number;
+    industrialBuildings: number;
+    publicBuildings: number;
+  } | null> {
+    const cacheKey = `bdot:buildings:${terytCode}`;
+    const cached =
+      this.getCached<ReturnType<typeof this.getBuildingStats>>(cacheKey);
+    if (cached) return cached;
+
+    try {
+      const response = await this.httpClient.get(
+        GEOPORTAL_SERVICES.BDOT_BUDYNKI,
+        {
+          params: {
+            SERVICE: "WFS",
+            VERSION: "2.0.0",
+            REQUEST: "GetFeature",
+            TYPENAMES: "ms:BDOT10k_BUBD_A",
+            CQL_FILTER: `TERYT LIKE '${terytCode}%'`,
+            OUTPUTFORMAT: "application/json",
+            COUNT: 1000,
+          },
+        },
+      );
+
+      if (response.data?.features) {
+        const features = response.data.features as Array<{
+          properties?: { X_KOD?: string };
+        }>;
+        const stats = {
+          totalBuildings: features.length,
+          residentialBuildings: features.filter((f) =>
+            f.properties?.X_KOD?.startsWith("BUBD01"),
+          ).length,
+          commercialBuildings: features.filter((f) =>
+            f.properties?.X_KOD?.startsWith("BUBD02"),
+          ).length,
+          industrialBuildings: features.filter((f) =>
+            f.properties?.X_KOD?.startsWith("BUBD03"),
+          ).length,
+          publicBuildings: features.filter((f) =>
+            f.properties?.X_KOD?.startsWith("BUBD04"),
+          ).length,
+        };
+        this.setCache(cacheKey, stats);
+        return stats;
+      }
+      return null;
+    } catch (error) {
+      console.error("[GeoportalService] Error fetching building stats:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Wyszukaj działkę po nazwie obrębu i numerze
+   */
+  async getParcelByName(
+    precinctName: string,
+    parcelNumber: string,
+  ): Promise<ParcelInfo | null> {
+    const cacheKey = `parcel:name:${precinctName}:${parcelNumber}`;
+    const cached = this.getCached<ParcelInfo>(cacheKey);
+    if (cached) return cached;
+
+    try {
+      const response = await this.httpClient.get(
+        `${GEOPORTAL_SERVICES.ULDK}/`,
+        {
+          params: {
+            request: "GetParcelByIdOrNr",
+            id: `${precinctName} ${parcelNumber}`,
+            result: "teryt,voivodeship,county,commune,region,parcel",
+          },
+        },
+      );
+
+      console.log(
+        `[GeoportalService] ULDK response for ${precinctName} ${parcelNumber}:`,
+        typeof response.data === "string"
+          ? response.data.substring(0, 100)
+          : "not string",
+      );
+
+      if (response.data && !response.data.includes("-1")) {
+        const lines = response.data.split("\n").filter((l: string) => l.trim());
+        if (lines.length > 0) {
+          const parts = lines[0].split("|");
+          const parcel: ParcelInfo = {
+            id: parts[0] || "",
+            voivodeship: parts[1] || "",
+            county: parts[2] || "",
+            municipality: parts[3] || "",
+            precinct: parts[4] || "",
+            parcelNumber: parts[5] || "",
+          };
+          this.setCache(cacheKey, parcel);
+          return parcel;
+        }
+      }
+      return null;
+    } catch (error) {
+      console.error("[GeoportalService] Error fetching parcel by name:", error);
+      return null;
     }
   }
 }

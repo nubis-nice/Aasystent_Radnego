@@ -2,7 +2,31 @@
 
 ## W toku
 
-_Brak aktywnych zadań_
+### Integracja API zewnętrznych
+
+- [ ] Monitoring dostępności GUGIK geocoder (obecnie niedostępny)
+- [ ] Rozszerzenie BDOT10k o nowe warstwy danych
+- [ ] Integracja z TERYT GUS (pełna)
+
+## Ukończone ostatnio
+
+### 2026-01-27 — Orchestrator v2 + GUS API + Geoportal
+
+- [x] **Orchestrator v2** - Universal Tool Orchestrator
+  - Native function calling (OpenAI/Ollama)
+  - Prompt-based fallback dla innych modeli
+  - Tool Registry (`orchestrator/tool-registry.ts`)
+  - Modułowe narzędzia (`tools/gus-statistics.ts`, `tools/session-search.ts`)
+- [x] **GUS BDL API** - naprawione
+  - `findGmina` → `/units/search`
+  - `getDataByUnit` → `unit-parent-id` + filtrowanie lokalne
+  - Filtrowanie po ID zmiennych (`60`, `65`, `68`)
+  - Test: urodzenia w Drawnie 2024 ✅
+- [x] **Geoportal.gov.pl** - naprawione
+  - PRG WFS → dane gmin (działa)
+  - ULDK → działki po współrzędnych/ID (działa)
+  - GUGIK geocoder → **wyłączony** (niedostępny)
+  - Logika: rozdzielenie adresów vs gmin
 
 ## Do zrobienia
 

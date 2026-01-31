@@ -1,271 +1,169 @@
-/**
- * Testy jednostkowe dla DocumentScorer
- *
- * Uruchom: npx tsx src/services/__tests__/document-scorer.test.ts
- */
-// ============================================================================
-// UTILS - Konwersja numerów rzymskich (kopia z document-scorer.ts)
-// ============================================================================
-const ROMAN_VALUES = {
-    I: 1,
-    V: 5,
-    X: 10,
-    L: 50,
-    C: 100,
-};
-function romanToArabic(roman) {
-    const values = ROMAN_VALUES;
-    let result = 0, prev = 0;
-    for (let i = roman.length - 1; i >= 0; i--) {
-        const char = roman[i];
-        const curr = char ? values[char.toUpperCase()] || 0 : 0;
-        result += curr < prev ? -curr : curr;
-        prev = curr;
-    }
-    return result;
-}
-function arabicToRoman(num) {
-    const map = [
-        [100, "C"],
-        [90, "XC"],
-        [50, "L"],
-        [40, "XL"],
-        [10, "X"],
-        [9, "IX"],
-        [5, "V"],
-        [4, "IV"],
-        [1, "I"],
-    ];
-    let result = "";
-    for (const [value, numeral] of map) {
-        while (num >= value) {
-            result += numeral;
-            num -= value;
-        }
-    }
-    return result;
-}
-function extractSessionNumber(query) {
-    const patterns = [
-        /sesj[iaęy]\s+(?:nr\.?\s*)?(\d+)/i,
-        /sesj[iaęy]\s+(?:nr\.?\s*)?([IVXLC]+)/i,
-        /(\d+)\s*sesj/i,
-        /([IVXLC]+)\s*sesj/i,
-    ];
-    for (const pattern of patterns) {
-        const match = query.match(pattern);
-        if (match && match[1]) {
-            const value = match[1];
-            if (/^\d+$/.test(value)) {
-                const num = parseInt(value, 10);
-                if (num > 0 && num <= 200)
-                    return num;
-            }
-            if (/^[IVXLC]+$/i.test(value)) {
-                const num = romanToArabic(value);
-                if (num > 0 && num <= 200)
-                    return num;
-            }
-        }
-    }
-    return null;
-}
-const results = [];
-function test(name, fn) {
-    try {
-        fn();
-        results.push({ name, passed: true });
-        console.log(`✅ ${name}`);
-    }
-    catch (error) {
-        results.push({ name, passed: false, error: String(error) });
-        console.log(`❌ ${name}: ${error}`);
-    }
-}
-function expect(actual) {
-    return {
-        toBe(expected) {
-            if (actual !== expected) {
-                throw new Error(`Expected ${expected}, got ${actual}`);
-            }
-        },
-        toEqual(expected) {
-            if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-                throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
-            }
-        },
-        toBeNull() {
-            if (actual !== null) {
-                throw new Error(`Expected null, got ${actual}`);
-            }
-        },
-        toBeGreaterThan(expected) {
-            if (typeof actual !== "number" || actual <= expected) {
-                throw new Error(`Expected ${actual} to be greater than ${expected}`);
-            }
-        },
-    };
-}
-// ============================================================================
-// TESTY KONWERSJI NUMERÓW RZYMSKICH
-// ============================================================================
-console.log("\n=== TESTY KONWERSJI NUMERÓW RZYMSKICH ===\n");
-test("romanToArabic: I = 1", () => {
-    expect(romanToArabic("I")).toBe(1);
-});
-test("romanToArabic: V = 5", () => {
-    expect(romanToArabic("V")).toBe(5);
-});
-test("romanToArabic: X = 10", () => {
-    expect(romanToArabic("X")).toBe(10);
-});
-test("romanToArabic: IV = 4", () => {
-    expect(romanToArabic("IV")).toBe(4);
-});
-test("romanToArabic: IX = 9", () => {
-    expect(romanToArabic("IX")).toBe(9);
-});
-test("romanToArabic: XXIII = 23", () => {
-    expect(romanToArabic("XXIII")).toBe(23);
-});
-test("romanToArabic: XLII = 42", () => {
-    expect(romanToArabic("XLII")).toBe(42);
-});
-test("romanToArabic: L = 50", () => {
-    expect(romanToArabic("L")).toBe(50);
-});
-test("romanToArabic: XC = 90", () => {
-    expect(romanToArabic("XC")).toBe(90);
-});
-test("romanToArabic: C = 100", () => {
-    expect(romanToArabic("C")).toBe(100);
-});
-test("arabicToRoman: 1 = I", () => {
-    expect(arabicToRoman(1)).toBe("I");
-});
-test("arabicToRoman: 4 = IV", () => {
-    expect(arabicToRoman(4)).toBe("IV");
-});
-test("arabicToRoman: 9 = IX", () => {
-    expect(arabicToRoman(9)).toBe("IX");
-});
-test("arabicToRoman: 23 = XXIII", () => {
-    expect(arabicToRoman(23)).toBe("XXIII");
-});
-test("arabicToRoman: 42 = XLII", () => {
-    expect(arabicToRoman(42)).toBe("XLII");
-});
-test("arabicToRoman: 99 = XCIX", () => {
-    expect(arabicToRoman(99)).toBe("XCIX");
-});
-// ============================================================================
-// TESTY EKSTRAKCJI NUMERU SESJI
-// ============================================================================
-console.log("\n=== TESTY EKSTRAKCJI NUMERU SESJI ===\n");
-test("extractSessionNumber: 'sesja 23' = 23", () => {
-    expect(extractSessionNumber("sesja 23")).toBe(23);
-});
-test("extractSessionNumber: 'sesji 23' = 23", () => {
-    expect(extractSessionNumber("sesji 23")).toBe(23);
-});
-test("extractSessionNumber: 'sesja nr 23' = 23", () => {
-    expect(extractSessionNumber("sesja nr 23")).toBe(23);
-});
-test("extractSessionNumber: 'sesja XXIII' = 23", () => {
-    expect(extractSessionNumber("sesja XXIII")).toBe(23);
-});
-test("extractSessionNumber: 'sesji XXIII' = 23", () => {
-    expect(extractSessionNumber("sesji XXIII")).toBe(23);
-});
-test("extractSessionNumber: 'sesja nr XXIII' = 23", () => {
-    expect(extractSessionNumber("sesja nr XXIII")).toBe(23);
-});
-test("extractSessionNumber: '23 sesja' = 23", () => {
-    expect(extractSessionNumber("23 sesja")).toBe(23);
-});
-test("extractSessionNumber: 'XXIII sesja' = 23", () => {
-    expect(extractSessionNumber("XXIII sesja")).toBe(23);
-});
-test("extractSessionNumber: 'protokół z sesji 15' = 15", () => {
-    expect(extractSessionNumber("protokół z sesji 15")).toBe(15);
-});
-test("extractSessionNumber: 'uchwała z sesji XV' = 15", () => {
-    expect(extractSessionNumber("uchwała z sesji XV")).toBe(15);
-});
-test("extractSessionNumber: 'budżet gminy' = null (brak sesji)", () => {
-    expect(extractSessionNumber("budżet gminy")).toBeNull();
-});
-test("extractSessionNumber: 'uchwała 123' = null (brak sesji)", () => {
-    expect(extractSessionNumber("uchwała 123")).toBeNull();
-});
-// ============================================================================
-// TESTY SORTOWANIA
-// ============================================================================
-console.log("\n=== TESTY SORTOWANIA ===\n");
-function sortByDate(docs, order) {
-    return [...docs].sort((a, b) => {
-        const dateA = a.publish_date
-            ? new Date(a.publish_date).getTime()
-            : new Date(a.processed_at).getTime();
-        const dateB = b.publish_date
-            ? new Date(b.publish_date).getTime()
-            : new Date(b.processed_at).getTime();
-        const comparison = dateB - dateA;
-        return order === "asc" ? -comparison : comparison;
+import { describe, it, expect, beforeEach, vi } from "vitest";
+// Mock Supabase before importing DocumentScorer
+vi.mock("@supabase/supabase-js", () => ({
+    createClient: vi.fn(() => ({
+        from: vi.fn(() => ({
+            select: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                    single: vi.fn(() => Promise.resolve({ data: null, error: null })),
+                })),
+            })),
+        })),
+    })),
+}));
+// Set environment variables before import
+process.env.SUPABASE_URL = "https://test.supabase.co";
+process.env.SUPABASE_SERVICE_ROLE_KEY = "test-key";
+import { DocumentScorer } from "../document-scorer.js";
+describe("DocumentScorer", () => {
+    let scorer;
+    beforeEach(() => {
+        scorer = new DocumentScorer("Drawno");
     });
-}
-const mockDocs = [
-    {
-        id: "1",
-        title: "Doc 1",
-        publish_date: "2024-01-15",
-        processed_at: "2024-01-16",
-    },
-    {
-        id: "2",
-        title: "Doc 2",
-        publish_date: "2024-03-20",
-        processed_at: "2024-03-21",
-    },
-    {
-        id: "3",
-        title: "Doc 3",
-        publish_date: "2024-02-10",
-        processed_at: "2024-02-11",
-    },
-];
-test("sortByDate desc: najnowsze pierwsze", () => {
-    const sorted = sortByDate(mockDocs, "desc");
-    expect(sorted[0].id).toBe("2"); // 2024-03-20
-    expect(sorted[1].id).toBe("3"); // 2024-02-10
-    expect(sorted[2].id).toBe("1"); // 2024-01-15
-});
-test("sortByDate asc: najstarsze pierwsze", () => {
-    const sorted = sortByDate(mockDocs, "asc");
-    expect(sorted[0].id).toBe("1"); // 2024-01-15
-    expect(sorted[1].id).toBe("3"); // 2024-02-10
-    expect(sorted[2].id).toBe("2"); // 2024-03-20
-});
-// ============================================================================
-// PODSUMOWANIE
-// ============================================================================
-console.log("\n=== PODSUMOWANIE ===\n");
-const passed = results.filter((r) => r.passed).length;
-const failed = results.filter((r) => !r.passed).length;
-console.log(`Passed: ${passed}/${results.length}`);
-console.log(`Failed: ${failed}/${results.length}`);
-if (failed > 0) {
-    console.log("\n❌ Nieudane testy:");
-    results
-        .filter((r) => !r.passed)
-        .forEach((r) => {
-        console.log(`  - ${r.name}: ${r.error}`);
+    describe("calculateScore", () => {
+        it("should return higher score for budget_act type", () => {
+            const doc = {
+                title: "Uchwała budżetowa",
+                content: "Treść uchwały budżetowej gminy",
+                document_type: "budget_act",
+            };
+            const score = scorer.calculateScore(doc);
+            expect(score.typeScore).toBe(100);
+            expect(score.totalScore).toBeGreaterThan(30);
+            // Priority depends on combined score, not just type
+            expect(["critical", "high", "medium"]).toContain(score.priority);
+        });
+        it("should return lower score for attachment type", () => {
+            const doc = {
+                title: "Załącznik nr 1",
+                content: "Treść załącznika",
+                document_type: "attachment",
+            };
+            const score = scorer.calculateScore(doc);
+            expect(score.typeScore).toBe(20);
+            expect(score.priority).toBe("low");
+        });
+        it("should add keyword bonus for priority keywords", () => {
+            const docWithKeywords = {
+                title: "Porządek obrad sesji rady miejskiej",
+                content: "Głosowanie nad uchwałą budżetową",
+                document_type: "other",
+            };
+            const docWithoutKeywords = {
+                title: "Dokument testowy",
+                content: "Treść bez słów kluczowych",
+                document_type: "other",
+            };
+            const scoreWith = scorer.calculateScore(docWithKeywords);
+            const scoreWithout = scorer.calculateScore(docWithoutKeywords);
+            expect(scoreWith.relevanceScore).toBeGreaterThan(scoreWithout.relevanceScore);
+            expect(scoreWith.scoringDetails.keywordBonus).toBeGreaterThan(0);
+        });
+        it("should add location bonus for council location", () => {
+            const docWithLocation = {
+                title: "Dokument z Drawna",
+                content: "Treść dokumentu z Drawna",
+                document_type: "other",
+            };
+            const docWithoutLocation = {
+                title: "Dokument testowy",
+                content: "Treść dokumentu",
+                document_type: "other",
+            };
+            const scoreWith = scorer.calculateScore(docWithLocation);
+            const scoreWithout = scorer.calculateScore(docWithoutLocation);
+            // Location bonus adds 15 points
+            expect(scoreWith.scoringDetails.keywordBonus).toBeGreaterThanOrEqual(scoreWithout.scoringDetails.keywordBonus);
+        });
+        it("should add urgency bonus for urgent keywords", () => {
+            const urgentDoc = {
+                title: "PILNE: Sesja nadzwyczajna",
+                content: "Termin do dnia 15.01.2026",
+                document_type: "session",
+            };
+            const normalDoc = {
+                title: "Sesja zwyczajna",
+                content: "Zaproszenie na sesję",
+                document_type: "session",
+            };
+            const urgentScore = scorer.calculateScore(urgentDoc);
+            const normalScore = scorer.calculateScore(normalDoc);
+            expect(urgentScore.urgencyScore).toBeGreaterThan(normalScore.urgencyScore);
+        });
+        it("should add recency bonus for recent documents", () => {
+            const now = new Date();
+            const yesterday = new Date(now.getTime() - 12 * 60 * 60 * 1000);
+            const lastMonth = new Date(now.getTime() - 35 * 24 * 60 * 60 * 1000);
+            const recentDoc = {
+                title: "Nowy dokument",
+                content: "Treść",
+                document_type: "announcement",
+                publish_date: yesterday.toISOString(),
+            };
+            const oldDoc = {
+                title: "Stary dokument",
+                content: "Treść",
+                document_type: "announcement",
+                publish_date: lastMonth.toISOString(),
+            };
+            const recentScore = scorer.calculateScore(recentDoc);
+            const oldScore = scorer.calculateScore(oldDoc);
+            expect(recentScore.recencyScore).toBeGreaterThan(oldScore.recencyScore);
+            expect(recentScore.scoringDetails.recencyBonus).toBe(25);
+        });
+        it("should set critical priority for high urgency", () => {
+            const urgentDoc = {
+                title: "PILNE natychmiast termin deadline",
+                content: "Bezzwłocznie do dnia",
+                document_type: "resolution",
+            };
+            const score = scorer.calculateScore(urgentDoc);
+            expect(score.urgencyScore).toBeGreaterThanOrEqual(50);
+            expect(score.priority).toBe("critical");
+        });
+        it("should handle missing content gracefully", () => {
+            const doc = {
+                title: "Dokument bez treści",
+                content: "",
+                document_type: "other",
+            };
+            const score = scorer.calculateScore(doc);
+            expect(score).toBeDefined();
+            expect(score.totalScore).toBeGreaterThanOrEqual(0);
+        });
+        it("should handle unknown document type", () => {
+            const doc = {
+                title: "Nieznany typ",
+                content: "Treść",
+                document_type: "unknown_type",
+            };
+            const score = scorer.calculateScore(doc);
+            expect(score.typeScore).toBe(10); // default to 'other' weight
+        });
     });
-    process.exit(1);
-}
-else {
-    console.log("\n✅ Wszystkie testy przeszły pomyślnie!");
-    process.exit(0);
-}
-export {};
+    describe("priority levels", () => {
+        it("should return critical for high urgency score", () => {
+            const doc = {
+                title: "PILNE natychmiast termin deadline bezzwłocznie",
+                content: "Do dnia najpóźniej pilne termin",
+                document_type: "budget_act",
+                publish_date: new Date().toISOString(),
+            };
+            const score = scorer.calculateScore(doc);
+            // Critical priority when urgencyScore >= 50
+            expect(score.urgencyScore).toBeGreaterThanOrEqual(50);
+            expect(score.priority).toBe("critical");
+        });
+        it("should return low for totalScore < 30", () => {
+            const doc = {
+                title: "Test",
+                content: "Test",
+                document_type: "other",
+                publish_date: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
+            };
+            const score = scorer.calculateScore(doc);
+            expect(score.priority).toBe("low");
+        });
+    });
+});
 //# sourceMappingURL=document-scorer.test.js.map

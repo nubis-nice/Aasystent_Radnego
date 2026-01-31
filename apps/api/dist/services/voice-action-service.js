@@ -36,12 +36,24 @@ const VOICE_ACTION_PROMPT = `Jesteś asystentem głosowym Stefan. Analizujesz po
 - **document_search** → "znajdź dokument", "szukaj w dokumentach", "pokaż uchwały"
 - **document_open** → "otwórz dokument", "pokaż mi [nazwa]"
 
-## SZYBKIE NARZĘDZIA:
-- **quick_tool** → "utwórz interpelację", "napisz pismo", "generuj protokół", "analiza budżetu", "przygotuj wystąpienie", "projekt uchwały", "raport"
+## SZYBKIE NARZĘDZIA (TYLKO gdy użytkownik chce UTWORZYĆ/WYGENEROWAĆ dokument):
+- **quick_tool** → WYMAGA słów akcji: "utwórz", "napisz", "generuj", "przygotuj", "stwórz"
+  Przykłady: "utwórz interpelację", "napisz pismo", "generuj protokół", "przygotuj wystąpienie", "stwórz projekt uchwały", "napisz scenopis na rolkę", "generuj scenariusz TikTok"
+
+⚠️ UWAGA: Jeśli użytkownik pyta o "posiedzenie", "komisja", "sesja", "relacja", "artykuł", "gazeta", "Drawnowiny" BEZ słów akcji → to jest **document_search**, NIE quick_tool!
+  - "posiedzenie komisji budżetowej" → document_search (szuka dokumentów)
+  - "co było na komisji" → document_search
+  - "protokół z sesji" → document_search (szuka istniejącego protokołu)
+  - "relacja z sesji" → document_search (szuka relacji/artykułu)
+  - "Drawnowiny relacja z sesji" → document_search (szuka artykułu w gazecie)
+  - "generuj protokół z sesji" → quick_tool (tworzy nowy protokół)
+  
+⚠️ SŁOWA WYKLUCZAJĄCE quick_tool (wskazują na WYSZUKIWANIE):
+  - "relacja", "artykuł", "gazeta", "Drawnowiny", "informacja o", "co było", "znajdź", "szukaj", "pokaż"
 
 Dla quick_tool ZAWSZE wyciągnij:
-- toolName: typ narzędzia (interpelacja/pismo/protokół/budżet/wystąpienie/uchwała/raport)
-- toolTopic: temat/przedmiot (np. "remont ul. Głównej")
+- toolName: typ narzędzia (interpelacja/pismo/protokół/budżet/wystąpienie/uchwała/raport/scenopis)
+- toolTopic: temat/przedmiot (np. "remont ul. Głównej", "sesja rady o budżecie")
 - toolContext: dodatkowy kontekst z rozmowy
 - toolRecipient: adresat jeśli wspomniany
 
@@ -242,20 +254,39 @@ export class VoiceActionService {
                 return this.handleCalendarAdd(entities);
             case "calendar_list":
                 return this.handleCalendarList();
+            case "calendar_edit":
+                return this.handleCalendarEdit(entities);
+            case "calendar_delete":
+                return this.handleCalendarDelete(entities);
             case "task_add":
                 return this.handleTaskAdd(entities);
             case "task_list":
                 return this.handleTaskList();
             case "task_complete":
                 return this.handleTaskComplete(entities);
+            case "task_delete":
+                return this.handleTaskDelete(entities);
             case "alert_check":
                 return this.handleAlertCheck();
+            case "alert_dismiss":
+                return this.handleAlertDismiss(entities);
             case "document_search":
                 return this.handleDocumentSearch(entities);
+            case "document_open":
+                return this.handleDocumentOpen(entities);
             case "quick_tool":
                 return this.handleQuickTool(entities);
             case "navigate":
                 return this.handleNavigation(entities);
+            case "execute_pending":
+                return this.executePendingAction();
+            case "confirmation_needed":
+            case "clarification_needed":
+                return {
+                    success: true,
+                    actionType,
+                    message: String(entities.clarificationQuestion || "Potrzebuję więcej informacji."),
+                };
             default:
                 return {
                     success: false,
@@ -443,6 +474,243 @@ export class VoiceActionService {
         }
     }
     /**
+     * Edytuj wydarzenie w kalendarzu (zmień termin, tytuł, lokalizację)
+     */
+    async handleCalendarEdit(entities) {
+        const eventTitle = entities.eventTitle;
+        const newDate = entities.eventDate;
+        const newTime = entities.eventTime;
+        const newLocation = entities.eventLocation;
+        const eventId = entities.eventId;
+        // Jeśli nie podano tytułu ani ID, pokaż listę wydarzeń do wyboru
+        if (!eventTitle && !eventId) {
+            const listResult = await this.handleCalendarList();
+            return {
+                ...listResult,
+                actionType: "clarification_needed",
+                message: "Które wydarzenie chcesz zmienić?\n" + (listResult.message || ""),
+            };
+        }
+        try {
+            // Znajdź wydarzenie po tytule lub ID
+            let query = supabase
+                .from("user_calendar_events")
+                .select("*")
+                .eq("user_id", this.userId);
+            if (eventId) {
+                query = query.eq("id", eventId);
+            }
+            else if (eventTitle) {
+                query = query.ilike("title", `%${eventTitle}%`);
+            }
+            const { data: events, error: findError } = await query.limit(5);
+            if (findError)
+                throw findError;
+            if (!events || events.length === 0) {
+                return {
+                    success: false,
+                    actionType: "calendar_edit",
+                    message: `Nie znalazłem wydarzenia "${eventTitle || eventId}".`,
+                };
+            }
+            // Jeśli znaleziono więcej niż 1, poproś o uściślenie
+            if (events.length > 1 && !eventId) {
+                const eventList = events
+                    .map((e) => {
+                    const date = new Date(e.start_date);
+                    return `• "${e.title}" - ${this.formatDate(date)}`;
+                })
+                    .join("\n");
+                return {
+                    success: true,
+                    actionType: "clarification_needed",
+                    message: `Znalazłem ${events.length} wydarzeń pasujących do "${eventTitle}":\n${eventList}\n\nPodaj dokładniejszy tytuł lub datę.`,
+                    data: events,
+                };
+            }
+            const event = events[0];
+            const updateData = {};
+            // Przygotuj dane do aktualizacji
+            if (newDate) {
+                let eventDate = parseNaturalDate(newDate);
+                if (eventDate) {
+                    // Zachowaj oryginalną godzinę jeśli nie podano nowej
+                    if (newTime) {
+                        const [hours, minutes] = newTime.split(":").map(Number);
+                        eventDate.setHours(hours, minutes || 0, 0, 0);
+                    }
+                    else {
+                        const originalDate = new Date(event.start_date);
+                        eventDate.setHours(originalDate.getHours(), originalDate.getMinutes(), 0, 0);
+                    }
+                    updateData.start_date = eventDate.toISOString();
+                    updateData.end_date = new Date(eventDate.getTime() + 60 * 60 * 1000).toISOString();
+                }
+            }
+            else if (newTime) {
+                // Tylko zmiana godziny, bez zmiany daty
+                const eventDate = new Date(event.start_date);
+                const [hours, minutes] = newTime.split(":").map(Number);
+                eventDate.setHours(hours, minutes || 0, 0, 0);
+                updateData.start_date = eventDate.toISOString();
+                updateData.end_date = new Date(eventDate.getTime() + 60 * 60 * 1000).toISOString();
+            }
+            if (newLocation) {
+                updateData.location = newLocation;
+            }
+            // Jeśli nie ma nic do aktualizacji
+            if (Object.keys(updateData).length === 0) {
+                return {
+                    success: true,
+                    actionType: "clarification_needed",
+                    message: `Co chcesz zmienić w wydarzeniu "${event.title}"? Podaj nową datę, godzinę lub miejsce.`,
+                };
+            }
+            // Wykonaj aktualizację
+            const { data: updatedEvent, error: updateError } = await supabase
+                .from("user_calendar_events")
+                .update(updateData)
+                .eq("id", event.id)
+                .eq("user_id", this.userId)
+                .select()
+                .single();
+            if (updateError)
+                throw updateError;
+            const changes = [];
+            if (updateData.start_date) {
+                const newDateObj = new Date(updateData.start_date);
+                changes.push(`termin na ${this.formatDate(newDateObj)} o ${newDateObj.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" })}`);
+            }
+            if (updateData.location) {
+                changes.push(`miejsce na "${updateData.location}"`);
+            }
+            console.log(`[VoiceAction] ✅ Event updated: "${event.title}" - ${changes.join(", ")}`);
+            return {
+                success: true,
+                actionType: "calendar_edit",
+                message: `Zaktualizowałem wydarzenie "${event.title}": zmieniono ${changes.join(", ")}.`,
+                data: updatedEvent,
+                uiAction: {
+                    type: "refresh",
+                    target: "calendar",
+                    data: {
+                        type: "success",
+                        message: `Wydarzenie "${event.title}" zostało zaktualizowane`,
+                    },
+                },
+            };
+        }
+        catch (error) {
+            console.error("[VoiceAction] Calendar edit error:", error);
+            return {
+                success: false,
+                actionType: "calendar_edit",
+                message: "Nie udało się zaktualizować wydarzenia. Spróbuj ponownie.",
+            };
+        }
+    }
+    /**
+     * Usuń wydarzenie z kalendarza
+     */
+    async handleCalendarDelete(entities) {
+        const eventTitle = entities.eventTitle;
+        const eventDate = entities.eventDate;
+        const eventId = entities.eventId;
+        // Jeśli nie podano tytułu ani ID, pokaż listę wydarzeń do wyboru
+        if (!eventTitle && !eventId) {
+            const listResult = await this.handleCalendarList();
+            return {
+                ...listResult,
+                actionType: "clarification_needed",
+                message: "Które wydarzenie chcesz usunąć?\n" + (listResult.message || ""),
+            };
+        }
+        try {
+            // Znajdź wydarzenie po tytule lub ID
+            let query = supabase
+                .from("user_calendar_events")
+                .select("*")
+                .eq("user_id", this.userId);
+            if (eventId) {
+                query = query.eq("id", eventId);
+            }
+            else if (eventTitle) {
+                query = query.ilike("title", `%${eventTitle}%`);
+            }
+            // Jeśli podano datę, zawęź wyszukiwanie
+            if (eventDate) {
+                const parsedDate = parseNaturalDate(eventDate);
+                if (parsedDate) {
+                    const dayStart = new Date(parsedDate);
+                    dayStart.setHours(0, 0, 0, 0);
+                    const dayEnd = new Date(parsedDate);
+                    dayEnd.setHours(23, 59, 59, 999);
+                    query = query
+                        .gte("start_date", dayStart.toISOString())
+                        .lte("start_date", dayEnd.toISOString());
+                }
+            }
+            const { data: events, error: findError } = await query.limit(5);
+            if (findError)
+                throw findError;
+            if (!events || events.length === 0) {
+                return {
+                    success: false,
+                    actionType: "calendar_delete",
+                    message: `Nie znalazłem wydarzenia "${eventTitle || eventId}"${eventDate ? ` na ${eventDate}` : ""}.`,
+                };
+            }
+            // Jeśli znaleziono więcej niż 1, poproś o uściślenie
+            if (events.length > 1 && !eventId) {
+                const eventList = events
+                    .map((e) => {
+                    const date = new Date(e.start_date);
+                    return `• "${e.title}" - ${this.formatDate(date)}`;
+                })
+                    .join("\n");
+                return {
+                    success: true,
+                    actionType: "clarification_needed",
+                    message: `Znalazłem ${events.length} wydarzeń pasujących do "${eventTitle}":\n${eventList}\n\nPodaj dokładniejszy tytuł lub datę, które wydarzenie usunąć.`,
+                    data: events,
+                };
+            }
+            const event = events[0];
+            // Usuń wydarzenie
+            const { error: deleteError } = await supabase
+                .from("user_calendar_events")
+                .delete()
+                .eq("id", event.id)
+                .eq("user_id", this.userId);
+            if (deleteError)
+                throw deleteError;
+            const eventDateObj = new Date(event.start_date);
+            console.log(`[VoiceAction] ✅ Event deleted: "${event.title}" on ${eventDateObj.toISOString()}`);
+            return {
+                success: true,
+                actionType: "calendar_delete",
+                message: `Usunąłem wydarzenie "${event.title}" z ${this.formatDate(eventDateObj)}.`,
+                data: { deletedEvent: event },
+                uiAction: {
+                    type: "refresh",
+                    target: "calendar",
+                    data: {
+                        type: "success",
+                        message: `Wydarzenie "${event.title}" zostało usunięte`,
+                    },
+                },
+            };
+        }
+        catch (error) {
+            console.error("[VoiceAction] Calendar delete error:", error);
+            return {
+                success: false,
+                actionType: "calendar_delete",
+                message: "Nie udało się usunąć wydarzenia. Spróbuj ponownie.",
+            };
+        }
+    }
+    /**
      * Dodaj zadanie
      */
     async handleTaskAdd(entities) {
@@ -584,6 +852,64 @@ export class VoiceActionService {
         }
     }
     /**
+     * Usuń zadanie
+     */
+    async handleTaskDelete(entities) {
+        const taskTitle = entities.taskTitle;
+        if (!taskTitle) {
+            const listResult = await this.handleTaskList();
+            return {
+                ...listResult,
+                actionType: "clarification_needed",
+                message: "Które zadanie chcesz usunąć?\n" + (listResult.message || ""),
+            };
+        }
+        try {
+            const { data: tasks } = await supabase
+                .from("tasks")
+                .select("*")
+                .eq("user_id", this.userId)
+                .ilike("title", `%${taskTitle}%`)
+                .limit(5);
+            if (!tasks || tasks.length === 0) {
+                return {
+                    success: false,
+                    actionType: "task_delete",
+                    message: `Nie znalazłem zadania "${taskTitle}".`,
+                };
+            }
+            if (tasks.length > 1) {
+                const taskList = tasks.map((t) => `• "${t.title}"`).join("\n");
+                return {
+                    success: true,
+                    actionType: "clarification_needed",
+                    message: `Znalazłem ${tasks.length} zadań pasujących do "${taskTitle}":\n${taskList}\n\nPodaj dokładniejszy tytuł.`,
+                    data: tasks,
+                };
+            }
+            const task = tasks[0];
+            await supabase.from("tasks").delete().eq("id", task.id);
+            console.log(`[VoiceAction] ✅ Task deleted: "${task.title}"`);
+            return {
+                success: true,
+                actionType: "task_delete",
+                message: `Usunąłem zadanie: "${task.title}"`,
+                uiAction: {
+                    type: "refresh",
+                    target: "tasks",
+                },
+            };
+        }
+        catch (error) {
+            console.error("[VoiceAction] Task delete error:", error);
+            return {
+                success: false,
+                actionType: "task_delete",
+                message: "Nie udało się usunąć zadania.",
+            };
+        }
+    }
+    /**
      * Sprawdź alerty
      */
     async handleAlertCheck() {
@@ -630,6 +956,47 @@ export class VoiceActionService {
         }
     }
     /**
+     * Odrzuć/zamknij alert
+     */
+    async handleAlertDismiss(entities) {
+        const alertId = entities.alertId;
+        if (!alertId) {
+            return {
+                success: true,
+                actionType: "clarification_needed",
+                message: "Który alert chcesz odrzucić? Podaj ID lub otwórz panel alertów.",
+                uiAction: {
+                    type: "navigate",
+                    target: "/dashboard",
+                },
+            };
+        }
+        try {
+            await supabase
+                .from("processing_logs")
+                .update({ status: "dismissed" })
+                .eq("id", alertId)
+                .eq("user_id", this.userId);
+            return {
+                success: true,
+                actionType: "alert_dismiss",
+                message: "Alert został odrzucony.",
+                uiAction: {
+                    type: "refresh",
+                    target: "alerts",
+                },
+            };
+        }
+        catch (error) {
+            console.error("[VoiceAction] Alert dismiss error:", error);
+            return {
+                success: false,
+                actionType: "alert_dismiss",
+                message: "Nie udało się odrzucić alertu.",
+            };
+        }
+    }
+    /**
      * Wyszukaj dokument
      */
     async handleDocumentSearch(entities) {
@@ -650,6 +1017,73 @@ export class VoiceActionService {
                 target: `/documents?search=${encodeURIComponent(query)}`,
             },
         };
+    }
+    /**
+     * Otwórz konkretny dokument
+     */
+    async handleDocumentOpen(entities) {
+        const documentName = entities.documentName;
+        const documentId = entities.documentId;
+        if (documentId) {
+            return {
+                success: true,
+                actionType: "document_open",
+                message: `Otwieram dokument...`,
+                uiAction: {
+                    type: "navigate",
+                    target: `/documents/${documentId}`,
+                },
+            };
+        }
+        if (!documentName) {
+            return {
+                success: true,
+                actionType: "clarification_needed",
+                message: "Który dokument chcesz otworzyć? Podaj nazwę lub ID.",
+            };
+        }
+        // Szukaj dokumentu po nazwie
+        try {
+            const { data: docs } = await supabase
+                .from("processed_documents")
+                .select("id, title")
+                .eq("user_id", this.userId)
+                .ilike("title", `%${documentName}%`)
+                .limit(5);
+            if (!docs || docs.length === 0) {
+                return {
+                    success: false,
+                    actionType: "document_open",
+                    message: `Nie znalazłem dokumentu "${documentName}".`,
+                };
+            }
+            if (docs.length === 1) {
+                return {
+                    success: true,
+                    actionType: "document_open",
+                    message: `Otwieram: "${docs[0].title}"`,
+                    uiAction: {
+                        type: "navigate",
+                        target: `/documents/${docs[0].id}`,
+                    },
+                };
+            }
+            const docList = docs.map((d) => `• "${d.title}"`).join("\n");
+            return {
+                success: true,
+                actionType: "clarification_needed",
+                message: `Znalazłem ${docs.length} dokumentów:\n${docList}\n\nKtóry chcesz otworzyć?`,
+                data: docs,
+            };
+        }
+        catch (error) {
+            console.error("[VoiceAction] Document open error:", error);
+            return {
+                success: false,
+                actionType: "document_open",
+                message: "Nie udało się otworzyć dokumentu.",
+            };
+        }
     }
     /**
      * Uruchom szybkie narzędzie
@@ -722,6 +1156,31 @@ export class VoiceActionService {
                 path: "/chat?tool=report",
                 description: "Generator szablonów raportów kontroli",
             },
+            scenopis: {
+                name: "Generator scenopisów",
+                path: "/chat?tool=script",
+                description: "Generator scenopisów na rolkę YouTube/TikTok",
+            },
+            scenariusz: {
+                name: "Generator scenopisów",
+                path: "/chat?tool=script",
+                description: "Generator scenopisów na rolkę YouTube/TikTok",
+            },
+            rolka: {
+                name: "Generator scenopisów",
+                path: "/chat?tool=script",
+                description: "Generator scenopisów na rolkę YouTube/TikTok",
+            },
+            tiktok: {
+                name: "Generator scenopisów",
+                path: "/chat?tool=script",
+                description: "Generator scenopisów na rolkę YouTube/TikTok",
+            },
+            reels: {
+                name: "Generator scenopisów",
+                path: "/chat?tool=script",
+                description: "Generator scenopisów na rolkę YouTube/TikTok",
+            },
         };
         // Znajdź pasujące narzędzie
         let tool = toolMap[toolName];
@@ -735,7 +1194,14 @@ export class VoiceActionService {
             }
         }
         if (!tool) {
-            const availableTools = Object.values(toolMap)
+            // Unikalne narzędzia (bez duplikatów aliasów)
+            const uniqueTools = new Map();
+            for (const t of Object.values(toolMap)) {
+                if (!uniqueTools.has(t.path)) {
+                    uniqueTools.set(t.path, t);
+                }
+            }
+            const availableTools = Array.from(uniqueTools.values())
                 .map((t) => `• ${t.name}`)
                 .join("\n");
             return {

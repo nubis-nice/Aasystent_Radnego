@@ -1,7 +1,7 @@
 /**
  * ToolPromptService - Dedykowane prompty systemowe dla narzędzi ChatAI
  */
-export type ToolType = "speech" | "interpelation" | "letter" | "protocol" | "budget" | "application" | "resolution" | "report";
+export type ToolType = "speech" | "interpelation" | "letter" | "protocol" | "budget" | "application" | "resolution" | "report" | "script";
 interface ToolPromptConfig {
     systemPrompt: string;
     outputFormat: string;

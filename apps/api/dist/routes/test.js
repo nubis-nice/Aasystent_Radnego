@@ -76,10 +76,62 @@ export async function testRoutes(fastify) {
             else {
                 return reply.status(400).send({ error: "Missing required parameters" });
             }
-            // Check if provider is semantic search (no adapter needed)
+            // Check if provider is semantic search or statistical (no adapter needed)
             const semanticProviders = ["exa", "perplexity", "tavily", "brave"];
+            const statisticalProviders = ["gus"];
             let result;
-            if (semanticProviders.includes(config.provider)) {
+            if (statisticalProviders.includes(config.provider)) {
+                // Test GUS BDL API connectivity
+                try {
+                    const testUrl = `${config.baseUrl}/subjects?lang=pl&page-size=1`;
+                    const startTime = Date.now();
+                    const headers = {
+                        Accept: "application/json",
+                    };
+                    // GUS uses X-ClientId header for API key
+                    if (config.apiKey) {
+                        headers["X-ClientId"] = config.apiKey;
+                    }
+                    const response = await globalThis.fetch(testUrl, {
+                        method: "GET",
+                        headers,
+                    });
+                    const responseTime = Date.now() - startTime;
+                    if (response.ok) {
+                        result = {
+                            test_type: "connection",
+                            status: "success",
+                            response_time_ms: responseTime,
+                            error_message: null,
+                            error_details: null,
+                            tested_at: new Date().toISOString(),
+                        };
+                    }
+                    else {
+                        const errorText = await response.text();
+                        result = {
+                            test_type: "connection",
+                            status: "error",
+                            response_time_ms: responseTime,
+                            error_message: `HTTP ${response.status}: ${response.statusText} - ${errorText.substring(0, 100)}`,
+                            error_details: null,
+                            tested_at: new Date().toISOString(),
+                        };
+                    }
+                }
+                catch (error) {
+                    const err = error instanceof Error ? error : new Error(String(error));
+                    result = {
+                        test_type: "connection",
+                        status: "error",
+                        response_time_ms: 0,
+                        error_message: err.message,
+                        error_details: null,
+                        tested_at: new Date().toISOString(),
+                    };
+                }
+            }
+            else if (semanticProviders.includes(config.provider)) {
                 // Simple connectivity test for semantic search providers
                 try {
                     // Brave uses different endpoint and auth header

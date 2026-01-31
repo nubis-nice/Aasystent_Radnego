@@ -1121,9 +1121,10 @@ export class DocumentProcessor {
             // ═══════════════════════════════════════════════════════════════════
             // GENEROWANIE EMBEDDINGU I ZAPIS
             // ═══════════════════════════════════════════════════════════════════
+            // nomic-embed-text ma limit ~2000 tokenów (~4000 znaków)
             const embeddingResponse = await this.embeddingsClient.embeddings.create({
                 model: this.embeddingModel,
-                input: text.slice(0, 8000),
+                input: text.slice(0, 4000),
             });
             const embeddingData = embeddingResponse.data[0];
             if (!embeddingData) {

@@ -29,6 +29,8 @@ export interface ScoredDocument {
     processed_at: string;
     metadata: Record<string, unknown>;
     score: DocumentScore;
+    session_number?: number;
+    normalized_publish_date?: string;
 }
 export declare class DocumentScorer {
     private councilLocation;

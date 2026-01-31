@@ -50,6 +50,13 @@ export interface LocaleSettings {
   timezone: string;
   date_format: string;
   time_format: "12h" | "24h";
+  // Dane lokalne gminy/miasta
+  municipality?: string | null;
+  voivodeship?: string | null;
+  postal_code?: string | null;
+  county?: string | null;
+  bip_url?: string | null;
+  council_name?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -80,7 +87,7 @@ export interface CompleteUserSettings {
 // ============================================
 
 export async function getUserProfile(
-  userId: string
+  userId: string,
 ): Promise<UserProfile | null> {
   const { data, error } = await supabase
     .from("user_profiles")
@@ -98,7 +105,7 @@ export async function getUserProfile(
 
 export async function updateUserProfile(
   userId: string,
-  updates: Partial<Omit<UserProfile, "id" | "created_at" | "updated_at">>
+  updates: Partial<Omit<UserProfile, "id" | "created_at" | "updated_at">>,
 ): Promise<UserProfile | null> {
   const { data, error } = await supabase
     .from("user_profiles")
@@ -120,7 +127,7 @@ export async function updateUserProfile(
 // ============================================
 
 export async function getNotificationSettings(
-  userId: string
+  userId: string,
 ): Promise<NotificationSettings | null> {
   const { data, error } = await supabase
     .from("user_notification_settings")
@@ -140,7 +147,7 @@ export async function updateNotificationSettings(
   userId: string,
   updates: Partial<
     Omit<NotificationSettings, "id" | "user_id" | "created_at" | "updated_at">
-  >
+  >,
 ): Promise<NotificationSettings | null> {
   const { data, error } = await supabase
     .from("user_notification_settings")
@@ -162,7 +169,7 @@ export async function updateNotificationSettings(
 // ============================================
 
 export async function getAppearanceSettings(
-  userId: string
+  userId: string,
 ): Promise<AppearanceSettings | null> {
   const { data, error } = await supabase
     .from("user_appearance_settings")
@@ -182,7 +189,7 @@ export async function updateAppearanceSettings(
   userId: string,
   updates: Partial<
     Omit<AppearanceSettings, "id" | "user_id" | "created_at" | "updated_at">
-  >
+  >,
 ): Promise<AppearanceSettings | null> {
   const { data, error } = await supabase
     .from("user_appearance_settings")
@@ -204,7 +211,7 @@ export async function updateAppearanceSettings(
 // ============================================
 
 export async function getLocaleSettings(
-  userId: string
+  userId: string,
 ): Promise<LocaleSettings | null> {
   const { data, error } = await supabase
     .from("user_locale_settings")
@@ -224,20 +231,26 @@ export async function updateLocaleSettings(
   userId: string,
   updates: Partial<
     Omit<LocaleSettings, "id" | "user_id" | "created_at" | "updated_at">
-  >
+  >,
 ): Promise<LocaleSettings | null> {
+  console.log("[updateLocaleSettings] Updating for user:", userId);
+  console.log("[updateLocaleSettings] Updates:", updates);
+
+  // Użyj upsert zamiast update - jeśli rekord nie istnieje, utworzy go
   const { data, error } = await supabase
     .from("user_locale_settings")
-    .update(updates)
-    .eq("user_id", userId)
+    .upsert({ user_id: userId, ...updates }, { onConflict: "user_id" })
     .select()
     .single();
 
   if (error) {
-    console.error("Error updating locale settings:", error);
+    console.error("[updateLocaleSettings] Error:", error);
+    console.error("[updateLocaleSettings] Error code:", error.code);
+    console.error("[updateLocaleSettings] Error details:", error.details);
     return null;
   }
 
+  console.log("[updateLocaleSettings] Success, data:", data);
   return data;
 }
 
@@ -246,7 +259,7 @@ export async function updateLocaleSettings(
 // ============================================
 
 export async function getPrivacySettings(
-  userId: string
+  userId: string,
 ): Promise<PrivacySettings | null> {
   const { data, error } = await supabase
     .from("user_privacy_settings")
@@ -266,7 +279,7 @@ export async function updatePrivacySettings(
   userId: string,
   updates: Partial<
     Omit<PrivacySettings, "id" | "user_id" | "created_at" | "updated_at">
-  >
+  >,
 ): Promise<PrivacySettings | null> {
   const { data, error } = await supabase
     .from("user_privacy_settings")
@@ -288,7 +301,7 @@ export async function updatePrivacySettings(
 // ============================================
 
 export async function getAllUserSettings(
-  userId: string
+  userId: string,
 ): Promise<CompleteUserSettings | null> {
   // Pobierz dane z widoku zbiorczego
   const { data, error } = await supabase

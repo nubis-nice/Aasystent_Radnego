@@ -1,22 +1,26 @@
+import { Buffer } from "node:buffer";
 import { GUSApiService } from "../services/gus-api-service.js";
 import { supabase } from "../lib/supabase.js";
 /**
- * Pobierz klucz API GUS dla użytkownika z bazy danych
+ * Pobierz klucz API GUS dla użytkownika z api_configurations
  */
 async function getUserGUSApiKey(userId) {
     const { data } = await supabase
-        .from("data_sources")
-        .select("metadata")
+        .from("api_configurations")
+        .select("api_key_encrypted")
         .eq("user_id", userId)
-        .eq("type", "statistics")
-        .eq("name", "GUS - Bank Danych Lokalnych")
+        .eq("provider", "gus")
         .single();
-    if (!data?.metadata) {
-        return process.env.GUS_API_KEY || null;
+    if (data?.api_key_encrypted) {
+        // Klucz jest zakodowany w base64
+        try {
+            return Buffer.from(data.api_key_encrypted, "base64").toString("utf-8");
+        }
+        catch {
+            return data.api_key_encrypted;
+        }
     }
-    // TypeScript type assertion dla metadata
-    const metadata = data.metadata;
-    return metadata.apiKey || process.env.GUS_API_KEY || null;
+    return process.env.GUS_API_KEY || null;
 }
 export async function gusRoutes(fastify) {
     // GET /api/gus/units - Lista jednostek terytorialnych
@@ -179,7 +183,7 @@ export async function gusRoutes(fastify) {
             });
         }
     });
-    // POST /api/gus/api-key - Zapisz klucz API użytkownika
+    // POST /api/gus/api-key - Zapisz klucz API użytkownika do api_configurations
     fastify.post("/gus/api-key", async (request, reply) => {
         const userId = request.headers["x-user-id"];
         if (!userId) {
@@ -190,33 +194,46 @@ export async function gusRoutes(fastify) {
             if (!apiKey) {
                 return reply.status(400).send({ error: "Missing apiKey" });
             }
-            // Zapisz klucz w metadata źródła danych GUS
-            const { data: gusSources } = await supabase
-                .from("data_sources")
+            // Zakoduj klucz w base64
+            const encodedKey = Buffer.from(apiKey).toString("base64");
+            // Sprawdź czy istnieje konfiguracja GUS dla użytkownika
+            const { data: existing } = await supabase
+                .from("api_configurations")
                 .select("id")
                 .eq("user_id", userId)
-                .eq("type", "statistics")
-                .eq("name", "GUS - Bank Danych Lokalnych");
-            if (!gusSources || gusSources.length === 0) {
-                return reply.status(404).send({ error: "GUS data source not found" });
+                .eq("provider", "gus")
+                .maybeSingle();
+            let error;
+            if (existing) {
+                // Update istniejącej konfiguracji
+                const result = await supabase
+                    .from("api_configurations")
+                    .update({
+                    api_key_encrypted: encodedKey,
+                    connection_status: "untested",
+                    updated_at: new Date().toISOString(),
+                })
+                    .eq("id", existing.id);
+                error = result.error;
             }
-            // Pobierz istniejące metadata
-            const { data: existingSource } = await supabase
-                .from("data_sources")
-                .select("metadata")
-                .eq("id", gusSources[0].id)
-                .single();
-            const existingMetadata = existingSource?.metadata || {};
-            const { error } = await supabase
-                .from("data_sources")
-                .update({
-                metadata: {
-                    ...existingMetadata,
-                    apiKey: apiKey,
-                    apiKeyUpdatedAt: new Date().toISOString(),
-                },
-            })
-                .eq("id", gusSources[0].id);
+            else {
+                // Insert nowej konfiguracji
+                const result = await supabase.from("api_configurations").insert({
+                    user_id: userId,
+                    provider: "gus",
+                    name: "GUS - Bank Danych Lokalnych",
+                    api_key_encrypted: encodedKey,
+                    base_url: "https://bdl.stat.gov.pl/api/v1",
+                    is_active: true,
+                    is_default: false,
+                    config_type: "statistical",
+                    connection_status: "untested",
+                    auth_method: "api-key",
+                    timeout_seconds: 30,
+                    max_retries: 3,
+                });
+                error = result.error;
+            }
             if (error) {
                 throw error;
             }

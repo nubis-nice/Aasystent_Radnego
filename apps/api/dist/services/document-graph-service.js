@@ -7,6 +7,35 @@ const REFERENCE_PATTERNS = {
     zalacznik: /za[łl][aą]cznik\s+n?r?\.?\s*(\d+)/gi,
     sesja: /sesj[aęi]\s+([IVXLCDM]+|\d+)/gi,
 };
+// Wzorce do wykrywania relacji prawnych (zmienia/uchyla/wykonuje)
+const LEGAL_RELATION_PATTERNS = {
+    // Zmienia uchwałę
+    amends: [
+        /zmienia(?:jąc[aąey]?)?\s+uchwa[łl][ęę]?\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+        /w\s+sprawie\s+zmiany\s+uchwa[łl]y\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+        /nowelizuj[ąe]\s+uchwa[łl][ęę]?\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+    ],
+    // Uchyla uchwałę
+    supersedes: [
+        /uchyla(?:jąc[aąey]?)?\s+uchwa[łl][ęę]?\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+        /traci\s+moc\s+uchwa[łl]a\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+        /w\s+sprawie\s+uchylenia\s+uchwa[łl]y\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+    ],
+    // Wykonuje uchwałę / ustawę
+    implements: [
+        /wykonuj[ąe]\s+uchwa[łl][ęę]?\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+        /na\s+podstawie\s+(?:art\.\s*\d+\s+)?uchwa[łl]y\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+        /w\s+wykonaniu\s+uchwa[łl]y\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+        /realizuj[ąe]\s+uchwa[łl][ęę]?\s+(?:Nr\.?\s*)?([IVXLCDM\d]+[/.-]\d+[/.-]\d+)/gi,
+    ],
+    // Puste tablice dla pozostałych typów (nieużywane tutaj)
+    references: [],
+    contains: [],
+    attachment: [],
+    related: [],
+    responds_to: [],
+    derived_from: [],
+};
 export class DocumentGraphService {
     /**
      * Pobierz wszystkie dokumenty powiązane z danym dokumentem
@@ -171,7 +200,54 @@ export class DocumentGraphService {
                     addedCount++;
             }
         }
+        // Wykryj relacje prawne (zmienia/uchyla/wykonuje)
+        addedCount += await this.detectLegalRelations(documentId, content);
         console.log(`[DocumentGraph] Detected ${addedCount} references for document ${documentId}`);
+        return addedCount;
+    }
+    /**
+     * Wykryj relacje prawne w treści dokumentu (zmienia/uchyla/wykonuje)
+     */
+    async detectLegalRelations(documentId, content) {
+        let addedCount = 0;
+        const relationsToCheck = [
+            "amends",
+            "supersedes",
+            "implements",
+        ];
+        for (const relationType of relationsToCheck) {
+            const patterns = LEGAL_RELATION_PATTERNS[relationType];
+            if (!patterns || patterns.length === 0)
+                continue;
+            for (const pattern of patterns) {
+                // Reset regex lastIndex
+                pattern.lastIndex = 0;
+                const matches = [...content.matchAll(pattern)];
+                for (const match of matches) {
+                    const uchwalaRef = match[1];
+                    if (!uchwalaRef)
+                        continue;
+                    // Szukaj dokumentu po numerze uchwały
+                    const { data: targets } = await supabase
+                        .from("documents")
+                        .select("id")
+                        .or(`title.ilike.%${uchwalaRef}%,metadata->>resolution_number.ilike.%${uchwalaRef}%`)
+                        .neq("id", documentId)
+                        .limit(5);
+                    for (const target of targets || []) {
+                        const result = await this.addRelation(documentId, target.id, relationType, {
+                            referenceText: match[0],
+                            strength: 1.0, // Relacje prawne mają najwyższą siłę
+                            context: `Dokument ${relationType === "amends" ? "zmienia" : relationType === "supersedes" ? "uchyla" : "wykonuje"} uchwałę ${uchwalaRef}`,
+                        });
+                        if (result) {
+                            addedCount++;
+                            console.log(`[DocumentGraph] Found ${relationType} relation: ${documentId} -> ${target.id} (${uchwalaRef})`);
+                        }
+                    }
+                }
+            }
+        }
         return addedCount;
     }
     /**

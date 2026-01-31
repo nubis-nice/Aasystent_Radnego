@@ -8,6 +8,17 @@ import { DocumentQueryService } from "../services/document-query-service.js";
 import { SessionDiscoveryService } from "../services/session-discovery-service.js";
 import { getEmbeddingsClient, getAIConfig } from "../ai/index.js";
 import { AIToolOrchestrator, shouldUseOrchestrator, } from "../services/ai-tool-orchestrator.js";
+import { UniversalToolOrchestrator } from "../orchestrator/index.js";
+import { registerAllTools } from "../tools/index.js";
+// Zarejestruj narzędzia przy starcie
+let toolsRegistered = false;
+function ensureToolsRegistered() {
+    if (!toolsRegistered) {
+        registerAllTools();
+        toolsRegistered = true;
+    }
+}
+import { ToolPromptService, } from "../services/tool-prompt-service.js";
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -87,7 +98,7 @@ export const chatRoutes = async (fastify) => {
         try {
             // Walidacja
             const validatedData = ChatRequestSchema.parse(request.body);
-            const { message, conversationId, includeDocuments, includeMunicipalData, temperature, } = validatedData;
+            const { message, conversationId, includeDocuments, includeMunicipalData, temperature, toolType, } = validatedData;
             // Pobierz użytkownika z headera (zakładamy że auth middleware dodaje user_id)
             const userId = request.headers["x-user-id"];
             if (!userId) {
@@ -297,16 +308,57 @@ export const chatRoutes = async (fastify) => {
             // PHASE 0.5: AI TOOL ORCHESTRATOR - Zaawansowane wyszukiwanie
             // Sprawdzamy czy pytanie wymaga głębokiego researchu z wieloma narzędziami
             // ========================================================================
-            if (shouldUseOrchestrator(message)) {
-                console.log(`[Chat] Deep research detected, using AI Tool Orchestrator`);
+            // Orchestrator v2 z function calling - DOMYŚLNIE WŁĄCZONY
+            // Model sam decyduje które narzędzia użyć, bez regexowych triggerów
+            // Ustaw USE_ORCHESTRATOR_V1=true aby wrócić do starego systemu
+            const USE_ORCHESTRATOR_V2 = process.env.USE_ORCHESTRATOR_V1 !== "true";
+            // v2: zawsze aktywny, model decyduje czy użyć narzędzi
+            // v1: regexowe triggery w shouldUseOrchestrator
+            const shouldUseTools = USE_ORCHESTRATOR_V2 || shouldUseOrchestrator(message);
+            if (shouldUseTools) {
+                console.log(`[Chat] Tool orchestration triggered (v${USE_ORCHESTRATOR_V2 ? "2" : "1"})`);
                 try {
-                    const orchestrator = new AIToolOrchestrator(userId);
+                    // Zarejestruj narzędzia dla v2
+                    if (USE_ORCHESTRATOR_V2) {
+                        ensureToolsRegistered();
+                    }
+                    // Pobierz konfigurację AI dla v2 (używamy "llm" jako functionType)
+                    const orchConfig = USE_ORCHESTRATOR_V2
+                        ? await getAIConfig(userId, "llm")
+                        : null;
+                    const orchestrator = USE_ORCHESTRATOR_V2
+                        ? new UniversalToolOrchestrator(userId, {
+                            provider: (orchConfig?.provider || provider),
+                            model: orchConfig?.model || model,
+                            baseUrl: orchConfig?.baseUrl || baseUrl,
+                            apiKey: orchConfig?.apiKey || apiKey,
+                        })
+                        : new AIToolOrchestrator(userId);
                     // Pobierz kontekst konwersacji
                     const conversationContext = (history || [])
                         .slice(-5)
                         .map((m) => `${m.role}: ${m.content}`)
                         .join("\n");
-                    const orchestratorResult = await orchestrator.process(message, conversationContext);
+                    const rawResult = await orchestrator.process(message, conversationContext);
+                    // Normalizuj wynik - różne struktury dla v1 i v2
+                    const orchestratorResult = USE_ORCHESTRATOR_V2
+                        ? {
+                            // Adapter dla v2 -> format v1
+                            intent: {
+                                primaryIntent: rawResult.toolsUsed?.[0] || "simple_answer",
+                                requiresDeepSearch: false,
+                            },
+                            toolResults: rawResult.toolsUsed?.map((t) => ({
+                                tool: t,
+                                success: true,
+                                data: rawResult.response,
+                            })) || [],
+                            synthesizedResponse: rawResult.response || "",
+                            sources: [],
+                            totalTimeMs: rawResult.executionTimeMs || 0,
+                            warnings: [],
+                        }
+                        : rawResult;
                     // Sprawdź czy to akcja kalendarza/zadań (krótka odpowiedź OK)
                     const actionTools = [
                         "calendar_add",
@@ -573,7 +625,23 @@ export const chatRoutes = async (fastify) => {
                 council: systemPromptContext.councilName,
                 voivodeship: systemPromptContext.voivodeship,
             });
-            const systemPrompt = buildSystemPrompt(systemPromptContext);
+            // Wybierz odpowiedni system prompt - specjalistyczny dla narzędzia lub standardowy
+            let systemPrompt;
+            if (toolType) {
+                // Użyj specjalistycznego promptu dla narzędzia
+                const toolPromptConfig = ToolPromptService.getPromptConfig(toolType);
+                if (toolPromptConfig) {
+                    console.log(`[Chat] Using tool-specific prompt for: ${toolType}`);
+                    systemPrompt = `${toolPromptConfig.systemPrompt}\n\n## WYMAGANY FORMAT ODPOWIEDZI:\n${toolPromptConfig.outputFormat}`;
+                }
+                else {
+                    console.warn(`[Chat] No prompt config for tool: ${toolType}, using default`);
+                    systemPrompt = buildSystemPrompt(systemPromptContext);
+                }
+            }
+            else {
+                systemPrompt = buildSystemPrompt(systemPromptContext);
+            }
             // ========================================================================
             // CONTEXT COMPRESSION - optymalizacja kontekstu dla oszczędności tokenów
             // ========================================================================

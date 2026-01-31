@@ -21,6 +21,7 @@ export interface BackgroundTask {
     completed_at?: string;
 }
 export interface CreateTaskParams {
+    taskId?: string;
     userId: string;
     taskType: TaskType;
     title: string;
@@ -58,6 +59,7 @@ declare class BackgroundTaskService {
         progress?: number;
         description?: string;
         error_message?: string;
+        metadata?: Record<string, unknown>;
     }): Promise<boolean>;
     /**
      * Pobierz zadanie po ID

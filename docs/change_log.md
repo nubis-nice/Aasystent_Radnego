@@ -1,5 +1,122 @@
 # Change Log
 
+## 2026-01-27 — Naprawa GUS BDL API i Geoportal.gov.pl
+
+### GUS BDL API
+
+**Problem:** Narzędzie `gus_statistics` nie zwracało danych demograficznych dla gmin (np. urodzenia w Drawnie).
+
+**Przyczyny:**
+
+1. `getDataByUnit` używał endpointu `/data/by-unit/{unitId}` który zwracał błąd 400
+2. `getGminaStats` używał `getUnits()` bez parametrów, które nie zwracało gmin
+3. Filtrowanie zmiennych używało nazw zamiast ID
+
+**Rozwiązanie:**
+
+1. Zmiana na endpoint `/data/by-variable/{varId}` z parametrem `unit-parent-id`
+2. Użycie `/units/search` do wyszukiwania jednostek
+3. Filtrowanie po ID zmiennych GUS: `60` (urodzenia), `65` (zgony), `68` (przyrost)
+
+**Zmienione pliki:**
+
+- `apps/api/src/services/gus-api-service.ts` — `getDataByUnit`, `getGminaStats`
+- `apps/api/src/tools/gus-statistics.ts` — filtrowanie i mapowanie zmiennych
+
+### Geoportal.gov.pl
+
+**Problem:** Narzędzie `geoportal_spatial` miało timeout i zwracało błędne wyniki.
+
+**Przyczyny:**
+
+1. GUGIK geocoder (`services.gugik.gov.pl/uug/`) niedostępny (timeout 30s)
+2. `getParcelByCoordinates` nie przekazywał SRID dla WGS84
+3. Logika mylił adresy (np. "Choszczeńska 65") z nazwami gmin
+
+**Rozwiązanie:**
+
+1. Wyłączono GUGIK geocoder (niedostępny)
+2. Dodano `SRID=4326` dla współrzędnych WGS84 w ULDK
+3. Rozdzielono logikę: adresy (zawierają numer) vs gminy
+4. Dodano jasny komunikat gdy adres nie znaleziony
+
+**Zmienione pliki:**
+
+- `apps/api/src/services/geoportal-service.ts` — endpointy, `search()`, nowe metody
+- `apps/api/src/tools/public-data-tools.ts` — logika rozpoznawania adresów
+
+### Nowe funkcje GeoportalService
+
+| Metoda                              | Opis                        |
+| ----------------------------------- | --------------------------- |
+| `getBuildingStats(terytCode)`       | Statystyki budynków BDOT10k |
+| `getParcelByName(precinct, number)` | Działka po nazwie obrębu    |
+
+### Status integracji
+
+| Usługa          | Status         | Uwagi                      |
+| --------------- | -------------- | -------------------------- |
+| PRG WFS (gminy) | ✅ działa      | Stabilne                   |
+| ULDK (działki)  | ✅ działa      | Wymaga GPS lub ID TERYT    |
+| GUGIK geocoder  | ⚠️ niestabilny | Wyłączony - częste timeout |
+| GUS BDL API     | ✅ działa      | Naprawione                 |
+
+---
+
+## 2026-01-26 — Rozszerzenie formularza profilu o dane lokalne gminy
+
+### Zakres zmian
+
+Dodano sekcję **"Dane lokalne"** do strony profilu użytkownika (`/settings/profile`) z polami:
+
+- **Nazwa Rady** - np. "Rada Miejska w Drawnie"
+- **Gmina / Miasto** - nazwa jednostki samorządowej
+- **Kod pocztowy** - np. "73-220"
+- **Powiat** - np. "choszczeński"
+- **Województwo** - dropdown z 16 województwami
+- **URL do BIP** - link do Biuletynu Informacji Publicznej
+
+Te dane są używane jako kontekst w rozmowach z AI (system prompt).
+
+### Zmienione pliki
+
+- `apps/frontend/src/app/settings/profile/page.tsx` - nowa sekcja formularza
+- `apps/frontend/src/lib/supabase/settings.ts` - rozszerzenie typu `LocaleSettings`
+- Baza danych: dodane kolumny `postal_code` i `county` do `user_locale_settings`
+
+---
+
+## 2026-01-26 — Naprawa systemu RAG dla modelu nomic-embed-text
+
+### Problem
+
+Transkrypcje i inne dokumenty nie były znajdowane w RAG z powodu niezgodności wymiarów:
+
+- Model `bge-m3` generował **12817** wymiarów
+- Model `nomic-embed-text` generuje **768** wymiarów
+- Baza danych wymagała **1024** wymiarów
+
+### Rozwiązanie
+
+1. **Migracja bazy danych** (`027_update_embeddings_to_768.sql`):
+   - Zmiana kolumn embedding na `vector(768)`
+   - Aktualizacja funkcji `search_processed_documents`, `match_documents`
+   - Przebudowa indeksów ivfflat
+
+2. **Usunięcie parametru `dimensions`** ze wszystkich wywołań `embeddings.create()`:
+   - Ollama nie obsługuje tego parametru
+   - Model nomic-embed-text automatycznie generuje 768 wymiarów
+
+3. **Reindeksacja wszystkich 210 dokumentów** (w tym 3 transkrypcje)
+
+### Zmienione pliki
+
+- `apps/api/migrations/027_update_embeddings_to_768.sql` (nowy)
+- `apps/api/scripts/reindex-sql.ts` (nowy)
+- Wszystkie serwisy generujące embeddingi (usunięcie dimensions)
+
+---
+
 ## 2026-01-26 — Naprawa pipeline generowania treści narzędzi
 
 ### Problem

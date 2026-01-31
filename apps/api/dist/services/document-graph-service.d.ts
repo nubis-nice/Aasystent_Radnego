@@ -79,6 +79,10 @@ export declare class DocumentGraphService {
      */
     detectAndAddReferences(documentId: string): Promise<number>;
     /**
+     * Wykryj relacje prawne w treści dokumentu (zmienia/uchyla/wykonuje)
+     */
+    detectLegalRelations(documentId: string, content: string): Promise<number>;
+    /**
      * Utwórz klaster dokumentów powiązanych
      */
     createCluster(name: string, rootDocumentId: string, options?: {

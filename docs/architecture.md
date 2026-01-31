@@ -14,19 +14,19 @@ Aplikacja składa się z trzech głównych komponentów:
 
 ### Kontenery Docker
 
-| Kontener | Obraz | Port | Funkcja |
-|----------|-------|------|---------|
-| aasystent-postgres | supabase/postgres:15.1.1.61 | 5433 | PostgreSQL + pgvector |
-| aasystent-auth | supabase/gotrue:v2.143.0 | 9999 | Auth (GoTrue) |
-| aasystent-kong | kong:2.8.1 | 54321 | API Gateway |
-| aasystent-rest | postgrest/postgrest:v12.0.1 | 3333 | REST API |
-| aasystent-realtime | supabase/realtime:v2.25.50 | 4000 | WebSocket |
-| aasystent-storage | supabase/storage-api:v0.46.4 | 5000 | Storage API |
-| aasystent-studio | supabase/studio | 54323 | Dashboard |
-| aasystent-meta | supabase/postgres-meta:v0.75.0 | 8080 | DB metadata |
-| aasystent-imgproxy | darthsim/imgproxy:v3.18 | 5001 | Image proxy |
-| aasystent-redis | redis:7-alpine | 6379 | Cache/Queue |
-| aasystent-whisper | speaches/speaches | 8000 | STT/TTS |
+| Kontener           | Obraz                          | Port  | Funkcja               |
+| ------------------ | ------------------------------ | ----- | --------------------- |
+| aasystent-postgres | supabase/postgres:15.1.1.61    | 5433  | PostgreSQL + pgvector |
+| aasystent-auth     | supabase/gotrue:v2.143.0       | 9999  | Auth (GoTrue)         |
+| aasystent-kong     | kong:2.8.1                     | 54321 | API Gateway           |
+| aasystent-rest     | postgrest/postgrest:v12.0.1    | 3333  | REST API              |
+| aasystent-realtime | supabase/realtime:v2.25.50     | 4000  | WebSocket             |
+| aasystent-storage  | supabase/storage-api:v0.46.4   | 5000  | Storage API           |
+| aasystent-studio   | supabase/studio                | 54323 | Dashboard             |
+| aasystent-meta     | supabase/postgres-meta:v0.75.0 | 8080  | DB metadata           |
+| aasystent-imgproxy | darthsim/imgproxy:v3.18        | 5001  | Image proxy           |
+| aasystent-redis    | redis:7-alpine                 | 6379  | Cache/Queue           |
+| aasystent-whisper  | speaches/speaches              | 8000  | STT/TTS               |
 
 ### Role bazodanowe
 
@@ -51,6 +51,7 @@ anon, authenticated, service_role
 ### Tabele (39 tabel w schemacie public)
 
 #### Dokumenty i RAG
+
 - `documents` - główna tabela dokumentów
 - `processed_documents` - przetworzone dokumenty z embeddingami
 - `chunks` - fragmenty do RAG
@@ -58,6 +59,7 @@ anon, authenticated, service_role
 - `document_clusters`, `document_cluster_members` - klastry
 
 #### Użytkownicy
+
 - `user_profiles` - profile użytkowników
 - `user_ai_settings` - ustawienia asystenta AI
 - `user_appearance_settings` - wygląd
@@ -67,16 +69,19 @@ anon, authenticated, service_role
 - `user_document_preferences` - preferencje dokumentów
 
 #### Czat i AI
+
 - `conversations` - konwersacje
 - `messages` - wiadomości
 - `research_reports` - raporty deep research
 
 #### Źródła danych
+
 - `data_sources` - źródła (RSS, API, scraping)
 - `scraped_content` - zescrapowana treść
 - `scraping_logs` - logi scrapingu
 
 #### Zadania i powiadomienia
+
 - `background_tasks` - zadania w tle
 - `notifications` - powiadomienia
 - `gis_notifications` - GIS
@@ -84,6 +89,7 @@ anon, authenticated, service_role
 - `user_tasks` - zadania użytkownika
 
 #### Konfiguracja
+
 - `api_configurations` - konfiguracje AI
 - `provider_capabilities` - możliwości providerów
 
@@ -202,6 +208,7 @@ Frontend → Kong (54321/realtime/v1) → Realtime (4000) → PostgreSQL
 Lokalizacja: `apps/api/migrations/`
 
 Uruchamianie:
+
 ```powershell
 Get-Content "apps/api/migrations/XXX.sql" | docker exec -i aasystent-postgres psql -U postgres -d postgres
 ```
@@ -215,6 +222,7 @@ Get-Content "apps/api/migrations/XXX.sql" | docker exec -i aasystent-postgres ps
 **Problem:** WebSocket Realtime przez Kong zwraca 431 gdy nagłówki są za duże (cookies).
 
 **Rozwiązanie:** Zwiększono bufory w Kong:
+
 ```yaml
 KONG_NGINX_PROXY_LARGE_CLIENT_HEADER_BUFFERS: 4 64k
 KONG_NGINX_HTTP_LARGE_CLIENT_HEADER_BUFFERS: 4 64k
@@ -228,4 +236,38 @@ KONG_NGINX_HTTP_LARGE_CLIENT_HEADER_BUFFERS: 4 64k
 
 ---
 
-## Aktualizacja: 2026-01-26
+## Integracje zewnętrzne
+
+### GUS BDL API
+
+**Base URL:** `https://bdl.stat.gov.pl/api/v1`
+
+| Endpoint                    | Opis                          |
+| --------------------------- | ----------------------------- |
+| `/units/search`             | Wyszukiwanie jednostek (gmin) |
+| `/data/by-variable/{varId}` | Dane statystyczne per zmienna |
+
+**Kluczowe ID zmiennych:**
+
+- `60` — Urodzenia żywe
+- `65` — Zgony ogółem
+- `68` — Przyrost naturalny
+- `450540` — Urodzenia na 1000 ludności
+
+### Geoportal.gov.pl
+
+| Usługa         | URL                                                          | Status                     |
+| -------------- | ------------------------------------------------------------ | -------------------------- |
+| PRG WFS        | `mapy.geoportal.gov.pl/.../PRG/WFS/AdministrativeBoundaries` | ✅ działa                  |
+| ULDK           | `uldk.gugik.gov.pl`                                          | ✅ działa                  |
+| BDOT10k        | `mapy.geoportal.gov.pl/.../BDOT10k/WFS/...`                  | ✅ działa                  |
+| GUGIK geocoder | `services.gugik.gov.pl/uug/`                                 | ⚠️ niestabilny (wyłączony) |
+
+**ULDK parametry:**
+
+- `GetParcelByXY` — działka po współrzędnych (dodaj `,4326` dla WGS84)
+- `GetParcelById` — działka po ID TERYT (np. `141201_1.0001.6509`)
+
+---
+
+## Aktualizacja: 2026-01-27

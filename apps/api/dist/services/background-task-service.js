@@ -18,17 +18,23 @@ class BackgroundTaskService {
      */
     async createTask(params) {
         try {
-            const { data, error } = await this.supabase
-                .from("background_tasks")
-                .insert({
+            const insertData = {
                 user_id: params.userId,
                 task_type: params.taskType,
+                type: params.taskType, // Kolumna 'type' jest NOT NULL w schemacie
                 status: "queued",
                 title: params.title,
                 description: params.description,
                 progress: 0,
                 metadata: params.metadata || {},
-            })
+            };
+            // Użyj predefiniowanego ID jeśli podano
+            if (params.taskId) {
+                insertData.id = params.taskId;
+            }
+            const { data, error } = await this.supabase
+                .from("background_tasks")
+                .insert(insertData)
                 .select("id")
                 .single();
             if (error) {
@@ -172,6 +178,18 @@ class BackgroundTaskService {
             }
             if (updates.error_message) {
                 updateData.error_message = updates.error_message;
+            }
+            // Merge metadata if provided
+            if (updates.metadata) {
+                const { data: existing } = await this.supabase
+                    .from("background_tasks")
+                    .select("metadata")
+                    .eq("metadata->>jobId", jobId)
+                    .single();
+                updateData.metadata = {
+                    ...(existing?.metadata || {}),
+                    ...updates.metadata,
+                };
             }
             const { error } = await this.supabase
                 .from("background_tasks")

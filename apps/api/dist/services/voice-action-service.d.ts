@@ -70,6 +70,14 @@ export declare class VoiceActionService {
      */
     private handleCalendarList;
     /**
+     * Edytuj wydarzenie w kalendarzu (zmień termin, tytuł, lokalizację)
+     */
+    private handleCalendarEdit;
+    /**
+     * Usuń wydarzenie z kalendarza
+     */
+    private handleCalendarDelete;
+    /**
      * Dodaj zadanie
      */
     private handleTaskAdd;
@@ -82,13 +90,25 @@ export declare class VoiceActionService {
      */
     private handleTaskComplete;
     /**
+     * Usuń zadanie
+     */
+    private handleTaskDelete;
+    /**
      * Sprawdź alerty
      */
     private handleAlertCheck;
     /**
+     * Odrzuć/zamknij alert
+     */
+    private handleAlertDismiss;
+    /**
      * Wyszukaj dokument
      */
     private handleDocumentSearch;
+    /**
+     * Otwórz konkretny dokument
+     */
+    private handleDocumentOpen;
     /**
      * Uruchom szybkie narzędzie
      */
