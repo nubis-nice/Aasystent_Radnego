@@ -1,37 +1,4 @@
-# Node
-node_modules
-npm-debug.log*
+.gitignore
 
-# Next.js
-.next
-out
-
-# Env
-.env
-.env.*
-
-# Build
-/dist
-build
-
-# Logs
-*.log
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Editor
-.vscode/*
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/settings.json
-!.vscode/extensions.json
-
-# Docker
-*.pid
-
-# Local data
-/data
-#/apps/api/migrations
-/apps/worker/migrations
+# Ignoring build artifacts
+apps/api/dist/
