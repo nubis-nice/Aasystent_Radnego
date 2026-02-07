@@ -22,6 +22,8 @@ import { semanticDocumentSearch } from "./semantic-document-discovery.js";
 import { semanticWebSearch } from "./semantic-web-search.js";
 import { cascadeSearch } from "./search-cascade.js";
 import { getLLMClient, getAIConfig } from "../ai/index.js";
+import { buildIntentDetectionSystemPrompt } from "../prompts/index.js";
+import { getGUSApiKey } from "./api-key-resolver.js";
 
 export type ToolType =
   | "deep_research"
@@ -79,6 +81,13 @@ export interface ToolExecutionResult {
   success: boolean;
   data: unknown;
   executionTimeMs: number;
+  message?: string;
+  uiAction?: {
+    type: string;
+    target?: string;
+    data?: unknown;
+  };
+  navigationTarget?: string;
   error?: string;
 }
 
@@ -91,109 +100,8 @@ export interface OrchestratorResult {
   warnings: string[];
 }
 
-const INTENT_DETECTION_PROMPT = `Jesteś ekspertem od analizy intencji użytkownika. Wybierz JEDNO narzędzie jako primaryIntent.
-
-# NARZĘDZIA I KIEDY ICH UŻYWAĆ:
-
-## REJESTRY PUBLICZNE (priorytet gdy wymienione wprost):
-- **geoportal_spatial** → działka, parcela, MPZP, mapa, współrzędne, nieruchomość, plan zagospodarowania
-- **teryt_registry** → TERYT, kod terytorialny, jednostka administracyjna, lista gmin/powiatów
-- **krs_registry** → KRS, spółka, stowarzyszenie, fundacja, rejestr sądowy, podmiot prawny
-- **ceidg_registry** → CEIDG, NIP, REGON, działalność gospodarcza, firma jednoosobowa
-- **gdos_environmental** → GDOŚ, Natura 2000, obszar chroniony, rezerwat, park narodowy, ochrona środowiska
-
-## DANE PUBLICZNE:
-- **gus_statistics** → GUS, statystyki, ludność, demografia, dane gminy, mieszkańcy
-- **isap_legal** → ustawa, rozporządzenie, akt prawny, dziennik ustaw, przepis prawa
-- **eu_funds** → dotacje UE, fundusze europejskie, nabory, konkursy, dofinansowanie
-
-## LOKALNE DOKUMENTY:
-- **session_search** → sesja rady + NUMER (np. "sesja 15", "sesja nr 8")
-- **rag_search** → uchwała, protokół, dokument lokalny (bez numeru sesji)
-- **document_fetch** → pobranie konkretnego dokumentu po numerze/referencji
-- **budget_analysis** → budżet gminy, wydatki, dochody, finanse
-
-## ŹRÓDŁA DANYCH:
-- **data_sources_search** → "przeszukaj źródła", "scraping", "pobierz dane ze źródeł", "wyszukaj w źródłach danych", "aktualizuj dane", "synchronizuj źródła", "uruchom wyszukiwanie"
-
-## WYSZUKIWANIE W INTERNECIE Z WERYFIKACJĄ:
-- **verified_web_search** → "sprawdź w internecie", "zweryfikuj informację", "czy to prawda", "fake news", "potwierdź", "wiarygodność", "wyszukaj z weryfikacją"
-
-## WYCZERPUJĄCE WYSZUKIWANIE KASKADOWE:
-- **exhaustive_search** → "przeszukaj wszystko", "wyczerpujące wyszukiwanie", "przeszukaj wszystkie źródła", "znajdź gdziekolwiek", "szukaj wszędzie", "pełne wyszukiwanie", "sprawdź wszystkie bazy"
-
-## SESJE RADY (bez numeru):
-- **session_search** → "ostatnia sesja", "sesja grudniowa", "sesja rady", "sesja z grudnia" (gdy brak konkretnego numeru, szukaj najnowszej)
-
-## INNE:
-- **person_search** → pytanie o KONKRETNĄ OSOBĘ z imienia/nazwiska
-- **youtube_search** → nagranie, wideo, transmisja, YouTube
-- **deep_research** → szerokie wyszukiwanie w internecie
-- **legal_analysis** → analiza prawna, interpretacja przepisów
-- **simple_answer** → proste pytanie, powitanie, bez potrzeby narzędzi
-
-## KALENDARZ I ZADANIA:
-- **calendar_add** → "dodaj do kalendarza", "zaplanuj spotkanie", "wpisz wydarzenie na [data]"
-- **calendar_list** → "pokaż kalendarz", "co mam zaplanowane", "jakie mam spotkania"
-- **calendar_edit** → "zmień termin", "przesuń spotkanie", "zaktualizuj wydarzenie"
-- **calendar_delete** → "usuń z kalendarza", "odwołaj spotkanie", "anuluj wydarzenie"
-- **task_add** → "dodaj zadanie", "zanotuj do zrobienia", "przypomnij mi o"
-- **task_list** → "pokaż zadania", "co mam do zrobienia", "lista zadań"
-- **task_complete** → "oznacz jako zrobione", "ukończ zadanie", "zrobione"
-- **task_delete** → "usuń zadanie", "wykreśl zadanie"
-
-## ALERTY I NAWIGACJA:
-- **alert_check** → "sprawdź alerty", "czy są powiadomienia", "co nowego"
-- **quick_tool** → "utwórz interpelację", "napisz pismo", "generuj protokół", "analiza budżetu", "przygotuj wystąpienie", "wystąpienie na sesji", "przemówienie", "speech", "projekt wystąpienia"
-- **app_navigate** → "przejdź do pulpitu", "otwórz dokumenty", "pokaż ustawienia", "idź do czatu"
-
-# PRZYKŁADY MAPOWANIA:
-
-Pytanie: "znajdź działkę 123/4 w Drawnie" → geoportal_spatial
-Pytanie: "sprawdź spółkę ABC sp. z o.o." → krs_registry
-Pytanie: "NIP 5261234567" → ceidg_registry
-Pytanie: "obszary Natura 2000 w gminie" → gdos_environmental
-Pytanie: "kod TERYT gminy Drawno" → teryt_registry
-Pytanie: "ile mieszkańców ma gmina" → gus_statistics
-Pytanie: "ustawa o samorządzie gminnym" → isap_legal
-Pytanie: "dotacje na OZE" → eu_funds
-Pytanie: "co było na sesji nr 15" → session_search (sessionNumbers: [15])
-Pytanie: "znajdź uchwałę o podatkach" → rag_search
-Pytanie: "kim jest Jan Kowalski" → person_search (personNames: ["Jan Kowalski"])
-Pytanie: "cześć, jak się masz" → simple_answer
-Pytanie: "dodaj spotkanie na jutro o 10" → calendar_add
-Pytanie: "co mam zaplanowane na ten tydzień" → calendar_list
-Pytanie: "dodaj zadanie przygotować raport" → task_add
-Pytanie: "pokaż moje zadania" → task_list
-
-# REGUŁY PRIORYTETÓW:
-1. Jeśli pytanie zawiera "TERYT" → teryt_registry
-2. Jeśli pytanie zawiera "KRS" lub "spółka/stowarzyszenie/fundacja" → krs_registry
-3. Jeśli pytanie zawiera "NIP"/"REGON"/"CEIDG" lub "działalność gospodarcza" → ceidg_registry
-4. Jeśli pytanie zawiera "działka"/"MPZP"/"Geoportal" → geoportal_spatial
-5. Jeśli pytanie zawiera "Natura 2000"/"GDOŚ"/"rezerwat"/"park narodowy" → gdos_environmental
-6. Jeśli pytanie zawiera "GUS"/"statystyki"/"ludność" → gus_statistics
-7. Jeśli pytanie zawiera "ustawa"/"rozporządzenie"/"ISAP" → isap_legal
-8. Jeśli pytanie zawiera "dotacje"/"fundusze europejskie"/"UE" → eu_funds
-9. Jeśli pytanie zawiera "sesja" + NUMER → session_search
-10. Jeśli pytanie zawiera imię i nazwisko osoby → person_search
-
-Odpowiedz TYLKO w formacie JSON:
-{
-  "primaryIntent": "tool_name",
-  "secondaryIntents": [],
-  "confidence": 0.95,
-  "entities": {
-    "personNames": [],
-    "documentRefs": [],
-    "sessionNumbers": [],
-    "dates": [],
-    "topics": ["główny temat zapytania"]
-  },
-  "requiresDeepSearch": false,
-  "estimatedTimeSeconds": 10,
-  "userFriendlyDescription": "Krótki opis co robię"
-}`;
+// INTENT_DETECTION_PROMPT przeniesiony do: apps/api/src/prompts/intent-detection.json
+// Używamy buildIntentDetectionSystemPrompt() z prompts/index.ts
 
 export class AIToolOrchestrator {
   private userId: string;
@@ -260,7 +168,7 @@ export class AIToolOrchestrator {
       const completion = await this.llmClient.chat.completions.create({
         model: this.model,
         messages: [
-          { role: "system", content: INTENT_DETECTION_PROMPT },
+          { role: "system", content: buildIntentDetectionSystemPrompt() },
           {
             role: "user",
             content: context
@@ -339,11 +247,43 @@ export class AIToolOrchestrator {
     for (const tool of tools) {
       const startTime = Date.now();
       try {
-        const data = await this.executeSingleTool(tool, userMessage, intent);
+        const rawResult = await this.executeSingleTool(
+          tool,
+          userMessage,
+          intent,
+        );
+
+        let normalizedData: unknown = rawResult;
+        let message: string | undefined;
+        let uiAction: ToolExecutionResult["uiAction"];
+        let navigationTarget: string | undefined;
+
+        if (rawResult && typeof rawResult === "object") {
+          const obj = rawResult as Record<string, unknown>;
+          if ("message" in obj && typeof obj.message === "string") {
+            message = obj.message;
+          }
+          if ("uiAction" in obj) {
+            uiAction = obj.uiAction as ToolExecutionResult["uiAction"];
+          }
+          if (
+            "navigationTarget" in obj &&
+            typeof obj.navigationTarget === "string"
+          ) {
+            navigationTarget = obj.navigationTarget;
+          }
+          if ("data" in obj) {
+            normalizedData = obj.data as unknown;
+          }
+        }
+
         results.push({
           tool,
           success: true,
-          data,
+          data: normalizedData,
+          message,
+          uiAction,
+          navigationTarget,
           executionTimeMs: Date.now() - startTime,
         });
 
@@ -359,7 +299,7 @@ export class AIToolOrchestrator {
         ];
 
         if (searchTools.includes(tool)) {
-          const searchData = data as {
+          const searchData = normalizedData as {
             results?: unknown[];
             documents?: unknown[];
             ragResults?: unknown[];
@@ -586,8 +526,22 @@ export class AIToolOrchestrator {
       }
 
       case "gus_statistics": {
-        const gusService = new GUSApiService();
-        const gminaName = intent.entities.topics[0] || "";
+        // Pobierz klucz API z bazy danych
+        const gusApiKey = await getGUSApiKey(this.userId);
+        console.log(
+          `[Orchestrator] GUS: apiKey=${gusApiKey ? "present" : "missing"}, topics=${JSON.stringify(intent.entities.topics)}`,
+        );
+        const gusService = new GUSApiService(gusApiKey || undefined);
+        // Wyciągnij nazwę gminy z topics lub z userMessage
+        let gminaName = intent.entities.topics[0] || "";
+        if (!gminaName) {
+          // Spróbuj wyciągnąć nazwę gminy z wiadomości
+          const gminaMatch = userMessage.match(
+            /(?:gmina|gminie|gmin[ąę]|w\s+)[\s:]*([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+)/i,
+          );
+          if (gminaMatch) gminaName = gminaMatch[1];
+        }
+        console.log(`[Orchestrator] GUS: searching for gmina="${gminaName}"`);
         if (!gminaName) {
           const subjects = await gusService.getSubjects();
           return {
@@ -596,14 +550,25 @@ export class AIToolOrchestrator {
             subjects: subjects.slice(0, 20),
           };
         }
-        const unit = await gusService.findGmina(gminaName);
+        let unit = await gusService.findGmina(gminaName);
+
+        // Fallback: spróbuj województwo (level 2) gdy użytkownik podał np. "woj. mazowieckie"
+        if (!unit) {
+          const voivodeships = await gusService.getUnits({ level: 2 });
+          unit =
+            voivodeships.find((u) =>
+              u.name.toLowerCase().includes(gminaName.toLowerCase()),
+            ) || null;
+        }
+
         if (!unit) {
           return {
             type: "not_found",
-            message: `Nie znaleziono jednostki terytorialnej: ${gminaName}`,
-            suggestion: "Spróbuj podać pełną nazwę gminy",
+            message: `Nie znaleziono jednostki "${gminaName}" w bazie GUS BDL`,
+            suggestion: "Podaj pełną nazwę gminy lub województwa",
           };
         }
+
         const stats = await gusService.getGminaStats(unit.id);
         return {
           type: "gmina_stats",
@@ -870,8 +835,9 @@ export class AIToolOrchestrator {
         }> = [];
 
         try {
-          // GUS - statystyki
-          const gusService = new GUSApiService();
+          // GUS - statystyki (pobierz klucz z bazy)
+          const gusKey = await getGUSApiKey(this.userId);
+          const gusService = new GUSApiService(gusKey || undefined);
           const gusData = await gusService.getSubjects();
           if (gusData && gusData.length > 0) {
             apiResults.push({
@@ -997,12 +963,37 @@ export class AIToolOrchestrator {
   }> {
     if (!this.llmClient) throw new Error("LLM client not initialized");
 
-    const successfulResults = toolResults.filter((r) => r.success && r.data);
+    const successfulResults = toolResults.filter(
+      (r) =>
+        r.success && ((r.data !== undefined && r.data !== null) || r.message),
+    );
     if (successfulResults.length === 0) {
       return {
         response: "Przepraszam, nie udało się znaleźć odpowiednich informacji.",
         sources: [],
       };
+    }
+
+    // Jeśli to akcja (kalendarz/zadania/nawigacja) z komunikatem, zwróć go bez dalszej syntezy
+    for (const result of successfulResults) {
+      if (
+        result.message &&
+        [
+          "calendar_add",
+          "calendar_list",
+          "calendar_edit",
+          "calendar_delete",
+          "task_add",
+          "task_list",
+          "task_complete",
+          "task_delete",
+          "alert_check",
+          "quick_tool",
+          "app_navigate",
+        ].includes(result.tool)
+      ) {
+        return { response: result.message, sources: [] };
+      }
     }
 
     const sources: Array<{ title: string; url?: string; type: string }> = [];
@@ -1491,8 +1482,12 @@ export function shouldUseOrchestrator(message: string): boolean {
     /radny|radnego|radnej/i,
     /nagran|nagranie|wideo|video|youtube/i,
     /obejrz|transmisj|film.*sesj/i,
-    /statystyk|demograficzn|ludno[śs][ćc]|mieszka[ńn]c/i,
-    /gus|g\.u\.s\./i,
+    /statystyk|demograficzn|ludno[śs][ćc]|mieszka[ńn]c|narodzin|przyrost.*naturaln/i,
+    /urodze|urodzi|zgon|umiera/i,
+    /gus|g\.u\.s\.|bank.*danych.*lokalnych/i,
+    /ile.*mieszka|ilu.*mieszka|liczba.*mieszka|populacj/i,
+    /gestosc|gęstość|gęstoś|zaludnien/i,
+    /ile.*urodz|ilu.*urodz|liczba.*urodz|ile.*zgon|ilu.*zgon/i,
     /ustaw[aęy]|rozporz[aą]dzeni|akt.*prawn/i,
     /dziennik\s*ustaw|monitor\s*polski|isap/i,
     /fundusz[eóy].*europejsk|dotacj[eai].*uni|ue\s+fund/i,

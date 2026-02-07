@@ -19,7 +19,7 @@ export interface UseContinuousListeningOptions {
 }
 
 export function useContinuousListening(
-  options: UseContinuousListeningOptions = {}
+  options: UseContinuousListeningOptions = {},
 ) {
   const {
     onCommand,
@@ -61,15 +61,16 @@ export function useContinuousListening(
   }, []);
 
   useEffect(() => {
-    loadSettings();
-  }, [loadSettings]);
+    void loadSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const detectWakeWord = useCallback(
     (transcription: string): boolean => {
       const lowerTranscription = transcription.toLowerCase();
       return lowerTranscription.includes(wakeWord);
     },
-    [wakeWord]
+    [wakeWord],
   );
 
   const handleVoiceActivity = useCallback(async () => {
@@ -118,7 +119,7 @@ export function useContinuousListening(
             } catch (error) {
               if (onError) {
                 onError(
-                  error instanceof Error ? error.message : "Processing error"
+                  error instanceof Error ? error.message : "Processing error",
                 );
               }
             }

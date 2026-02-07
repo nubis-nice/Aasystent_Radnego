@@ -17,6 +17,7 @@ interface SendMessageRequest {
   includeDocuments?: boolean;
   includeMunicipalData?: boolean;
   temperature?: number;
+  toolType?: string; // Typ narzędzia dla specjalistycznego generowania
 }
 
 interface Citation {
@@ -108,9 +109,10 @@ export async function sendMessage(
       });
 
       if (!response.ok) {
-        const errorData = await response
-          .json()
-          .catch(() => ({ error: "Unknown error" }));
+        const errorData = await response.json().catch(() => ({
+          error: "SERVER_ERROR",
+          message: `Błąd serwera: HTTP ${response.status} ${response.statusText}`,
+        }));
 
         // Obsługa specjalnych błędów API (quota, invalid key)
         if (
@@ -123,17 +125,28 @@ export async function sendMessage(
             billingUrl?: string;
             settingsUrl?: string;
           };
+          /* eslint-disable @typescript-eslint/no-explicit-any */
           (apiError as any).code = errorData.error;
           (apiError as any).details = errorData.details;
           (apiError as any).billingUrl = errorData.billingUrl;
           (apiError as any).settingsUrl = errorData.settingsUrl;
+          /* eslint-enable @typescript-eslint/no-explicit-any */
           throw apiError;
         }
 
         const errorMessage =
           errorData.message ||
+          errorData.details ||
           errorData.error ||
           `HTTP ${response.status}: ${response.statusText}`;
+
+        // Loguj pełne dane błędu dla debugowania
+        console.error("[Chat API] Error response:", {
+          status: response.status,
+          error: errorData.error,
+          message: errorData.message,
+          details: errorData.details,
+        });
 
         // Don't retry on client errors (4xx)
         if (response.status >= 400 && response.status < 500) {
@@ -159,7 +172,20 @@ export async function sendMessage(
         }
       }
     } catch (error) {
-      lastError = error instanceof Error ? error : new Error("Unknown error");
+      // Lepsze logowanie błędów
+      if (error instanceof Error) {
+        lastError = error;
+        console.error(
+          `[Chat API] Attempt ${attempt + 1}/${MAX_RETRIES} failed:`,
+          error.message,
+        );
+      } else {
+        lastError = new Error(`Nieznany błąd: ${String(error)}`);
+        console.error(
+          `[Chat API] Attempt ${attempt + 1}/${MAX_RETRIES} unknown error:`,
+          error,
+        );
+      }
 
       // Don't retry on network errors after first attempt
       if (error instanceof TypeError && error.message === "Failed to fetch") {

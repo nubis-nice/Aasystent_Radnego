@@ -11,7 +11,8 @@ export const isapRoutes = async (fastify) => {
             return reply.send({ success: true, publishers });
         }
         catch (error) {
-            fastify.log.error("Error fetching publishers:", error);
+            fastify.log.error("Error fetching publishers: " +
+                String(error instanceof Error ? error.message : error));
             return reply.status(500).send({
                 success: false,
                 error: error instanceof Error ? error.message : "Unknown error",
@@ -25,7 +26,8 @@ export const isapRoutes = async (fastify) => {
             return reply.send({ success: true, ...result });
         }
         catch (error) {
-            fastify.log.error("Error fetching acts by year:", error);
+            fastify.log.error("Error fetching acts by year: " +
+                String(error instanceof Error ? error.message : error));
             return reply.status(500).send({
                 success: false,
                 error: error instanceof Error ? error.message : "Unknown error",
@@ -50,7 +52,8 @@ export const isapRoutes = async (fastify) => {
             return reply.send({ success: true, ...result });
         }
         catch (error) {
-            fastify.log.error("Error searching acts:", error);
+            fastify.log.error("Error searching acts: " +
+                String(error instanceof Error ? error.message : error));
             return reply.status(500).send({
                 success: false,
                 error: error instanceof Error ? error.message : "Unknown error",
@@ -64,7 +67,8 @@ export const isapRoutes = async (fastify) => {
             return reply.send({ success: true, act });
         }
         catch (error) {
-            fastify.log.error("Error fetching act details:", error);
+            fastify.log.error("Error fetching act details: " +
+                String(error instanceof Error ? error.message : error));
             return reply.status(500).send({
                 success: false,
                 error: error instanceof Error ? error.message : "Unknown error",
@@ -78,7 +82,8 @@ export const isapRoutes = async (fastify) => {
             return reply.type("text/html").send(text);
         }
         catch (error) {
-            fastify.log.error("Error fetching act text:", error);
+            fastify.log.error("Error fetching act text: " +
+                String(error instanceof Error ? error.message : error));
             return reply.status(500).send({
                 success: false,
                 error: error instanceof Error ? error.message : "Unknown error",
@@ -93,7 +98,8 @@ export const isapRoutes = async (fastify) => {
             return reply.send({ success: true, count: acts.length, acts });
         }
         catch (error) {
-            fastify.log.error("Error fetching latest acts:", error);
+            fastify.log.error("Error fetching latest acts: " +
+                String(error instanceof Error ? error.message : error));
             return reply.status(500).send({
                 success: false,
                 error: error instanceof Error ? error.message : "Unknown error",
@@ -107,7 +113,8 @@ export const isapRoutes = async (fastify) => {
             return reply.send({ success: true, count: acts.length, acts });
         }
         catch (error) {
-            fastify.log.error("Error fetching local government acts:", error);
+            fastify.log.error("Error fetching local government acts: " +
+                String(error instanceof Error ? error.message : error));
             return reply.status(500).send({
                 success: false,
                 error: error instanceof Error ? error.message : "Unknown error",
@@ -120,7 +127,8 @@ export const isapRoutes = async (fastify) => {
             return reply.send({ success: true, types });
         }
         catch (error) {
-            fastify.log.error("Error fetching act types:", error);
+            fastify.log.error("Error fetching act types: " +
+                String(error instanceof Error ? error.message : error));
             return reply.status(500).send({
                 success: false,
                 error: error instanceof Error ? error.message : "Unknown error",
@@ -133,7 +141,8 @@ export const isapRoutes = async (fastify) => {
             return reply.send({ success: true, keywords });
         }
         catch (error) {
-            fastify.log.error("Error fetching keywords:", error);
+            fastify.log.error("Error fetching keywords: " +
+                String(error instanceof Error ? error.message : error));
             return reply.status(500).send({
                 success: false,
                 error: error instanceof Error ? error.message : "Unknown error",

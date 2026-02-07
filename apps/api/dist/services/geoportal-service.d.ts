@@ -68,7 +68,7 @@ export declare class GeoportalService {
      */
     getParcelByCoordinates(lat: number, lon: number): Promise<ParcelInfo | null>;
     /**
-     * Wyszukiwanie adresów (EMUiA)
+     * Wyszukiwanie adresów - GUGIK geocoder z fallback na Nominatim (OpenStreetMap)
      */
     searchAddress(query: string, limit?: number): Promise<AddressPoint[]>;
     /**
@@ -100,5 +100,23 @@ export declare class GeoportalService {
      */
     getGeoportalLink(parcelId: string): string;
     private getUnitType;
+    /**
+     * Parsowanie odpowiedzi GML z WFS
+     */
+    private parseGmlFeatures;
+    /**
+     * Pobierz statystyki budynków dla gminy (BDOT10k)
+     */
+    getBuildingStats(terytCode: string): Promise<{
+        totalBuildings: number;
+        residentialBuildings: number;
+        commercialBuildings: number;
+        industrialBuildings: number;
+        publicBuildings: number;
+    } | null>;
+    /**
+     * Wyszukaj działkę po nazwie obrębu i numerze
+     */
+    getParcelByName(precinctName: string, parcelNumber: string): Promise<ParcelInfo | null>;
 }
 //# sourceMappingURL=geoportal-service.d.ts.map

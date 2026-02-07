@@ -428,7 +428,7 @@ export class DeepResearchService {
         excerpt: doc.content.substring(0, 300) + "...",
         source: "local" as const,
         relevanceScore: 0.8, // High relevance for local sources
-        publishDate: doc.publish_date || doc.processed_at,
+        publishDate: doc.publish_date || doc.processed_at || undefined,
         metadata: {
           documentType: doc.document_type,
         },

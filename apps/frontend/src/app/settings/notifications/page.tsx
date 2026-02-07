@@ -83,6 +83,7 @@ export default function NotificationsPage() {
 
       const result = await updateNotificationSettings(userId, {
         [dbKey]: newValue,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any);
 
       if (result) {

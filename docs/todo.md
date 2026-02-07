@@ -1,82 +1,69 @@
-# ~~bez~~RADNY - TODO (produkt + technologia)
+# TODO
 
-## Stan aktualny (2026-01-24)
+## W toku
 
-### Co działa (deployment local dev)
+### Integracja API zewnętrznych
 
-- **Infrastruktura**: Docker Compose (Postgres pgvector, Redis, Speaches STT) działa na localhost.
-- **Frontend**: Next.js 14 (app router) na `localhost:3000` — kompletny panel z nawigacją.
-- **API**: Fastify na `localhost:3001` — 25 route files, 67 services.
-- **Worker**: BullMQ + Redis — 6 job handlers (extraction, analysis, relations, vision, transcription).
-- **Repo**: npm workspaces (apps/api, apps/frontend, apps/worker, packages/shared).
-- **Migracje**: 42 pliki SQL w `apps/api/migrations/`.
+- [ ] Monitoring dostępności GUGIK geocoder (obecnie niedostępny)
+- [ ] Rozszerzenie BDOT10k o nowe warstwy danych
+- [ ] Integracja z TERYT GUS (pełna)
 
----
+## Ukończone ostatnio
 
-## 🔴 Do zrobienia (priorytety)
+### 2026-01-27 — Orchestrator v2 + GUS API + Geoportal
 
-### Krytyczne
+- [x] **Orchestrator v2** - Universal Tool Orchestrator
+  - Native function calling (OpenAI/Ollama)
+  - Prompt-based fallback dla innych modeli
+  - Tool Registry (`orchestrator/tool-registry.ts`)
+  - Modułowe narzędzia (`tools/gus-statistics.ts`, `tools/session-search.ts`)
+- [x] **GUS BDL API** - naprawione
+  - `findGmina` → `/units/search`
+  - `getDataByUnit` → `unit-parent-id` + filtrowanie lokalne
+  - Filtrowanie po ID zmiennych (`60`, `65`, `68`)
+  - Test: urodzenia w Drawnie 2024 ✅
+- [x] **Geoportal.gov.pl** - naprawione
+  - PRG WFS → dane gmin (działa)
+  - ULDK → działki po współrzędnych/ID (działa)
+  - GUGIK geocoder → **wyłączony** (niedostępny)
+  - Logika: rozdzielenie adresów vs gmin
 
-- [ ] **Adaptery API produkcyjne**: ISAP, WSA/NSA, RIO (obecnie placeholdery)
-- [ ] **Testy E2E czatu** na realnych dokumentach
-- [ ] **System uprawnień**: role użytkowników, RLS scenariusze
+## Do zrobienia
 
-### Ważne
+### Testy
 
-- [ ] **Raporty cykliczne**: tygodniowe/miesięczne + alerty
-- [ ] **Brief na sesję/komisję**
-- [ ] **ePUAP live sync** + webhooki
-- [ ] **Integracja Google Calendar**
+- [x] Testy `ai-client-factory` (12 testów)
+- [x] Testy `document-processor` (28 testów)
+- [x] Testy `document-scorer` (11 testów)
+- [x] E2E: Documents (6 testów)
+- [x] E2E: Chat/Dashboard/Settings (8 testów)
+- [ ] Testy kolejek BullMQ
 
-### Normalne
+### Infrastruktura
 
-- [ ] **Linkowanie uchwał**: "zmienia/uchyla/wykonuje"
-- [ ] **Porównywanie wersji**: projekt vs uchwała
-- [ ] **Monitoring traceId/log ingestion** (dashboard ops)
+- [x] Cache node_modules w GitHub Actions (już w setup-node)
+- [ ] Monitoring (Sentry/Grafana)
+- [x] Health check endpoint w API (`/diagnostics`)
 
----
+### Dokumentacja
 
-## ✅ Ukończone moduły
+- [x] README.md - instrukcja deploymentu
+- [x] API documentation (OpenAPI/Swagger) → `docs/api/openapi.yaml`
 
-### Multi-Provider AI System (2026-01-18)
+## Ukończone
 
-- [x] Struktura `apps/api/src/ai/` z pełną implementacją
-- [x] `AIClientFactory` - fabryka klientów AI
-- [x] `AIConfigResolver` - resolver konfiguracji z cache
-- [x] `defaults.ts` - presety OpenAI/Ollama/Custom
-- [x] `types.ts` - pełne typowanie
-- [x] Klienty: LLM, Embeddings, Vision, STT, TTS
-- [x] Frontend modal konfiguracji z zakładkami
+### 2026-01-25
 
-### Transkrypcja YouTube (2026-01-18)
-
-- [x] `TranscriptionQueue` - Redis/BullMQ persistence
-- [x] `TranscriptionWorker` - dedykowany worker
-- [x] `TranscriptionRecovery` - auto-recovery utkniętych zadań
-- [x] Detailed Progress UI z 5 krokami pipeline
-- [x] Timeout STT z fallbackiem
-
-### Voice Command System - Stefan 2.0 (2026-01-16)
-
-- [x] Wake word "Hej Stefan" + tryb czuwania
-- [x] `VoiceActionService` - akcje głosowe
-- [x] Integracja kalendarz, zadania, dokumenty, nawigacja
-- [x] `VoiceContext` - globalny kontekst głosowy
-
-### Inteligentny Scraping (2026-01-14)
-
-- [x] `IntelligentScraper` z LLM analysis
-- [x] Dane sesji tylko z `metadata.llmAnalysis`
-- [x] `calendar-auto-import` bez regex fallbacków
-
-### Deep Research & Legal (2026-01-14)
-
-- [x] `DeepResearchService` z Exa, Brave, Tavily, Serper
-- [x] `LegalSearchApi`, `LegalReasoningEngine`, `BudgetAnalysisEngine`
-- [x] Fallback providerów + wykrywanie odmów LLM
-
-### Frontend kompletny (2026-01-09)
-
-- [x] Panel dokumentów, czat, research, analysis, settings, admin
-- [x] Dark mode, responsywność, walidacja formularzy
-- [x] Auth Supabase z middleware
+- [x] Pipeline CI/CD (GitHub Actions)
+- [x] Unit tests: 77 testów (6 plików)
+  - deep-research-service (7)
+  - document-scorer (11)
+  - tool-prompt-service (13)
+  - api-health (6)
+- [x] E2E tests: 18 testów (3 pliki)
+  - login.spec.ts (4)
+  - documents.spec.ts (6)
+  - chat.spec.ts (8)
+- [x] Deploy workflow (Vercel)
+- [x] Sentry placeholder (`apps/api/src/lib/sentry.ts`)
+- [x] Cleanup orphaned files → `/trash_files/`

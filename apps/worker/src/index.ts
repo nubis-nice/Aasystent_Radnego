@@ -3,7 +3,11 @@ import { type Job, Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { processUserJob, type UserJobData } from "./handlers/user-jobs.js";
 import { processExtraction } from "./jobs/extraction.js";
-import { processAnalysis } from "./jobs/analysis.js";
+import {
+  processDocumentAnalysis,
+  type AnalysisJobData,
+  type AnalysisJobResult,
+} from "./jobs/analysis.js";
 import { processRelations } from "./jobs/relations.js";
 import {
   processVision,
@@ -51,6 +55,12 @@ export const documentProcessQueue = new Queue<
   DocumentProcessJobResult
 >("document-process-jobs", { connection: connection as any });
 
+// Kolejka dla analizy dokumentów (nowa - BullMQ)
+export const analysisQueue = new Queue<AnalysisJobData, AnalysisJobResult>(
+  "analysis-jobs",
+  { connection: connection as any },
+);
+
 // Worker dla zadań dokumentów
 const documentWorker = new Worker(
   "document-jobs",
@@ -62,7 +72,7 @@ const documentWorker = new Worker(
         return await processExtraction(job);
 
       case "analysis":
-        return await processAnalysis(job);
+        return await processDocumentAnalysis(job);
 
       case "relations":
         return await processRelations(job);
@@ -201,6 +211,42 @@ documentProcessWorker.on("failed", (job: Job | undefined, err: Error) => {
 
 documentProcessWorker.on("progress", (job: Job, progress) => {
   console.log(`[document-process-worker] 📊 Progress ${job.id}: ${progress}%`);
+});
+
+// Worker dla analizy dokumentów (nowa kolejka BullMQ)
+const analysisWorker = new Worker<AnalysisJobData, AnalysisJobResult>(
+  "analysis-jobs",
+  async (job: Job<AnalysisJobData>) => {
+    console.log(
+      `[analysis-worker] Processing job ${job.id} (doc="${job.data.documentTitle}")`,
+    );
+    return await processDocumentAnalysis(job);
+  },
+  {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    connection: connection as any,
+    concurrency: 2, // Max 2 równoczesne analizy
+    limiter: {
+      max: 20, // Max 20 zadań
+      duration: 60000, // na minutę
+    },
+  },
+);
+
+// Event handlers dla analysis worker
+analysisWorker.on("completed", (job: Job) => {
+  console.log(`[analysis-worker] ✅ Completed ${job.id}`);
+});
+
+analysisWorker.on("failed", (job: Job | undefined, err: Error) => {
+  console.error(`[analysis-worker] ❌ Failed ${job?.id}: ${err.message}`);
+});
+
+analysisWorker.on("progress", (job: Job, progress) => {
+  const progressData = progress as { progress: number; description?: string };
+  console.log(
+    `[analysis-worker] 📊 Progress ${job.id}: ${progressData.progress}% - ${progressData.description || ""}`,
+  );
 });
 
 // Event handlers dla document worker

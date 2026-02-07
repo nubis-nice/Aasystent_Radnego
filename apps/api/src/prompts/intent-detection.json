@@ -1,0 +1,383 @@
+{
+  "id": "intent-detection",
+  "version": "1.0.0",
+  "description": "Prompt do wykrywania intencji użytkownika i wyboru narzędzia",
+  "rules": {
+    "reasoning": [
+      "Stosuj rozumowanie semantyczne, nie tylko słowa kluczowe",
+      "Jeśli użytkownik pyta o dane statystyczne, populację, bezrobocie → gus_statistics",
+      "Jeśli pytanie dotyczy ochrony środowiska, obszarów chronionych → gdos_environmental",
+      "Jeśli prosi o przepisy/akty prawne → isap_legal",
+      "Jeśli chce dane finansowe gminy/budżet → budget_analysis lub rag_search",
+      "Unikaj simple_answer, jeśli jakiekolwiek narzędzie może dostarczyć danych"
+    ],
+    "priorities": [
+      { "pattern": "TERYT", "tool": "teryt_registry" },
+      {
+        "pattern": "KRS|spółka|stowarzyszenie|fundacja",
+        "tool": "krs_registry"
+      },
+      {
+        "pattern": "NIP|REGON|CEIDG|działalność gospodarcza",
+        "tool": "ceidg_registry"
+      },
+      { "pattern": "działka|MPZP|Geoportal", "tool": "geoportal_spatial" },
+      {
+        "pattern": "Natura 2000|GDOŚ|rezerwat|park narodowy",
+        "tool": "gdos_environmental"
+      },
+      { "pattern": "GUS|statystyki|ludność", "tool": "gus_statistics" },
+      { "pattern": "ustawa|rozporządzenie|ISAP", "tool": "isap_legal" },
+      { "pattern": "dotacje|fundusze europejskie|UE", "tool": "eu_funds" },
+      { "pattern": "sesja.*\\d+", "tool": "session_search" },
+      { "pattern": "imię i nazwisko osoby", "tool": "person_search" }
+    ]
+  },
+  "tools": {
+    "public_registries": [
+      {
+        "name": "geoportal_spatial",
+        "triggers": [
+          "działka",
+          "parcela",
+          "MPZP",
+          "mapa",
+          "współrzędne",
+          "nieruchomość",
+          "plan zagospodarowania"
+        ],
+        "description": "Dane przestrzenne z Geoportal.gov.pl - działki, plany zagospodarowania",
+        "examples": [
+          {
+            "input": "znajdź działkę 123/4 w Drawnie",
+            "output": "geoportal_spatial"
+          },
+          {
+            "input": "jaki jest MPZP dla tej lokalizacji",
+            "output": "geoportal_spatial"
+          }
+        ]
+      },
+      {
+        "name": "teryt_registry",
+        "triggers": [
+          "TERYT",
+          "kod terytorialny",
+          "jednostka administracyjna",
+          "lista gmin/powiatów"
+        ],
+        "description": "Rejestr jednostek terytorialnych GUS",
+        "examples": [
+          { "input": "kod TERYT gminy Drawno", "output": "teryt_registry" }
+        ]
+      },
+      {
+        "name": "krs_registry",
+        "triggers": [
+          "KRS",
+          "spółka",
+          "stowarzyszenie",
+          "fundacja",
+          "rejestr sądowy",
+          "podmiot prawny"
+        ],
+        "description": "Krajowy Rejestr Sądowy - spółki, stowarzyszenia, fundacje",
+        "examples": [
+          { "input": "sprawdź spółkę ABC sp. z o.o.", "output": "krs_registry" }
+        ]
+      },
+      {
+        "name": "ceidg_registry",
+        "triggers": [
+          "CEIDG",
+          "NIP",
+          "REGON",
+          "działalność gospodarcza",
+          "firma jednoosobowa"
+        ],
+        "description": "Centralna Ewidencja Działalności Gospodarczej",
+        "examples": [{ "input": "NIP 5261234567", "output": "ceidg_registry" }]
+      },
+      {
+        "name": "gdos_environmental",
+        "triggers": [
+          "GDOŚ",
+          "Natura 2000",
+          "obszar chroniony",
+          "rezerwat",
+          "park narodowy",
+          "ochrona środowiska"
+        ],
+        "description": "Generalna Dyrekcja Ochrony Środowiska - obszary chronione",
+        "examples": [
+          {
+            "input": "obszary Natura 2000 w gminie",
+            "output": "gdos_environmental"
+          }
+        ]
+      }
+    ],
+    "public_data": [
+      {
+        "name": "gus_statistics",
+        "triggers": [
+          "GUS",
+          "statystyki",
+          "ludność",
+          "demografia",
+          "dane gminy",
+          "mieszkańcy",
+          "urodzenia",
+          "urodzeń",
+          "zgony",
+          "zgonów",
+          "przyrost naturalny",
+          "populacja",
+          "ile mieszkańców",
+          "ilu mieszkańców"
+        ],
+        "description": "Bank Danych Lokalnych GUS - statystyki demograficzne, ekonomiczne, urodzenia, zgony",
+        "examples": [
+          {
+            "input": "ile mieszkańców ma gmina Drawno",
+            "output": "gus_statistics"
+          },
+          {
+            "input": "dane o urodzeniach w Drawnie",
+            "output": "gus_statistics"
+          },
+          {
+            "input": "ile urodzeń było w gminie Drawno",
+            "output": "gus_statistics"
+          },
+          {
+            "input": "statystyki demograficzne gminy",
+            "output": "gus_statistics"
+          }
+        ]
+      },
+      {
+        "name": "isap_legal",
+        "triggers": [
+          "ustawa",
+          "rozporządzenie",
+          "akt prawny",
+          "dziennik ustaw",
+          "przepis prawa"
+        ],
+        "description": "Internetowy System Aktów Prawnych - ustawy, rozporządzenia",
+        "examples": [
+          { "input": "ustawa o samorządzie gminnym", "output": "isap_legal" }
+        ]
+      },
+      {
+        "name": "eu_funds",
+        "triggers": [
+          "dotacje UE",
+          "fundusze europejskie",
+          "nabory",
+          "konkursy",
+          "dofinansowanie"
+        ],
+        "description": "Portal Funduszy Europejskich - nabory, konkursy, projekty",
+        "examples": [{ "input": "dotacje na OZE", "output": "eu_funds" }]
+      }
+    ],
+    "local_documents": [
+      {
+        "name": "session_search",
+        "triggers": ["sesja rady", "sesja nr", "sesja numer", "ostatnia sesja"],
+        "description": "Wyszukiwanie materiałów z sesji rady (wymaga numeru lub kontekstu czasowego)",
+        "examples": [
+          { "input": "co było na sesji nr 15", "output": "session_search" },
+          { "input": "ostatnia sesja rady", "output": "session_search" }
+        ],
+        "note": "Pytania o 'posiedzenie komisji' BEZ numeru sesji → rag_search"
+      },
+      {
+        "name": "rag_search",
+        "triggers": [
+          "uchwała",
+          "protokół",
+          "dokument lokalny",
+          "posiedzenie komisji",
+          "komisja budżetowa"
+        ],
+        "description": "Wyszukiwanie w lokalnej bazie dokumentów (uchwały, protokoły, raporty)",
+        "examples": [
+          { "input": "znajdź uchwałę o podatkach", "output": "rag_search" },
+          { "input": "posiedzenie komisji budżetowej", "output": "rag_search" }
+        ]
+      },
+      {
+        "name": "document_fetch",
+        "triggers": ["druk nr", "uchwała nr", "pobierz dokument"],
+        "description": "Pobranie konkretnego dokumentu po numerze/referencji"
+      },
+      {
+        "name": "budget_analysis",
+        "triggers": ["budżet gminy", "wydatki", "dochody", "finanse"],
+        "description": "Analiza budżetu gminy - dochody, wydatki, inwestycje"
+      }
+    ],
+    "search": [
+      {
+        "name": "data_sources_search",
+        "triggers": [
+          "przeszukaj źródła",
+          "scraping",
+          "pobierz dane ze źródeł",
+          "aktualizuj dane"
+        ],
+        "description": "Przeszukiwanie wszystkich skonfigurowanych źródeł danych"
+      },
+      {
+        "name": "verified_web_search",
+        "triggers": [
+          "sprawdź w internecie",
+          "zweryfikuj informację",
+          "czy to prawda",
+          "fake news"
+        ],
+        "description": "Wyszukiwanie w internecie z weryfikacją wiarygodności"
+      },
+      {
+        "name": "exhaustive_search",
+        "triggers": [
+          "przeszukaj wszystko",
+          "wyczerpujące wyszukiwanie",
+          "szukaj wszędzie"
+        ],
+        "description": "Kaskadowe wyszukiwanie we wszystkich dostępnych źródłach"
+      }
+    ],
+    "actions": [
+      {
+        "name": "calendar_add",
+        "triggers": [
+          "dodaj do kalendarza",
+          "zaplanuj spotkanie",
+          "wpisz wydarzenie"
+        ],
+        "description": "Dodawanie wydarzeń do kalendarza"
+      },
+      {
+        "name": "calendar_list",
+        "triggers": [
+          "pokaż kalendarz",
+          "co mam zaplanowane",
+          "jakie mam spotkania"
+        ],
+        "description": "Wyświetlanie zaplanowanych wydarzeń"
+      },
+      {
+        "name": "calendar_edit",
+        "triggers": ["zmień termin", "przesuń spotkanie"],
+        "description": "Edycja istniejących wydarzeń"
+      },
+      {
+        "name": "calendar_delete",
+        "triggers": ["usuń z kalendarza", "odwołaj spotkanie"],
+        "description": "Usuwanie wydarzeń"
+      },
+      {
+        "name": "task_add",
+        "triggers": [
+          "dodaj zadanie",
+          "zanotuj do zrobienia",
+          "przypomnij mi o"
+        ],
+        "description": "Tworzenie nowych zadań"
+      },
+      {
+        "name": "task_list",
+        "triggers": ["pokaż zadania", "co mam do zrobienia", "lista zadań"],
+        "description": "Wyświetlanie listy zadań"
+      },
+      {
+        "name": "task_complete",
+        "triggers": ["oznacz jako zrobione", "ukończ zadanie"],
+        "description": "Oznaczanie zadań jako ukończone"
+      },
+      {
+        "name": "task_delete",
+        "triggers": ["usuń zadanie", "wykreśl"],
+        "description": "Usuwanie zadań"
+      },
+      {
+        "name": "alert_check",
+        "triggers": ["sprawdź alerty", "czy są powiadomienia", "co nowego"],
+        "description": "Sprawdzanie powiadomień i alertów"
+      },
+      {
+        "name": "quick_tool",
+        "triggers": ["utwórz", "napisz", "generuj", "przygotuj", "stwórz"],
+        "description": "Szybkie narzędzia - interpelacje, pisma, protokoły",
+        "note": "WYMAGA słów akcji. BEZ nich → rag_search",
+        "subtypes": [
+          "interpelacja",
+          "pismo",
+          "protokół",
+          "wystąpienie",
+          "uchwała",
+          "raport",
+          "scenopis"
+        ]
+      },
+      {
+        "name": "app_navigate",
+        "triggers": ["przejdź do", "otwórz stronę", "pokaż pulpit"],
+        "description": "Nawigacja w aplikacji"
+      }
+    ],
+    "other": [
+      {
+        "name": "person_search",
+        "triggers": ["kim jest", "kto to", "informacje o osobie"],
+        "description": "Wyszukiwanie informacji o konkretnej osobie"
+      },
+      {
+        "name": "youtube_search",
+        "triggers": ["nagranie", "wideo", "transmisja", "YouTube"],
+        "description": "Wyszukiwanie nagrań sesji na YouTube"
+      },
+      {
+        "name": "deep_research",
+        "triggers": ["szerokie wyszukiwanie", "research"],
+        "description": "Głębokie wyszukiwanie w internecie"
+      },
+      {
+        "name": "legal_analysis",
+        "triggers": ["analiza prawna", "interpretacja przepisów"],
+        "description": "Analiza i interpretacja prawna"
+      },
+      {
+        "name": "simple_answer",
+        "triggers": ["cześć", "jak się masz", "dziękuję"],
+        "description": "Proste odpowiedzi bez potrzeby narzędzi"
+      }
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["primaryIntent", "confidence", "entities"],
+    "properties": {
+      "primaryIntent": { "type": "string" },
+      "secondaryIntents": { "type": "array", "items": { "type": "string" } },
+      "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+      "entities": {
+        "type": "object",
+        "properties": {
+          "personNames": { "type": "array", "items": { "type": "string" } },
+          "documentRefs": { "type": "array", "items": { "type": "string" } },
+          "sessionNumbers": { "type": "array", "items": { "type": "integer" } },
+          "dates": { "type": "array", "items": { "type": "string" } },
+          "topics": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "requiresDeepSearch": { "type": "boolean" },
+      "estimatedTimeSeconds": { "type": "integer" },
+      "userFriendlyDescription": { "type": "string" }
+    }
+  }
+}

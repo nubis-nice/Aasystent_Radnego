@@ -3,10 +3,36 @@ import { createClient } from "@supabase/supabase-js";
 import { DocumentProcessor } from "../services/document-processor.js";
 import { AudioTranscriber } from "../services/audio-transcriber.js";
 import { DocumentScorer, } from "../services/document-scorer.js";
-import { DocumentAnalysisService } from "../services/document-analysis-service.js";
+import { addDocumentProcessJob, getUserDocumentJobs, getDocumentJob, deleteDocumentJob, retryDocumentJob, getDocumentQueueStats, } from "../services/document-process-queue.js";
+import { addAnalysisJob } from "../services/analysis-queue.js";
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
+// Konwersja liczb rzymskich na arabskie
+function romanToArabic(roman) {
+    const romanNumerals = {
+        I: 1,
+        V: 5,
+        X: 10,
+        L: 50,
+        C: 100,
+        D: 500,
+        M: 1000,
+    };
+    let result = 0;
+    const upperRoman = roman.toUpperCase();
+    for (let i = 0; i < upperRoman.length; i++) {
+        const current = romanNumerals[upperRoman[i]] || 0;
+        const next = romanNumerals[upperRoman[i + 1]] || 0;
+        if (current < next) {
+            result -= current;
+        }
+        else {
+            result += current;
+        }
+    }
+    return result;
+}
 const ALLOWED_MIME_TYPES = [
     "image/jpeg",
     "image/png",
@@ -33,6 +59,31 @@ const ALLOWED_MIME_TYPES = [
     "video/ogg",
 ];
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+// Schema dla wyszukiwania semantycznego
+const SearchQuerySchema = z.object({
+    query: z.string().min(1),
+    documentType: z.string().optional(),
+    dateFrom: z.string().optional(),
+    dateTo: z.string().optional(),
+    maxResults: z.number().optional().default(10),
+    includeRelated: z.boolean().optional().default(false),
+    sessionNumber: z.number().optional(),
+});
+// Schema dla tworzenia dokumentu
+const CreateDocumentSchema = z.object({
+    title: z.string().min(1),
+    content: z.string().optional(),
+    documentType: z.string().optional(),
+    sourceUrl: z.string().url().optional(),
+    metadata: z.record(z.unknown()).optional(),
+});
+// Schema dla aktualizacji dokumentu
+const UpdateDocumentSchema = z.object({
+    title: z.string().min(1).optional(),
+    content: z.string().optional(),
+    documentType: z.string().optional(),
+    metadata: z.record(z.unknown()).optional(),
+});
 export const documentsRoutes = async (fastify) => {
     // GET /documents - Lista dokumentów z filtrowaniem, paginacją i scoringiem
     fastify.get("/documents", async (request, reply) => {
@@ -72,8 +123,58 @@ export const documentsRoutes = async (fastify) => {
                 limit: query.limit,
                 offset: query.offset,
             });
+            // Pobierz wszystkie transkrypcje użytkownika (batch query)
+            const { data: transcriptions } = await supabase
+                .from("processed_documents")
+                .select("id, title, metadata, session_number")
+                .eq("user_id", userId)
+                .eq("document_type", "transkrypcja");
+            // Mapuj transkrypcje do dokumentów po session_number
+            const transcriptionMap = new Map();
+            if (transcriptions) {
+                for (const t of transcriptions) {
+                    // Wyciągnij session_number z tytułu transkrypcji (np. "Transkrypcja: Sesja Nr XXII")
+                    const sessionMatch = t.title?.match(/sesja\s*(?:nr\s*)?(\d+|[IVXLCDM]+)/i);
+                    let sessionNum = t.session_number;
+                    if (!sessionNum && sessionMatch) {
+                        const numStr = sessionMatch[1];
+                        // Konwertuj rzymskie na arabskie jeśli potrzeba
+                        if (/^[IVXLCDM]+$/i.test(numStr)) {
+                            sessionNum = romanToArabic(numStr);
+                        }
+                        else {
+                            sessionNum = parseInt(numStr, 10);
+                        }
+                    }
+                    if (sessionNum) {
+                        const meta = t.metadata;
+                        transcriptionMap.set(sessionNum, {
+                            id: t.id,
+                            title: t.title,
+                            videoUrl: meta?.videoUrl,
+                            duration: meta?.duration,
+                            speakerCount: meta?.speakerCount,
+                        });
+                    }
+                }
+            }
+            // Dodaj info o transkrypcji do dokumentów
+            const documentsWithTranscription = result.documents.map((doc) => {
+                const sessionNum = doc.session_number;
+                if (sessionNum && transcriptionMap.has(sessionNum)) {
+                    const transcriptionInfo = transcriptionMap.get(sessionNum);
+                    return {
+                        ...doc,
+                        metadata: {
+                            ...doc.metadata,
+                            linkedTranscription: transcriptionInfo,
+                        },
+                    };
+                }
+                return doc;
+            });
             return reply.send({
-                documents: result.documents,
+                documents: documentsWithTranscription,
                 total: result.total,
             });
         }
@@ -104,6 +205,92 @@ export const documentsRoutes = async (fastify) => {
             if (error || !document) {
                 return reply.status(404).send({ error: "Document not found" });
             }
+            // Sprawdź czy istnieje powiązana transkrypcja
+            let transcriptionInfo = null;
+            // 1. Szukaj przez document_relations (transkrypcja -> sesja)
+            const { data: relations } = await supabase
+                .from("document_relations")
+                .select("source_document_id")
+                .eq("target_session_id", id)
+                .eq("user_id", userId)
+                .eq("relation_type", "transcription_of")
+                .limit(1);
+            if (relations && relations.length > 0) {
+                const { data: transcriptionDoc } = await supabase
+                    .from("processed_documents")
+                    .select("id, title, metadata, source_url")
+                    .eq("id", relations[0].source_document_id)
+                    .single();
+                if (transcriptionDoc) {
+                    const meta = transcriptionDoc.metadata;
+                    transcriptionInfo = {
+                        documentId: transcriptionDoc.id,
+                        title: transcriptionDoc.title,
+                        videoUrl: meta?.videoUrl || transcriptionDoc.source_url,
+                        duration: meta?.duration,
+                        speakerCount: meta?.speakerCount,
+                        speakers: meta?.speakers,
+                    };
+                }
+            }
+            // 2. Fallback: szukaj transkrypcji po podobnym tytule sesji
+            if (!transcriptionInfo && document.session_number) {
+                const { data: transcriptionDocs } = await supabase
+                    .from("processed_documents")
+                    .select("id, title, metadata, source_url")
+                    .eq("user_id", userId)
+                    .eq("document_type", "transkrypcja")
+                    .ilike("title", `%Sesja%${document.session_number}%`)
+                    .limit(1);
+                if (transcriptionDocs && transcriptionDocs.length > 0) {
+                    const transcriptionDoc = transcriptionDocs[0];
+                    const meta = transcriptionDoc.metadata;
+                    transcriptionInfo = {
+                        documentId: transcriptionDoc.id,
+                        title: transcriptionDoc.title,
+                        videoUrl: meta?.videoUrl || transcriptionDoc.source_url,
+                        duration: meta?.duration,
+                        speakerCount: meta?.speakerCount,
+                        speakers: meta?.speakers,
+                    };
+                }
+            }
+            // 3. Szukaj w scraped_content po source_url dokumentu
+            if (!transcriptionInfo && document.source_url) {
+                const { data: scrapedContent } = await supabase
+                    .from("scraped_content")
+                    .select("metadata")
+                    .eq("url", document.source_url)
+                    .maybeSingle();
+                if (scrapedContent?.metadata) {
+                    const scMeta = scrapedContent.metadata;
+                    if (scMeta.transcriptionDocumentId) {
+                        const { data: transcriptionDoc } = await supabase
+                            .from("processed_documents")
+                            .select("id, title, metadata, source_url")
+                            .eq("id", scMeta.transcriptionDocumentId)
+                            .single();
+                        if (transcriptionDoc) {
+                            const meta = transcriptionDoc.metadata;
+                            transcriptionInfo = {
+                                documentId: transcriptionDoc.id,
+                                title: transcriptionDoc.title,
+                                videoUrl: meta?.videoUrl || transcriptionDoc.source_url,
+                                duration: meta?.duration,
+                                speakerCount: meta?.speakerCount,
+                                speakers: meta?.speakers,
+                            };
+                        }
+                    }
+                }
+            }
+            // Dodaj info o transkrypcji do metadata dokumentu
+            if (transcriptionInfo) {
+                document.metadata = {
+                    ...(document.metadata || {}),
+                    linkedTranscription: transcriptionInfo,
+                };
+            }
             return reply.send({ document });
         }
         catch (error) {
@@ -114,9 +301,10 @@ export const documentsRoutes = async (fastify) => {
     // POST /documents - Upload nowego dokumentu
     fastify.post("/documents", async (request, reply) => {
         try {
-            const data = CreateDocumentSchema.parse(request.body);
+            const createData = CreateDocumentSchema.parse(request.body);
             // TODO: Zapisz dokument do bazy
             // TODO: Dodaj job do kolejki dla ekstrakcji
+            console.log(`[Documents] Create document:`, createData.title);
             return reply
                 .status(201)
                 .send({ message: "Document created successfully" });
@@ -133,10 +321,11 @@ export const documentsRoutes = async (fastify) => {
     });
     // PATCH /documents/:id - Aktualizacja dokumentu
     fastify.patch("/documents/:id", async (request, reply) => {
-        const { id } = request.params;
+        const { id: docId } = request.params;
         try {
-            const data = UpdateDocumentSchema.parse(request.body);
+            const updateData = UpdateDocumentSchema.parse(request.body);
             // TODO: Aktualizuj dokument w bazie
+            console.log(`[Documents] Update document ${docId}:`, updateData);
             return reply
                 .status(200)
                 .send({ message: "Document updated successfully" });
@@ -176,7 +365,7 @@ export const documentsRoutes = async (fastify) => {
                 .eq("id", id)
                 .eq("user_id", userId);
             if (deleteError) {
-                fastify.log.error("Delete error:", deleteError);
+                fastify.log.error("Delete error: " + String(deleteError?.message || deleteError));
                 return reply.status(500).send({ error: "Failed to delete document" });
             }
             console.log(`[Documents] Deleted document: ${doc.title} (${id})`);
@@ -208,7 +397,7 @@ export const documentsRoutes = async (fastify) => {
                 .in("id", documentIds)
                 .eq("user_id", userId);
             if (deleteError) {
-                fastify.log.error("Bulk delete error:", deleteError);
+                fastify.log.error("Bulk delete error: " + String(deleteError?.message || deleteError));
                 return reply.status(500).send({ error: "Failed to delete documents" });
             }
             console.log(`[Documents] Bulk deleted ${count} documents`);
@@ -253,7 +442,7 @@ export const documentsRoutes = async (fastify) => {
                 .delete()
                 .eq("user_id", userId);
             if (deleteError) {
-                fastify.log.error("Delete all error:", deleteError);
+                fastify.log.error("Delete all error: " + String(deleteError?.message || deleteError));
                 return reply
                     .status(500)
                     .send({ error: "Failed to delete all documents" });
@@ -286,7 +475,7 @@ export const documentsRoutes = async (fastify) => {
                 .order("processed_at", { ascending: false })
                 .limit(1000);
             if (error) {
-                fastify.log.error("Empty docs query error:", error);
+                fastify.log.error("Empty docs query error: " + String(error?.message || error));
                 return reply
                     .status(500)
                     .send({ error: "Failed to fetch empty documents" });
@@ -300,7 +489,8 @@ export const documentsRoutes = async (fastify) => {
                 .order("processed_at", { ascending: false })
                 .limit(500);
             if (shortError) {
-                fastify.log.error("Short docs query error:", shortError);
+                fastify.log.error("Short docs query error: " +
+                    String(shortError?.message || shortError));
             }
             // Filtruj dokumenty z treścią < 50 znaków
             const shortContentDocs = (shortDocs || []).filter((doc) => doc.content && doc.content.length < 50);
@@ -352,7 +542,8 @@ export const documentsRoutes = async (fastify) => {
                 .eq("id", id)
                 .eq("user_id", userId);
             if (deleteError) {
-                fastify.log.error("Delete error during repair:", deleteError);
+                fastify.log.error("Delete error during repair: " +
+                    String(deleteError?.message || deleteError));
                 return reply
                     .status(500)
                     .send({ error: "Failed to delete old document" });
@@ -391,11 +582,7 @@ export const documentsRoutes = async (fastify) => {
                     });
                 }
                 // Zapisz do RAG
-                const saveResult = await processor.saveToRAG(textContent, {
-                    title: doc.title,
-                    documentType: doc.document_type,
-                    sourceUrl: doc.source_url,
-                }, userId);
+                const saveResult = await processor.saveToRAG(userId, textContent, doc.title || "Dokument", doc.source_url || "unknown", doc.document_type || "uploaded");
                 return reply.send({
                     success: true,
                     message: `Dokument naprawiony: ${textContent.length} znaków`,
@@ -404,7 +591,7 @@ export const documentsRoutes = async (fastify) => {
                 });
             }
             // Przetwórz plik (PDF, DOCX, itp.)
-            const result = await processor.processFile(buffer, fileName, contentType, buffer.length);
+            const result = await processor.processFile(buffer, fileName, contentType);
             if (!result.success || result.text.length < 50) {
                 return reply.status(422).send({
                     success: false,
@@ -413,11 +600,7 @@ export const documentsRoutes = async (fastify) => {
                 });
             }
             // Zapisz do RAG
-            const saveResult = await processor.saveToRAG(result.text, {
-                title: doc.title,
-                documentType: doc.document_type,
-                sourceUrl: doc.source_url,
-            }, userId);
+            const saveResult = await processor.saveToRAG(userId, result.text, doc.title || "Dokument", doc.source_url || "unknown", doc.document_type || "uploaded");
             console.log(`[Documents] Repaired document: ${doc.title} (${result.text.length} chars)`);
             return reply.send({
                 success: true,
@@ -427,7 +610,8 @@ export const documentsRoutes = async (fastify) => {
             });
         }
         catch (error) {
-            fastify.log.error("Repair error:", error);
+            fastify.log.error("Repair error: " +
+                String(error instanceof Error ? error.message : error));
             return reply.status(500).send({
                 error: error instanceof Error ? error.message : "Internal server error",
             });
@@ -436,10 +620,13 @@ export const documentsRoutes = async (fastify) => {
     // POST /documents/search - Wyszukiwanie semantyczne
     fastify.post("/documents/search", async (request, reply) => {
         try {
-            const query = SearchQuerySchema.parse(request.body);
+            const searchQuery = SearchQuerySchema.parse(request.body);
             // TODO: Wygeneruj embedding dla zapytania
             // TODO: Wykonaj wyszukiwanie semantyczne
-            return reply.status(200).send({ message: "Search results" });
+            console.log(`[Documents] Search query:`, searchQuery.query);
+            return reply
+                .status(200)
+                .send({ message: "Search results", query: searchQuery.query });
         }
         catch (error) {
             if (error instanceof ZodError) {
@@ -453,17 +640,20 @@ export const documentsRoutes = async (fastify) => {
     });
     // GET /documents/:id/analyses - Analizy dokumentu
     fastify.get("/documents/:id/analyses", async (request, reply) => {
-        const { id } = request.params;
+        const { id: analysisDocId } = request.params;
         try {
             // TODO: Pobierz analizy dokumentu
-            return reply.status(501).send({ error: "Not implemented yet" });
+            console.log(`[Documents] Get analyses for document:`, analysisDocId);
+            return reply
+                .status(501)
+                .send({ error: "Not implemented yet", documentId: analysisDocId });
         }
         catch (error) {
             fastify.log.error(error);
             return reply.status(500).send({ error: "Internal server error" });
         }
     });
-    // POST /documents/:id/analyze - Profesjonalna analiza dokumentu z kontekstem RAG
+    // POST /documents/:id/analyze - Profesjonalna analiza dokumentu z kontekstem RAG (ASYNC)
     fastify.post("/documents/:id/analyze", async (request, reply) => {
         const { id } = request.params;
         const userId = request.headers["x-user-id"];
@@ -471,60 +661,48 @@ export const documentsRoutes = async (fastify) => {
             return reply.status(401).send({ error: "Unauthorized" });
         }
         try {
-            // Inicjalizuj serwis analizy
-            const analysisService = new DocumentAnalysisService();
-            await analysisService.initialize(userId);
-            // Zbuduj pełny kontekst analizy (dokument + druki + załączniki z RAG)
-            const analysisContext = await analysisService.buildAnalysisContext(userId, id);
-            if (!analysisContext) {
-                return reply.status(404).send({ error: "Document not found" });
-            }
-            // Oblicz score dokumentu
-            const scorer = new DocumentScorer();
-            const { data: docForScore } = await supabase
+            // Pobierz podstawowe info o dokumencie
+            const { data: doc } = await supabase
                 .from("processed_documents")
-                .select("*")
+                .select("id, title, document_type, publish_date, summary")
                 .eq("id", id)
                 .eq("user_id", userId)
                 .single();
-            const score = docForScore ? scorer.calculateScore(docForScore) : null;
-            // Generuj profesjonalny prompt analizy
-            const analysisResult = analysisService.generateAnalysisPrompt(analysisContext);
-            // Zwróć dane do analizy
+            if (!doc) {
+                return reply.status(404).send({ error: "Document not found" });
+            }
+            // Dodaj zadanie do kolejki BullMQ
+            const { jobId, taskId } = await addAnalysisJob({
+                userId,
+                documentId: id,
+                documentTitle: doc.title || "Dokument",
+            });
+            console.log(`[Documents] Analysis job ${jobId} created for document ${id}`);
+            // Zwróć natychmiast - przetwarzanie przez worker
             return reply.send({
                 success: true,
+                async: true,
+                taskId,
+                jobId,
+                message: "Analiza rozpoczęta. Śledź postęp na Dashboard.",
                 document: {
-                    id: analysisContext.mainDocument.id,
-                    title: analysisContext.mainDocument.title,
-                    document_type: analysisContext.mainDocument.documentType,
-                    publish_date: analysisContext.mainDocument.publishDate,
-                    summary: analysisContext.mainDocument.summary,
-                    contentPreview: analysisContext.mainDocument.content?.substring(0, 500) + "...",
-                },
-                score,
-                // Informacje o znalezionych referencjach
-                references: {
-                    found: analysisContext.references.filter((r) => r.found).length,
-                    missing: analysisContext.missingReferences.length,
-                    details: analysisContext.references,
-                },
-                // Prompt i system prompt do chatu
-                analysisPrompt: analysisResult.prompt,
-                systemPrompt: analysisResult.systemPrompt,
-                chatContext: {
-                    type: "document_analysis",
-                    documentId: analysisContext.mainDocument.id,
-                    documentTitle: analysisContext.mainDocument.title,
-                    hasAdditionalContext: analysisContext.additionalContext.length > 0,
-                    missingReferences: analysisContext.missingReferences,
+                    id: doc.id,
+                    title: doc.title,
+                    document_type: doc.document_type,
+                    publish_date: doc.publish_date,
                 },
             });
         }
         catch (error) {
-            fastify.log.error(error);
-            return reply.status(500).send({ error: "Internal server error" });
+            fastify.log.error(String(error));
+            return reply.status(500).send({
+                error: "Internal server error",
+                message: error instanceof Error ? error.message : "Unknown error",
+            });
         }
     });
+    // NOTE: Analiza dokumentów jest teraz przetwarzana przez worker BullMQ
+    // Zobacz: apps/worker/src/jobs/analysis.ts
     // POST /documents/process - Przetwarzanie pliku z OCR
     fastify.post("/documents/process", async (request, reply) => {
         try {
@@ -1025,37 +1203,6 @@ Zawrzyj:
             });
         }
     });
-    // GET /documents/jobs - Lista zadań przetwarzania
-    fastify.get("/documents/jobs", async (request, reply) => {
-        try {
-            const authHeader = request.headers.authorization;
-            if (!authHeader?.startsWith("Bearer ")) {
-                return reply.status(401).send({ error: "Unauthorized" });
-            }
-            const token = authHeader.substring(7);
-            const { createClient } = await import("@supabase/supabase-js");
-            const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
-            const { data: { user }, error: authError, } = await supabaseAuth.auth.getUser(token);
-            if (authError || !user) {
-                return reply.status(401).send({ error: "Invalid token" });
-            }
-            // Pobierz zadania z serwisu (in-memory queue)
-            const { DocumentProcessingJobService } = await import("../services/document-processing-job-service.js");
-            const jobService = new DocumentProcessingJobService(user.id);
-            const jobs = jobService.getUserJobs();
-            return reply.send({
-                success: true,
-                jobs,
-            });
-        }
-        catch (error) {
-            fastify.log.error(error);
-            return reply.send({
-                success: true,
-                jobs: [], // Zwróć pustą listę jeśli serwis nie istnieje
-            });
-        }
-    });
     // POST /documents/process-async - Asynchroniczne przetwarzanie dokumentu
     fastify.post("/documents/process-async", async (request, reply) => {
         try {
@@ -1173,7 +1320,16 @@ Zawrzyj:
             const body = bodySchema.parse(request.body);
             const { IntelligentRAGSearch } = await import("../services/intelligent-rag-search.js");
             const ragSearch = new IntelligentRAGSearch(userId);
-            const results = await ragSearch.search(body);
+            const searchQuery = {
+                query: body.query,
+                sessionNumber: body.sessionNumber,
+                documentType: body.documentType,
+                dateFrom: body.dateFrom,
+                dateTo: body.dateTo,
+                maxResults: body.maxResults,
+                includeRelated: body.includeRelated,
+            };
+            const results = await ragSearch.search(searchQuery);
             return reply.send(results);
         }
         catch (error) {
@@ -1227,7 +1383,8 @@ Zawrzyj:
             let errors = 0;
             for (const doc of docs) {
                 try {
-                    const textToEmbed = `${doc.title || ""}\n\n${doc.content || ""}`.substring(0, 8000);
+                    // nomic-embed-text ma limit ~2000 tokenów (~4000 znaków)
+                    const textToEmbed = `${doc.title || ""}\n\n${doc.content || ""}`.substring(0, 4000);
                     const embeddingResponse = await embeddingsClient.embeddings.create({
                         model: embConfig.modelName,
                         input: textToEmbed,
@@ -1258,6 +1415,234 @@ Zawrzyj:
             fastify.log.error(error);
             return reply.status(500).send({
                 error: error instanceof Error ? error.message : "Błąd regeneracji",
+            });
+        }
+    });
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DOCUMENT JOBS - Kolejkowanie zadań OCR/transkrypcji w Redis
+    // ═══════════════════════════════════════════════════════════════════════════
+    // POST /documents/jobs - Dodaj plik do kolejki przetwarzania
+    fastify.post("/documents/jobs", async (request, reply) => {
+        try {
+            const authHeader = request.headers.authorization;
+            if (!authHeader?.startsWith("Bearer ")) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const token = authHeader.substring(7);
+            const { createClient } = await import("@supabase/supabase-js");
+            const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+            const { data: { user }, error: authError, } = await supabaseAuth.auth.getUser(token);
+            if (authError || !user) {
+                return reply.status(401).send({ error: "Invalid token" });
+            }
+            const data = await request.file();
+            if (!data) {
+                return reply.status(400).send({ error: "Nie przesłano pliku" });
+            }
+            const { filename, mimetype } = data;
+            const fileBuffer = await data.toBuffer();
+            if (!ALLOWED_MIME_TYPES.includes(mimetype)) {
+                return reply.status(400).send({
+                    error: `Nieobsługiwany format pliku: ${mimetype}`,
+                });
+            }
+            if (fileBuffer.length > MAX_FILE_SIZE) {
+                return reply.status(400).send({
+                    error: `Plik jest zbyt duży (max 10MB)`,
+                });
+            }
+            // Dodaj do kolejki Redis
+            const { jobId, recordId } = await addDocumentProcessJob({
+                userId: user.id,
+                fileName: filename,
+                fileBuffer: fileBuffer.toString("base64"),
+                mimeType: mimetype,
+                fileSize: fileBuffer.length,
+            });
+            return reply.status(202).send({
+                success: true,
+                jobId,
+                recordId,
+                message: "Zadanie dodane do kolejki",
+            });
+        }
+        catch (error) {
+            fastify.log.error(error);
+            return reply.status(500).send({
+                error: error instanceof Error ? error.message : "Błąd dodawania do kolejki",
+            });
+        }
+    });
+    // GET /documents/jobs - Lista zadań użytkownika
+    fastify.get("/documents/jobs", async (request, reply) => {
+        try {
+            const authHeader = request.headers.authorization;
+            if (!authHeader?.startsWith("Bearer ")) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const token = authHeader.substring(7);
+            const { createClient } = await import("@supabase/supabase-js");
+            const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+            const { data: { user }, error: authError, } = await supabaseAuth.auth.getUser(token);
+            if (authError || !user) {
+                return reply.status(401).send({ error: "Invalid token" });
+            }
+            const querySchema = z.object({
+                limit: z.coerce.number().min(1).max(100).default(20),
+            });
+            const { limit } = querySchema.parse(request.query);
+            const jobs = await getUserDocumentJobs(user.id, limit);
+            return reply.send({ jobs });
+        }
+        catch (error) {
+            fastify.log.error(error);
+            return reply.status(500).send({
+                error: error instanceof Error ? error.message : "Błąd pobierania zadań",
+            });
+        }
+    });
+    // GET /documents/jobs/:jobId - Status pojedynczego zadania
+    fastify.get("/documents/jobs/:jobId", async (request, reply) => {
+        try {
+            const authHeader = request.headers.authorization;
+            if (!authHeader?.startsWith("Bearer ")) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const token = authHeader.substring(7);
+            const { createClient } = await import("@supabase/supabase-js");
+            const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+            const { data: { user }, error: authError, } = await supabaseAuth.auth.getUser(token);
+            if (authError || !user) {
+                return reply.status(401).send({ error: "Invalid token" });
+            }
+            const { jobId } = request.params;
+            const job = await getDocumentJob(jobId, user.id);
+            if (!job) {
+                return reply.status(404).send({ error: "Zadanie nie znalezione" });
+            }
+            return reply.send({ job });
+        }
+        catch (error) {
+            fastify.log.error(error);
+            return reply.status(500).send({
+                error: error instanceof Error ? error.message : "Błąd pobierania zadania",
+            });
+        }
+    });
+    // DELETE /documents/jobs/:jobId - Usuń zadanie
+    fastify.delete("/documents/jobs/:jobId", async (request, reply) => {
+        try {
+            const authHeader = request.headers.authorization;
+            if (!authHeader?.startsWith("Bearer ")) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const token = authHeader.substring(7);
+            const { createClient } = await import("@supabase/supabase-js");
+            const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+            const { data: { user }, error: authError, } = await supabaseAuth.auth.getUser(token);
+            if (authError || !user) {
+                return reply.status(401).send({ error: "Invalid token" });
+            }
+            const { jobId } = request.params;
+            const deleted = await deleteDocumentJob(jobId, user.id);
+            if (!deleted) {
+                return reply.status(404).send({ error: "Zadanie nie znalezione" });
+            }
+            return reply.send({ success: true });
+        }
+        catch (error) {
+            fastify.log.error(error);
+            return reply.status(500).send({
+                error: error instanceof Error ? error.message : "Błąd usuwania zadania",
+            });
+        }
+    });
+    // POST /documents/jobs/:jobId/retry - Ponów przetwarzanie
+    fastify.post("/documents/jobs/:jobId/retry", async (request, reply) => {
+        try {
+            const authHeader = request.headers.authorization;
+            if (!authHeader?.startsWith("Bearer ")) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const token = authHeader.substring(7);
+            const { createClient } = await import("@supabase/supabase-js");
+            const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+            const { data: { user }, error: authError, } = await supabaseAuth.auth.getUser(token);
+            if (authError || !user) {
+                return reply.status(401).send({ error: "Invalid token" });
+            }
+            const { jobId } = request.params;
+            const retried = await retryDocumentJob(jobId, user.id);
+            if (!retried) {
+                return reply.status(400).send({ error: "Nie można ponowić zadania" });
+            }
+            return reply.send({ success: true });
+        }
+        catch (error) {
+            fastify.log.error(error);
+            return reply.status(500).send({
+                error: error instanceof Error ? error.message : "Błąd ponawiania zadania",
+            });
+        }
+    });
+    // POST /documents/jobs/:jobId/save-rag - Zapisz wynik do RAG
+    fastify.post("/documents/jobs/:jobId/save-rag", async (request, reply) => {
+        try {
+            const authHeader = request.headers.authorization;
+            if (!authHeader?.startsWith("Bearer ")) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const token = authHeader.substring(7);
+            const { createClient } = await import("@supabase/supabase-js");
+            const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey);
+            const { data: { user }, error: authError, } = await supabaseAuth.auth.getUser(token);
+            if (authError || !user) {
+                return reply.status(401).send({ error: "Invalid token" });
+            }
+            const bodySchema = z.object({
+                title: z.string().min(1),
+            });
+            const { title } = bodySchema.parse(request.body);
+            const { jobId } = request.params;
+            const job = await getDocumentJob(jobId, user.id);
+            if (!job) {
+                return reply.status(404).send({ error: "Zadanie nie znalezione" });
+            }
+            if (job.status !== "completed" || !job.result?.text) {
+                return reply
+                    .status(400)
+                    .send({ error: "Zadanie nie jest ukończone lub brak tekstu" });
+            }
+            // Zapisz do RAG
+            const processor = new DocumentProcessor();
+            await processor.initializeWithUserConfig(user.id);
+            const ragResult = await processor.saveToRAG(user.id, job.result.text, title, job.file_name, "uploaded");
+            return reply.send({
+                success: true,
+                documentId: ragResult.documentId,
+            });
+        }
+        catch (error) {
+            fastify.log.error(error);
+            return reply.status(500).send({
+                error: error instanceof Error ? error.message : "Błąd zapisu do RAG",
+            });
+        }
+    });
+    // GET /documents/jobs/stats - Statystyki kolejki
+    fastify.get("/documents/jobs/stats", async (request, reply) => {
+        try {
+            const authHeader = request.headers.authorization;
+            if (!authHeader?.startsWith("Bearer ")) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const stats = await getDocumentQueueStats();
+            return reply.send({ stats });
+        }
+        catch (error) {
+            fastify.log.error(error);
+            return reply.status(500).send({
+                error: error instanceof Error ? error.message : "Błąd pobierania statystyk",
             });
         }
     });

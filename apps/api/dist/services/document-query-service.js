@@ -191,11 +191,12 @@ export class DocumentQueryService {
     detectSessionIntent(message) {
         const lowerMessage = message.toLowerCase();
         // Wzorce wykrywania numeru sesji
+        // Tolerancja na literówki: sesja, sesji, sesję, sesjie, sesje, seje, itd.
         const sessionPatterns = [
-            /sesj[aięy]\s*(?:nr|numer|rady)?\s*\.?\s*([IVXLCDM]+|\d+)/i,
-            /([IVXLCDM]+|\d+)\s*sesj[aięy]/i,
-            /streszcz(?:enie)?\s*(?:.*?)sesj[aięy]\s*(?:nr)?\s*\.?\s*([IVXLCDM]+|\d+)/i,
-            /sesj[aięy]\s*(?:rady\s*(?:miejskiej|gminnej|gminy|miasta)?)?\s*(?:nr)?\s*\.?\s*([IVXLCDM]+|\d+)/i,
+            /sesj[aięye]{1,2}\s*(?:nr|numer|rady)?\s*\.?\s*([IVXLCDM]+|\d+)/i,
+            /([IVXLCDM]+|\d+)\s*sesj[aięye]{1,2}/i,
+            /streszcz(?:enie)?\s*(?:.*?)sesj[aięye]{1,2}\s*(?:nr)?\s*\.?\s*([IVXLCDM]+|\d+)/i,
+            /sesj[aięye]{1,2}\s*(?:rady\s*(?:miejskiej|gminnej|gminy|miasta|miajsta)?)?\s*(?:nr|numer)?\s*\.?\s*([IVXLCDM]+|\d+)/i,
         ];
         let sessionNumber = 0;
         for (const pattern of sessionPatterns) {

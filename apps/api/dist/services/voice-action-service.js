@@ -36,8 +36,26 @@ const VOICE_ACTION_PROMPT = `Jesteś asystentem głosowym Stefan. Analizujesz po
 - **document_search** → "znajdź dokument", "szukaj w dokumentach", "pokaż uchwały"
 - **document_open** → "otwórz dokument", "pokaż mi [nazwa]"
 
-## SZYBKIE NARZĘDZIA:
-- **quick_tool** → "utwórz interpelację", "napisz pismo", "generuj protokół", "analiza budżetu"
+## SZYBKIE NARZĘDZIA (TYLKO gdy użytkownik chce UTWORZYĆ/WYGENEROWAĆ dokument):
+- **quick_tool** → WYMAGA słów akcji: "utwórz", "napisz", "generuj", "przygotuj", "stwórz"
+  Przykłady: "utwórz interpelację", "napisz pismo", "generuj protokół", "przygotuj wystąpienie", "stwórz projekt uchwały", "napisz scenopis na rolkę", "generuj scenariusz TikTok"
+
+⚠️ UWAGA: Jeśli użytkownik pyta o "posiedzenie", "komisja", "sesja", "relacja", "artykuł", "gazeta", "Drawnowiny" BEZ słów akcji → to jest **document_search**, NIE quick_tool!
+  - "posiedzenie komisji budżetowej" → document_search (szuka dokumentów)
+  - "co było na komisji" → document_search
+  - "protokół z sesji" → document_search (szuka istniejącego protokołu)
+  - "relacja z sesji" → document_search (szuka relacji/artykułu)
+  - "Drawnowiny relacja z sesji" → document_search (szuka artykułu w gazecie)
+  - "generuj protokół z sesji" → quick_tool (tworzy nowy protokół)
+  
+⚠️ SŁOWA WYKLUCZAJĄCE quick_tool (wskazują na WYSZUKIWANIE):
+  - "relacja", "artykuł", "gazeta", "Drawnowiny", "informacja o", "co było", "znajdź", "szukaj", "pokaż"
+
+Dla quick_tool ZAWSZE wyciągnij:
+- toolName: typ narzędzia (interpelacja/pismo/protokół/budżet/wystąpienie/uchwała/raport/scenopis)
+- toolTopic: temat/przedmiot (np. "remont ul. Głównej", "sesja rady o budżecie")
+- toolContext: dodatkowy kontekst z rozmowy
+- toolRecipient: adresat jeśli wspomniany
 
 ## NAWIGACJA:
 - **navigate** → "przejdź do", "otwórz stronę", "pokaż pulpit/dokumenty/chat/ustawienia"
@@ -61,18 +79,32 @@ const VOICE_ACTION_PROMPT = `Jesteś asystentem głosowym Stefan. Analizujesz po
 
 4. Jeśli użytkownik mówi "wykonaj", "tak", "potwierdź" → **execute_pending**
 
+5. WAŻNE dla dat:
+   - Parsuj KAŻDĄ datę do formatu DD-MM-YYYY (np. "03-02-2026")
+   - Przykłady:
+     * "jutro" → oblicz datę i zwróć "25-01-2026"
+     * "wtorek przyszły tydzień" → oblicz datę i zwróć "03-02-2026"
+     * "3 luty 2026" → "03-02-2026"
+     * "15 stycznia" → "15-01-2026"
+   - Jeśli użytkownik nie podał roku, użyj 2026
+   - Jeśli nie możesz obliczyć daty, zwróć null i dodaj do missingInfo
+
 # ODPOWIEDŹ (TYLKO JSON):
 
 {
   "actionType": "action_name",
   "confidence": 0.95,
   "entities": {
-    "eventTitle": "opcjonalnie",
-    "eventDate": "YYYY-MM-DD lub null",
+    "eventTitle": "tytuł wydarzenia",
+    "eventDate": "DD-MM-YYYY (np. '03-02-2026', '25-01-2026')",
     "eventTime": "HH:mm lub null",
+    "eventLocation": "miejsce lub null",
     "taskTitle": "opcjonalnie",
     "documentQuery": "opcjonalnie",
-    "toolName": "opcjonalnie",
+    "toolName": "typ narzędzia",
+    "toolTopic": "temat/przedmiot",
+    "toolContext": "kontekst z rozmowy",
+    "toolRecipient": "adresat jeśli wspomniany",
     "targetPage": "opcjonalnie"
   },
   "missingInfo": ["lista brakujących informacji"],
@@ -80,72 +112,31 @@ const VOICE_ACTION_PROMPT = `Jesteś asystentem głosowym Stefan. Analizujesz po
   "userFriendlyDescription": "Co zamierzam zrobić"
 }`;
 /**
- * Parsuje datę z różnych formatów i relatywnych wyrażeń
+ * Parsuje datę z formatu DD-MM-YYYY
+ * LLM już przetwarza naturalne daty, tutaj tylko konwersja do Date
  */
 function parseNaturalDate(dateStr) {
     if (!dateStr)
         return null;
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const lowerDate = dateStr.toLowerCase().trim();
-    // Relatywne daty
-    if (lowerDate === "dziś" ||
-        lowerDate === "dzisiaj" ||
-        lowerDate === "today") {
-        return today;
+    // Format DD-MM-YYYY (główny format z LLM)
+    const ddmmyyyyMatch = dateStr.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+    if (ddmmyyyyMatch) {
+        const day = parseInt(ddmmyyyyMatch[1], 10);
+        const month = parseInt(ddmmyyyyMatch[2], 10) - 1;
+        const year = parseInt(ddmmyyyyMatch[3], 10);
+        return new Date(year, month, day);
     }
-    if (lowerDate === "jutro" || lowerDate === "tomorrow") {
-        const tomorrow = new Date(today);
-        tomorrow.setDate(today.getDate() + 1);
-        return tomorrow;
+    // Format DD.MM.YYYY (fallback)
+    const dotMatch = dateStr.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+    if (dotMatch) {
+        const day = parseInt(dotMatch[1], 10);
+        const month = parseInt(dotMatch[2], 10) - 1;
+        const year = parseInt(dotMatch[3], 10);
+        return new Date(year, month, day);
     }
-    if (lowerDate === "pojutrze") {
-        const dayAfter = new Date(today);
-        dayAfter.setDate(today.getDate() + 2);
-        return dayAfter;
-    }
-    // "za X dni"
-    const inDaysMatch = lowerDate.match(/za\s+(\d+)\s+dni/);
-    if (inDaysMatch) {
-        const days = parseInt(inDaysMatch[1], 10);
-        const futureDate = new Date(today);
-        futureDate.setDate(today.getDate() + days);
-        return futureDate;
-    }
-    // Dni tygodnia (z odmianami)
-    const weekdays = [
-        { patterns: ["niedziela", "niedzielę", "niedziele"], dayNum: 0 },
-        { patterns: ["poniedziałek", "poniedziałku"], dayNum: 1 },
-        { patterns: ["wtorek", "wtorku", "wtorek"], dayNum: 2 },
-        { patterns: ["środa", "środę", "sroda", "srode"], dayNum: 3 },
-        { patterns: ["czwartek", "czwartku"], dayNum: 4 },
-        { patterns: ["piątek", "piątku", "piatek", "piatku"], dayNum: 5 },
-        { patterns: ["sobota", "sobotę", "sobote"], dayNum: 6 },
-    ];
-    for (const { patterns, dayNum } of weekdays) {
-        if (patterns.some((p) => lowerDate.includes(p))) {
-            const currentDay = today.getDay();
-            let daysUntil = dayNum - currentDay;
-            if (daysUntil <= 0)
-                daysUntil += 7; // Następny tydzień
-            const targetDate = new Date(today);
-            targetDate.setDate(today.getDate() + daysUntil);
-            return targetDate;
-        }
-    }
-    // Format YYYY-MM-DD
+    // Format YYYY-MM-DD (fallback)
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
         return new Date(dateStr + "T00:00:00");
-    }
-    // Format DD.MM.YYYY lub DD-MM-YYYY
-    const euMatch = dateStr.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})$/);
-    if (euMatch) {
-        return new Date(parseInt(euMatch[3]), parseInt(euMatch[2]) - 1, parseInt(euMatch[1]));
-    }
-    // Próba standardowego parsowania
-    const parsed = new Date(dateStr);
-    if (!isNaN(parsed.getTime())) {
-        return parsed;
     }
     return null;
 }
@@ -245,7 +236,7 @@ export class VoiceActionService {
      * Wykonaj lub zaplanuj akcję
      */
     async executeAction(detection) {
-        const { actionType, entities, missingInfo, description } = detection;
+        const { actionType, entities, missingInfo } = detection;
         // Jeśli brakuje kluczowych informacji
         if (missingInfo.length > 0 &&
             actionType !== "navigate" &&
@@ -263,20 +254,39 @@ export class VoiceActionService {
                 return this.handleCalendarAdd(entities);
             case "calendar_list":
                 return this.handleCalendarList();
+            case "calendar_edit":
+                return this.handleCalendarEdit(entities);
+            case "calendar_delete":
+                return this.handleCalendarDelete(entities);
             case "task_add":
                 return this.handleTaskAdd(entities);
             case "task_list":
                 return this.handleTaskList();
             case "task_complete":
                 return this.handleTaskComplete(entities);
+            case "task_delete":
+                return this.handleTaskDelete(entities);
             case "alert_check":
                 return this.handleAlertCheck();
+            case "alert_dismiss":
+                return this.handleAlertDismiss(entities);
             case "document_search":
                 return this.handleDocumentSearch(entities);
+            case "document_open":
+                return this.handleDocumentOpen(entities);
             case "quick_tool":
                 return this.handleQuickTool(entities);
             case "navigate":
                 return this.handleNavigation(entities);
+            case "execute_pending":
+                return this.executePendingAction();
+            case "confirmation_needed":
+            case "clarification_needed":
+                return {
+                    success: true,
+                    actionType,
+                    message: String(entities.clarificationQuestion || "Potrzebuję więcej informacji."),
+                };
             default:
                 return {
                     success: false,
@@ -343,13 +353,14 @@ export class VoiceActionService {
             };
         }
         try {
-            // Parsuj datę używając naturalnego parsera
+            // Parsuj datę z formatu DD-MM-YYYY (LLM już przetwarza naturalne daty)
             let eventDate = parseNaturalDate(date);
             if (!eventDate) {
+                console.error(`[VoiceAction] Failed to parse date: "${date}"`);
                 return {
                     success: false,
                     actionType: "calendar_add",
-                    message: `Nie rozumiem daty "${date}". Podaj datę w formacie: "jutro", "poniedziałek", "15.01.2026" lub "2026-01-15".`,
+                    message: `Nie udało się przetworzyć daty "${date}". Spróbuj podać datę w innym formacie.`,
                 };
             }
             // Ustaw godzinę
@@ -363,7 +374,7 @@ export class VoiceActionService {
             }
             // Zapisz do bazy
             const { data, error } = await supabase
-                .from("calendar_events")
+                .from("user_calendar_events")
                 .insert({
                 user_id: this.userId,
                 title,
@@ -371,18 +382,26 @@ export class VoiceActionService {
                 end_date: new Date(eventDate.getTime() + 60 * 60 * 1000).toISOString(), // +1h
                 location: location || null,
                 description: `Utworzone głosowo przez Stefana`,
+                event_type: "meeting",
+                all_day: false,
+                color: "primary",
+                reminder_minutes: [1440, 60], // Przypomnienie 24h i 1h przed
             })
                 .select()
                 .single();
-            if (error)
+            if (error) {
+                console.error("[VoiceAction] Calendar insert error:", error);
                 throw error;
+            }
+            console.log(`[VoiceAction] ✅ Event created: "${title}" on ${eventDate.toISOString()} for user ${this.userId}`);
             return {
                 success: true,
                 actionType: "calendar_add",
                 message: `Dodałem do kalendarza: "${title}" na ${this.formatDate(eventDate)}${time ? ` o ${time}` : ""}`,
                 data,
                 uiAction: {
-                    type: "show_toast",
+                    type: "refresh",
+                    target: "calendar",
                     data: {
                         type: "success",
                         message: `Wydarzenie "${title}" dodane do kalendarza`,
@@ -408,7 +427,7 @@ export class VoiceActionService {
             today.setHours(0, 0, 0, 0);
             const weekLater = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
             const { data, error } = await supabase
-                .from("calendar_events")
+                .from("user_calendar_events")
                 .select("*")
                 .eq("user_id", this.userId)
                 .gte("start_date", today.toISOString())
@@ -451,6 +470,243 @@ export class VoiceActionService {
                 success: false,
                 actionType: "calendar_list",
                 message: "Nie udało się pobrać kalendarza.",
+            };
+        }
+    }
+    /**
+     * Edytuj wydarzenie w kalendarzu (zmień termin, tytuł, lokalizację)
+     */
+    async handleCalendarEdit(entities) {
+        const eventTitle = entities.eventTitle;
+        const newDate = entities.eventDate;
+        const newTime = entities.eventTime;
+        const newLocation = entities.eventLocation;
+        const eventId = entities.eventId;
+        // Jeśli nie podano tytułu ani ID, pokaż listę wydarzeń do wyboru
+        if (!eventTitle && !eventId) {
+            const listResult = await this.handleCalendarList();
+            return {
+                ...listResult,
+                actionType: "clarification_needed",
+                message: "Które wydarzenie chcesz zmienić?\n" + (listResult.message || ""),
+            };
+        }
+        try {
+            // Znajdź wydarzenie po tytule lub ID
+            let query = supabase
+                .from("user_calendar_events")
+                .select("*")
+                .eq("user_id", this.userId);
+            if (eventId) {
+                query = query.eq("id", eventId);
+            }
+            else if (eventTitle) {
+                query = query.ilike("title", `%${eventTitle}%`);
+            }
+            const { data: events, error: findError } = await query.limit(5);
+            if (findError)
+                throw findError;
+            if (!events || events.length === 0) {
+                return {
+                    success: false,
+                    actionType: "calendar_edit",
+                    message: `Nie znalazłem wydarzenia "${eventTitle || eventId}".`,
+                };
+            }
+            // Jeśli znaleziono więcej niż 1, poproś o uściślenie
+            if (events.length > 1 && !eventId) {
+                const eventList = events
+                    .map((e) => {
+                    const date = new Date(e.start_date);
+                    return `• "${e.title}" - ${this.formatDate(date)}`;
+                })
+                    .join("\n");
+                return {
+                    success: true,
+                    actionType: "clarification_needed",
+                    message: `Znalazłem ${events.length} wydarzeń pasujących do "${eventTitle}":\n${eventList}\n\nPodaj dokładniejszy tytuł lub datę.`,
+                    data: events,
+                };
+            }
+            const event = events[0];
+            const updateData = {};
+            // Przygotuj dane do aktualizacji
+            if (newDate) {
+                let eventDate = parseNaturalDate(newDate);
+                if (eventDate) {
+                    // Zachowaj oryginalną godzinę jeśli nie podano nowej
+                    if (newTime) {
+                        const [hours, minutes] = newTime.split(":").map(Number);
+                        eventDate.setHours(hours, minutes || 0, 0, 0);
+                    }
+                    else {
+                        const originalDate = new Date(event.start_date);
+                        eventDate.setHours(originalDate.getHours(), originalDate.getMinutes(), 0, 0);
+                    }
+                    updateData.start_date = eventDate.toISOString();
+                    updateData.end_date = new Date(eventDate.getTime() + 60 * 60 * 1000).toISOString();
+                }
+            }
+            else if (newTime) {
+                // Tylko zmiana godziny, bez zmiany daty
+                const eventDate = new Date(event.start_date);
+                const [hours, minutes] = newTime.split(":").map(Number);
+                eventDate.setHours(hours, minutes || 0, 0, 0);
+                updateData.start_date = eventDate.toISOString();
+                updateData.end_date = new Date(eventDate.getTime() + 60 * 60 * 1000).toISOString();
+            }
+            if (newLocation) {
+                updateData.location = newLocation;
+            }
+            // Jeśli nie ma nic do aktualizacji
+            if (Object.keys(updateData).length === 0) {
+                return {
+                    success: true,
+                    actionType: "clarification_needed",
+                    message: `Co chcesz zmienić w wydarzeniu "${event.title}"? Podaj nową datę, godzinę lub miejsce.`,
+                };
+            }
+            // Wykonaj aktualizację
+            const { data: updatedEvent, error: updateError } = await supabase
+                .from("user_calendar_events")
+                .update(updateData)
+                .eq("id", event.id)
+                .eq("user_id", this.userId)
+                .select()
+                .single();
+            if (updateError)
+                throw updateError;
+            const changes = [];
+            if (updateData.start_date) {
+                const newDateObj = new Date(updateData.start_date);
+                changes.push(`termin na ${this.formatDate(newDateObj)} o ${newDateObj.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" })}`);
+            }
+            if (updateData.location) {
+                changes.push(`miejsce na "${updateData.location}"`);
+            }
+            console.log(`[VoiceAction] ✅ Event updated: "${event.title}" - ${changes.join(", ")}`);
+            return {
+                success: true,
+                actionType: "calendar_edit",
+                message: `Zaktualizowałem wydarzenie "${event.title}": zmieniono ${changes.join(", ")}.`,
+                data: updatedEvent,
+                uiAction: {
+                    type: "refresh",
+                    target: "calendar",
+                    data: {
+                        type: "success",
+                        message: `Wydarzenie "${event.title}" zostało zaktualizowane`,
+                    },
+                },
+            };
+        }
+        catch (error) {
+            console.error("[VoiceAction] Calendar edit error:", error);
+            return {
+                success: false,
+                actionType: "calendar_edit",
+                message: "Nie udało się zaktualizować wydarzenia. Spróbuj ponownie.",
+            };
+        }
+    }
+    /**
+     * Usuń wydarzenie z kalendarza
+     */
+    async handleCalendarDelete(entities) {
+        const eventTitle = entities.eventTitle;
+        const eventDate = entities.eventDate;
+        const eventId = entities.eventId;
+        // Jeśli nie podano tytułu ani ID, pokaż listę wydarzeń do wyboru
+        if (!eventTitle && !eventId) {
+            const listResult = await this.handleCalendarList();
+            return {
+                ...listResult,
+                actionType: "clarification_needed",
+                message: "Które wydarzenie chcesz usunąć?\n" + (listResult.message || ""),
+            };
+        }
+        try {
+            // Znajdź wydarzenie po tytule lub ID
+            let query = supabase
+                .from("user_calendar_events")
+                .select("*")
+                .eq("user_id", this.userId);
+            if (eventId) {
+                query = query.eq("id", eventId);
+            }
+            else if (eventTitle) {
+                query = query.ilike("title", `%${eventTitle}%`);
+            }
+            // Jeśli podano datę, zawęź wyszukiwanie
+            if (eventDate) {
+                const parsedDate = parseNaturalDate(eventDate);
+                if (parsedDate) {
+                    const dayStart = new Date(parsedDate);
+                    dayStart.setHours(0, 0, 0, 0);
+                    const dayEnd = new Date(parsedDate);
+                    dayEnd.setHours(23, 59, 59, 999);
+                    query = query
+                        .gte("start_date", dayStart.toISOString())
+                        .lte("start_date", dayEnd.toISOString());
+                }
+            }
+            const { data: events, error: findError } = await query.limit(5);
+            if (findError)
+                throw findError;
+            if (!events || events.length === 0) {
+                return {
+                    success: false,
+                    actionType: "calendar_delete",
+                    message: `Nie znalazłem wydarzenia "${eventTitle || eventId}"${eventDate ? ` na ${eventDate}` : ""}.`,
+                };
+            }
+            // Jeśli znaleziono więcej niż 1, poproś o uściślenie
+            if (events.length > 1 && !eventId) {
+                const eventList = events
+                    .map((e) => {
+                    const date = new Date(e.start_date);
+                    return `• "${e.title}" - ${this.formatDate(date)}`;
+                })
+                    .join("\n");
+                return {
+                    success: true,
+                    actionType: "clarification_needed",
+                    message: `Znalazłem ${events.length} wydarzeń pasujących do "${eventTitle}":\n${eventList}\n\nPodaj dokładniejszy tytuł lub datę, które wydarzenie usunąć.`,
+                    data: events,
+                };
+            }
+            const event = events[0];
+            // Usuń wydarzenie
+            const { error: deleteError } = await supabase
+                .from("user_calendar_events")
+                .delete()
+                .eq("id", event.id)
+                .eq("user_id", this.userId);
+            if (deleteError)
+                throw deleteError;
+            const eventDateObj = new Date(event.start_date);
+            console.log(`[VoiceAction] ✅ Event deleted: "${event.title}" on ${eventDateObj.toISOString()}`);
+            return {
+                success: true,
+                actionType: "calendar_delete",
+                message: `Usunąłem wydarzenie "${event.title}" z ${this.formatDate(eventDateObj)}.`,
+                data: { deletedEvent: event },
+                uiAction: {
+                    type: "refresh",
+                    target: "calendar",
+                    data: {
+                        type: "success",
+                        message: `Wydarzenie "${event.title}" zostało usunięte`,
+                    },
+                },
+            };
+        }
+        catch (error) {
+            console.error("[VoiceAction] Calendar delete error:", error);
+            return {
+                success: false,
+                actionType: "calendar_delete",
+                message: "Nie udało się usunąć wydarzenia. Spróbuj ponownie.",
             };
         }
     }
@@ -596,6 +852,64 @@ export class VoiceActionService {
         }
     }
     /**
+     * Usuń zadanie
+     */
+    async handleTaskDelete(entities) {
+        const taskTitle = entities.taskTitle;
+        if (!taskTitle) {
+            const listResult = await this.handleTaskList();
+            return {
+                ...listResult,
+                actionType: "clarification_needed",
+                message: "Które zadanie chcesz usunąć?\n" + (listResult.message || ""),
+            };
+        }
+        try {
+            const { data: tasks } = await supabase
+                .from("tasks")
+                .select("*")
+                .eq("user_id", this.userId)
+                .ilike("title", `%${taskTitle}%`)
+                .limit(5);
+            if (!tasks || tasks.length === 0) {
+                return {
+                    success: false,
+                    actionType: "task_delete",
+                    message: `Nie znalazłem zadania "${taskTitle}".`,
+                };
+            }
+            if (tasks.length > 1) {
+                const taskList = tasks.map((t) => `• "${t.title}"`).join("\n");
+                return {
+                    success: true,
+                    actionType: "clarification_needed",
+                    message: `Znalazłem ${tasks.length} zadań pasujących do "${taskTitle}":\n${taskList}\n\nPodaj dokładniejszy tytuł.`,
+                    data: tasks,
+                };
+            }
+            const task = tasks[0];
+            await supabase.from("tasks").delete().eq("id", task.id);
+            console.log(`[VoiceAction] ✅ Task deleted: "${task.title}"`);
+            return {
+                success: true,
+                actionType: "task_delete",
+                message: `Usunąłem zadanie: "${task.title}"`,
+                uiAction: {
+                    type: "refresh",
+                    target: "tasks",
+                },
+            };
+        }
+        catch (error) {
+            console.error("[VoiceAction] Task delete error:", error);
+            return {
+                success: false,
+                actionType: "task_delete",
+                message: "Nie udało się usunąć zadania.",
+            };
+        }
+    }
+    /**
      * Sprawdź alerty
      */
     async handleAlertCheck() {
@@ -642,6 +956,47 @@ export class VoiceActionService {
         }
     }
     /**
+     * Odrzuć/zamknij alert
+     */
+    async handleAlertDismiss(entities) {
+        const alertId = entities.alertId;
+        if (!alertId) {
+            return {
+                success: true,
+                actionType: "clarification_needed",
+                message: "Który alert chcesz odrzucić? Podaj ID lub otwórz panel alertów.",
+                uiAction: {
+                    type: "navigate",
+                    target: "/dashboard",
+                },
+            };
+        }
+        try {
+            await supabase
+                .from("processing_logs")
+                .update({ status: "dismissed" })
+                .eq("id", alertId)
+                .eq("user_id", this.userId);
+            return {
+                success: true,
+                actionType: "alert_dismiss",
+                message: "Alert został odrzucony.",
+                uiAction: {
+                    type: "refresh",
+                    target: "alerts",
+                },
+            };
+        }
+        catch (error) {
+            console.error("[VoiceAction] Alert dismiss error:", error);
+            return {
+                success: false,
+                actionType: "alert_dismiss",
+                message: "Nie udało się odrzucić alertu.",
+            };
+        }
+    }
+    /**
      * Wyszukaj dokument
      */
     async handleDocumentSearch(entities) {
@@ -662,6 +1017,73 @@ export class VoiceActionService {
                 target: `/documents?search=${encodeURIComponent(query)}`,
             },
         };
+    }
+    /**
+     * Otwórz konkretny dokument
+     */
+    async handleDocumentOpen(entities) {
+        const documentName = entities.documentName;
+        const documentId = entities.documentId;
+        if (documentId) {
+            return {
+                success: true,
+                actionType: "document_open",
+                message: `Otwieram dokument...`,
+                uiAction: {
+                    type: "navigate",
+                    target: `/documents/${documentId}`,
+                },
+            };
+        }
+        if (!documentName) {
+            return {
+                success: true,
+                actionType: "clarification_needed",
+                message: "Który dokument chcesz otworzyć? Podaj nazwę lub ID.",
+            };
+        }
+        // Szukaj dokumentu po nazwie
+        try {
+            const { data: docs } = await supabase
+                .from("processed_documents")
+                .select("id, title")
+                .eq("user_id", this.userId)
+                .ilike("title", `%${documentName}%`)
+                .limit(5);
+            if (!docs || docs.length === 0) {
+                return {
+                    success: false,
+                    actionType: "document_open",
+                    message: `Nie znalazłem dokumentu "${documentName}".`,
+                };
+            }
+            if (docs.length === 1) {
+                return {
+                    success: true,
+                    actionType: "document_open",
+                    message: `Otwieram: "${docs[0].title}"`,
+                    uiAction: {
+                        type: "navigate",
+                        target: `/documents/${docs[0].id}`,
+                    },
+                };
+            }
+            const docList = docs.map((d) => `• "${d.title}"`).join("\n");
+            return {
+                success: true,
+                actionType: "clarification_needed",
+                message: `Znalazłem ${docs.length} dokumentów:\n${docList}\n\nKtóry chcesz otworzyć?`,
+                data: docs,
+            };
+        }
+        catch (error) {
+            console.error("[VoiceAction] Document open error:", error);
+            return {
+                success: false,
+                actionType: "document_open",
+                message: "Nie udało się otworzyć dokumentu.",
+            };
+        }
     }
     /**
      * Uruchom szybkie narzędzie
@@ -699,6 +1121,66 @@ export class VoiceActionService {
                 path: "/chat?tool=resolution",
                 description: "Generator projektów uchwał",
             },
+            wystąpienie: {
+                name: "Wystąpienie na sesji",
+                path: "/chat?tool=speech",
+                description: "Przygotuj projekt wystąpienia radnego na sesji",
+            },
+            wystapienie: {
+                name: "Wystąpienie na sesji",
+                path: "/chat?tool=speech",
+                description: "Przygotuj projekt wystąpienia radnego na sesji",
+            },
+            przemówienie: {
+                name: "Wystąpienie na sesji",
+                path: "/chat?tool=speech",
+                description: "Przygotuj projekt wystąpienia radnego na sesji",
+            },
+            speech: {
+                name: "Wystąpienie na sesji",
+                path: "/chat?tool=speech",
+                description: "Przygotuj projekt wystąpienia radnego na sesji",
+            },
+            raport: {
+                name: "Szablon raportu",
+                path: "/chat?tool=report",
+                description: "Generator szablonów raportów kontroli",
+            },
+            report: {
+                name: "Szablon raportu",
+                path: "/chat?tool=report",
+                description: "Generator szablonów raportów kontroli",
+            },
+            szablon: {
+                name: "Szablon raportu",
+                path: "/chat?tool=report",
+                description: "Generator szablonów raportów kontroli",
+            },
+            scenopis: {
+                name: "Generator scenopisów",
+                path: "/chat?tool=script",
+                description: "Generator scenopisów na rolkę YouTube/TikTok",
+            },
+            scenariusz: {
+                name: "Generator scenopisów",
+                path: "/chat?tool=script",
+                description: "Generator scenopisów na rolkę YouTube/TikTok",
+            },
+            rolka: {
+                name: "Generator scenopisów",
+                path: "/chat?tool=script",
+                description: "Generator scenopisów na rolkę YouTube/TikTok",
+            },
+            tiktok: {
+                name: "Generator scenopisów",
+                path: "/chat?tool=script",
+                description: "Generator scenopisów na rolkę YouTube/TikTok",
+            },
+            reels: {
+                name: "Generator scenopisów",
+                path: "/chat?tool=script",
+                description: "Generator scenopisów na rolkę YouTube/TikTok",
+            },
         };
         // Znajdź pasujące narzędzie
         let tool = toolMap[toolName];
@@ -712,7 +1194,14 @@ export class VoiceActionService {
             }
         }
         if (!tool) {
-            const availableTools = Object.values(toolMap)
+            // Unikalne narzędzia (bez duplikatów aliasów)
+            const uniqueTools = new Map();
+            for (const t of Object.values(toolMap)) {
+                if (!uniqueTools.has(t.path)) {
+                    uniqueTools.set(t.path, t);
+                }
+            }
+            const availableTools = Array.from(uniqueTools.values())
                 .map((t) => `• ${t.name}`)
                 .join("\n");
             return {
@@ -721,13 +1210,42 @@ export class VoiceActionService {
                 message: `Dostępne narzędzia:\n${availableTools}\n\nKtóre narzędzie uruchomić?`,
             };
         }
+        // Przygotuj dane formularza z kontekstu
+        const formData = {};
+        const toolTopic = entities.toolTopic;
+        const toolContext = entities.toolContext;
+        const toolRecipient = entities.toolRecipient;
+        // Mapuj dane na pola formularza w zależności od narzędzia
+        if (toolTopic) {
+            // Uniwersalne pole "topic" lub "subject" lub "title"
+            formData.topic = toolTopic;
+            formData.subject = toolTopic;
+            formData.title = toolTopic;
+        }
+        if (toolContext) {
+            // Uniwersalne pole "context" lub "content" lub "justification"
+            formData.context = toolContext;
+            formData.content = toolContext;
+            formData.justification = toolContext;
+        }
+        if (toolRecipient) {
+            formData.recipient = toolRecipient;
+        }
+        // Wyciągnij typ narzędzia z path (np. "/chat?tool=interpelation" -> "interpelation")
+        const toolType = tool.path.split("tool=")[1];
         return {
             success: true,
             actionType: "quick_tool",
-            message: `Uruchamiam: ${tool.name}`,
+            message: `Uruchamiam: ${tool.name}${toolTopic ? ` - "${toolTopic}"` : ""}`,
             uiAction: {
-                type: "navigate",
-                target: tool.path,
+                type: "open_tool_with_data",
+                target: toolType,
+                data: {
+                    toolType,
+                    formData,
+                    topic: toolTopic,
+                    context: toolContext,
+                },
             },
         };
     }

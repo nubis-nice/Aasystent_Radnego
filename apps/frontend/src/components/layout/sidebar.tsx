@@ -176,27 +176,48 @@ export function Sidebar() {
 
     loadUserData();
 
-    // Nasłuchuj zmian w profilu (opcjonalnie)
-    const channel = supabase
-      .channel("profile-changes")
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "user_profiles",
-        },
-        (payload) => {
-          if (payload.new) {
-            setUserName((payload.new as any).full_name);
-            setUserPosition((payload.new as any).position || "Radny");
-          }
-        }
-      )
-      .subscribe();
+    // Nasłuchuj zmian w profilu - TYLKO dla bieżącego użytkownika
+    const setupRealtimeSubscription = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const channel = supabase
+        .channel("profile-changes")
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "user_profiles",
+            filter: `id=eq.${user.id}`,
+          },
+          (payload) => {
+            if (payload.new) {
+              const newData = payload.new as {
+                full_name?: string;
+                position?: string;
+              };
+              if (newData.full_name) setUserName(newData.full_name);
+              setUserPosition(newData.position || "Radny");
+            }
+          },
+        )
+        .subscribe();
+
+      return channel;
+    };
+
+    let channelRef: Awaited<ReturnType<typeof setupRealtimeSubscription>>;
+    setupRealtimeSubscription().then((ch) => {
+      channelRef = ch;
+    });
 
     return () => {
-      supabase.removeChannel(channel);
+      if (channelRef) {
+        supabase.removeChannel(channelRef);
+      }
     };
   }, []);
 

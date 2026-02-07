@@ -63,7 +63,7 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 const DEFAULT_OCR_OPTIONS = {
     useVisionOnly: false,
-    tesseractConfidenceThreshold: 75,
+    tesseractConfidenceThreshold: 85,
     tesseractDPI: 300,
     visionMaxDimension: 768,
     useVisionQueue: true,
@@ -280,8 +280,7 @@ export class DocumentProcessor {
         // Jeśli useVisionOnly - pomiń Tesseract
         if (!useVisionOnly) {
             // KROK 1: Najpierw spróbuj Tesseract (darmowe, lokalne)
-            const tesseractResult = await this.processImageWithTesseract(normalizedImage, 1 // page number
-            );
+            const tesseractResult = await this.processImageWithTesseract(normalizedImage, 1);
             console.log(`[DocumentProcessor] Tesseract result: ${tesseractResult.text.length} chars, confidence: ${tesseractResult.confidence.toFixed(1)}% (threshold: ${confidenceThreshold}%)`);
             // Jeśli Tesseract dał dobry wynik (confidence > threshold i tekst > 30 znaków) - użyj go
             if (tesseractResult.confidence >= confidenceThreshold &&
@@ -1122,9 +1121,10 @@ export class DocumentProcessor {
             // ═══════════════════════════════════════════════════════════════════
             // GENEROWANIE EMBEDDINGU I ZAPIS
             // ═══════════════════════════════════════════════════════════════════
+            // nomic-embed-text ma limit ~2000 tokenów (~4000 znaków)
             const embeddingResponse = await this.embeddingsClient.embeddings.create({
                 model: this.embeddingModel,
-                input: text.slice(0, 8000),
+                input: text.slice(0, 4000),
             });
             const embeddingData = embeddingResponse.data[0];
             if (!embeddingData) {
@@ -1180,6 +1180,17 @@ export class DocumentProcessor {
         let normalizedTitle = title
             .replace(/\s*\|.*$/, "") // Usuń " | Urząd Miejski..."
             .replace(/\s*-?\s*System\s+Rada.*$/i, "") // Usuń "System Rada"
+            // Zamień angielskie nazwy dokumentów na polskie
+            .replace(/\bresolution\s+nr\b/gi, "Uchwała nr")
+            .replace(/\bresolution\b/gi, "Uchwała")
+            .replace(/\bprotocol\s+nr\b/gi, "Protokół nr")
+            .replace(/\bprotocol\b/gi, "Protokół")
+            .replace(/\bdraft\s+nr\b/gi, "Projekt nr")
+            .replace(/\bdraft\b/gi, "Projekt")
+            .replace(/\battachment\b/gi, "Załącznik")
+            .replace(/\bsession\b/gi, "Sesja")
+            .replace(/\bannouncement\b/gi, "Ogłoszenie")
+            .replace(/\borderordinance\b/gi, "Zarządzenie")
             .trim();
         if (sessionNumber) {
             // Zamień różne formaty numeru sesji na zunifikowany

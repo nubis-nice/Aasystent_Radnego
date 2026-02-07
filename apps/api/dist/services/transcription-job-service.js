@@ -136,8 +136,7 @@ export class TranscriptionJobService {
             });
             const videoIdMatch = job.videoUrl.match(/(?:v=|\/)([\w-]{11})(?:\?|&|$)/);
             const videoId = videoIdMatch?.[1] || "unknown";
-            const transcriptionResult = await downloader.transcribeAndAnalyze(downloadResult.audioPath, videoId, job.videoTitle, job.videoUrl, true // enablePreprocessing
-            );
+            const transcriptionResult = await downloader.transcribeAndAnalyze(downloadResult.audioPath, videoId, job.videoTitle, job.videoUrl, downloadResult.parts);
             // Zapisz wykryte problemy z audio
             if (transcriptionResult.audioAnalysis?.issues) {
                 this.updateJob(jobId, {

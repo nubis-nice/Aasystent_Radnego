@@ -42,17 +42,25 @@
     "typecheck": "npm-run-all typecheck:frontend typecheck:api typecheck:worker",
     "typecheck:frontend": "npm --workspace apps/frontend run typecheck",
     "typecheck:api": "npm --workspace apps/api run typecheck",
-    "typecheck:worker": "npm --workspace apps/worker run typecheck"
+    "typecheck:worker": "npm --workspace apps/worker run typecheck",
+    "test": "npm-run-all test:api",
+    "test:api": "npm --workspace apps/api run test",
+    "test:coverage": "npm --workspace apps/api run test:coverage",
+    "test:e2e": "cd e2e && npm test",
+    "test:e2e:docker": "docker compose -f infra/docker-compose.e2e.yml up --abort-on-container-exit"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
     "@types/node": "^25.0.3",
     "@typescript-eslint/eslint-plugin": "^8.50.1",
     "@typescript-eslint/parser": "^8.50.1",
+    "@vitest/coverage-v8": "^4.0.18",
+    "@vitest/ui": "^4.0.18",
     "eslint": "^9.39.2",
     "npm-run-all": "^4.1.5",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
   },
   "dependencies": {
     "force": "^0.0.3",

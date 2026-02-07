@@ -7,7 +7,6 @@ import {
   DocumentScorer,
   type DocumentPriority,
 } from "../services/document-scorer.js";
-import { DocumentAnalysisService } from "../services/document-analysis-service.js";
 import {
   addDocumentProcessJob,
   getUserDocumentJobs,
@@ -16,10 +15,36 @@ import {
   retryDocumentJob,
   getDocumentQueueStats,
 } from "../services/document-process-queue.js";
+import { addAnalysisJob } from "../services/analysis-queue.js";
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+// Konwersja liczb rzymskich na arabskie
+function romanToArabic(roman: string): number {
+  const romanNumerals: Record<string, number> = {
+    I: 1,
+    V: 5,
+    X: 10,
+    L: 50,
+    C: 100,
+    D: 500,
+    M: 1000,
+  };
+  let result = 0;
+  const upperRoman = roman.toUpperCase();
+  for (let i = 0; i < upperRoman.length; i++) {
+    const current = romanNumerals[upperRoman[i]] || 0;
+    const next = romanNumerals[upperRoman[i + 1]] || 0;
+    if (current < next) {
+      result -= current;
+    } else {
+      result += current;
+    }
+  }
+  return result;
+}
 
 const ALLOWED_MIME_TYPES = [
   "image/jpeg",
@@ -122,8 +147,71 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         offset: query.offset,
       });
 
+      // Pobierz wszystkie transkrypcje użytkownika (batch query)
+      const { data: transcriptions } = await supabase
+        .from("processed_documents")
+        .select("id, title, metadata, session_number")
+        .eq("user_id", userId)
+        .eq("document_type", "transkrypcja");
+
+      // Mapuj transkrypcje do dokumentów po session_number
+      const transcriptionMap = new Map<
+        number,
+        {
+          id: string;
+          title: string;
+          videoUrl?: string;
+          duration?: string;
+          speakerCount?: number;
+        }
+      >();
+      if (transcriptions) {
+        for (const t of transcriptions) {
+          // Wyciągnij session_number z tytułu transkrypcji (np. "Transkrypcja: Sesja Nr XXII")
+          const sessionMatch = t.title?.match(
+            /sesja\s*(?:nr\s*)?(\d+|[IVXLCDM]+)/i,
+          );
+          let sessionNum = t.session_number;
+          if (!sessionNum && sessionMatch) {
+            const numStr = sessionMatch[1];
+            // Konwertuj rzymskie na arabskie jeśli potrzeba
+            if (/^[IVXLCDM]+$/i.test(numStr)) {
+              sessionNum = romanToArabic(numStr);
+            } else {
+              sessionNum = parseInt(numStr, 10);
+            }
+          }
+          if (sessionNum) {
+            const meta = t.metadata as Record<string, unknown>;
+            transcriptionMap.set(sessionNum, {
+              id: t.id,
+              title: t.title,
+              videoUrl: meta?.videoUrl as string | undefined,
+              duration: meta?.duration as string | undefined,
+              speakerCount: meta?.speakerCount as number | undefined,
+            });
+          }
+        }
+      }
+
+      // Dodaj info o transkrypcji do dokumentów
+      const documentsWithTranscription = result.documents.map((doc) => {
+        const sessionNum = doc.session_number;
+        if (sessionNum && transcriptionMap.has(sessionNum)) {
+          const transcriptionInfo = transcriptionMap.get(sessionNum)!;
+          return {
+            ...doc,
+            metadata: {
+              ...doc.metadata,
+              linkedTranscription: transcriptionInfo,
+            },
+          };
+        }
+        return doc;
+      });
+
       return reply.send({
-        documents: result.documents,
+        documents: documentsWithTranscription,
         total: result.total,
       });
     } catch (error) {
@@ -158,6 +246,105 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
 
         if (error || !document) {
           return reply.status(404).send({ error: "Document not found" });
+        }
+
+        // Sprawdź czy istnieje powiązana transkrypcja
+        let transcriptionInfo = null;
+
+        // 1. Szukaj przez document_relations (transkrypcja -> sesja)
+        const { data: relations } = await supabase
+          .from("document_relations")
+          .select("source_document_id")
+          .eq("target_session_id", id)
+          .eq("user_id", userId)
+          .eq("relation_type", "transcription_of")
+          .limit(1);
+
+        if (relations && relations.length > 0) {
+          const { data: transcriptionDoc } = await supabase
+            .from("processed_documents")
+            .select("id, title, metadata, source_url")
+            .eq("id", relations[0].source_document_id)
+            .single();
+
+          if (transcriptionDoc) {
+            const meta = transcriptionDoc.metadata as Record<string, unknown>;
+            transcriptionInfo = {
+              documentId: transcriptionDoc.id,
+              title: transcriptionDoc.title,
+              videoUrl: meta?.videoUrl || transcriptionDoc.source_url,
+              duration: meta?.duration,
+              speakerCount: meta?.speakerCount,
+              speakers: meta?.speakers,
+            };
+          }
+        }
+
+        // 2. Fallback: szukaj transkrypcji po podobnym tytule sesji
+        if (!transcriptionInfo && document.session_number) {
+          const { data: transcriptionDocs } = await supabase
+            .from("processed_documents")
+            .select("id, title, metadata, source_url")
+            .eq("user_id", userId)
+            .eq("document_type", "transkrypcja")
+            .ilike("title", `%Sesja%${document.session_number}%`)
+            .limit(1);
+
+          if (transcriptionDocs && transcriptionDocs.length > 0) {
+            const transcriptionDoc = transcriptionDocs[0];
+            const meta = transcriptionDoc.metadata as Record<string, unknown>;
+            transcriptionInfo = {
+              documentId: transcriptionDoc.id,
+              title: transcriptionDoc.title,
+              videoUrl: meta?.videoUrl || transcriptionDoc.source_url,
+              duration: meta?.duration,
+              speakerCount: meta?.speakerCount,
+              speakers: meta?.speakers,
+            };
+          }
+        }
+
+        // 3. Szukaj w scraped_content po source_url dokumentu
+        if (!transcriptionInfo && document.source_url) {
+          const { data: scrapedContent } = await supabase
+            .from("scraped_content")
+            .select("metadata")
+            .eq("url", document.source_url)
+            .maybeSingle();
+
+          if (scrapedContent?.metadata) {
+            const scMeta = scrapedContent.metadata as Record<string, unknown>;
+            if (scMeta.transcriptionDocumentId) {
+              const { data: transcriptionDoc } = await supabase
+                .from("processed_documents")
+                .select("id, title, metadata, source_url")
+                .eq("id", scMeta.transcriptionDocumentId as string)
+                .single();
+
+              if (transcriptionDoc) {
+                const meta = transcriptionDoc.metadata as Record<
+                  string,
+                  unknown
+                >;
+                transcriptionInfo = {
+                  documentId: transcriptionDoc.id,
+                  title: transcriptionDoc.title,
+                  videoUrl: meta?.videoUrl || transcriptionDoc.source_url,
+                  duration: meta?.duration,
+                  speakerCount: meta?.speakerCount,
+                  speakers: meta?.speakers,
+                };
+              }
+            }
+          }
+        }
+
+        // Dodaj info o transkrypcji do metadata dokumentu
+        if (transcriptionInfo) {
+          document.metadata = {
+            ...(document.metadata || {}),
+            linkedTranscription: transcriptionInfo,
+          };
         }
 
         return reply.send({ document });
@@ -627,7 +814,7 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // POST /documents/:id/analyze - Profesjonalna analiza dokumentu z kontekstem RAG
+  // POST /documents/:id/analyze - Profesjonalna analiza dokumentu z kontekstem RAG (ASYNC)
   fastify.post<{ Params: { id: string } }>(
     "/documents/:id/analyze",
     async (request, reply) => {
@@ -639,71 +826,55 @@ export const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       try {
-        // Inicjalizuj serwis analizy
-        const analysisService = new DocumentAnalysisService();
-        await analysisService.initialize(userId);
-
-        // Zbuduj pełny kontekst analizy (dokument + druki + załączniki z RAG)
-        const analysisContext = await analysisService.buildAnalysisContext(
-          userId,
-          id,
-        );
-
-        if (!analysisContext) {
-          return reply.status(404).send({ error: "Document not found" });
-        }
-
-        // Oblicz score dokumentu
-        const scorer = new DocumentScorer();
-        const { data: docForScore } = await supabase
+        // Pobierz podstawowe info o dokumencie
+        const { data: doc } = await supabase
           .from("processed_documents")
-          .select("*")
+          .select("id, title, document_type, publish_date, summary")
           .eq("id", id)
           .eq("user_id", userId)
           .single();
 
-        const score = docForScore ? scorer.calculateScore(docForScore) : null;
+        if (!doc) {
+          return reply.status(404).send({ error: "Document not found" });
+        }
 
-        // Generuj profesjonalny prompt analizy
-        const analysisResult =
-          analysisService.generateAnalysisPrompt(analysisContext);
+        // Dodaj zadanie do kolejki BullMQ
+        const { jobId, taskId } = await addAnalysisJob({
+          userId,
+          documentId: id,
+          documentTitle: doc.title || "Dokument",
+        });
 
-        // Zwróć dane do analizy
+        console.log(
+          `[Documents] Analysis job ${jobId} created for document ${id}`,
+        );
+
+        // Zwróć natychmiast - przetwarzanie przez worker
         return reply.send({
           success: true,
+          async: true,
+          taskId,
+          jobId,
+          message: "Analiza rozpoczęta. Śledź postęp na Dashboard.",
           document: {
-            id: analysisContext.mainDocument.id,
-            title: analysisContext.mainDocument.title,
-            document_type: analysisContext.mainDocument.documentType,
-            publish_date: analysisContext.mainDocument.publishDate,
-            summary: analysisContext.mainDocument.summary,
-            contentPreview:
-              analysisContext.mainDocument.content?.substring(0, 500) + "...",
-          },
-          score,
-          // Informacje o znalezionych referencjach
-          references: {
-            found: analysisContext.references.filter((r) => r.found).length,
-            missing: analysisContext.missingReferences.length,
-            details: analysisContext.references,
-          },
-          // Prompt i system prompt do chatu
-          analysisPrompt: analysisResult.prompt,
-          systemPrompt: analysisResult.systemPrompt,
-          chatContext: {
-            type: "document_analysis",
-            documentId: analysisContext.mainDocument.id,
-            documentTitle: analysisContext.mainDocument.title,
-            hasAdditionalContext: analysisContext.additionalContext.length > 0,
-            missingReferences: analysisContext.missingReferences,
+            id: doc.id,
+            title: doc.title,
+            document_type: doc.document_type,
+            publish_date: doc.publish_date,
           },
         });
       } catch (error) {
-        fastify.log.error(error);
-        return reply.status(500).send({ error: "Internal server error" });
+        fastify.log.error(String(error));
+        return reply.status(500).send({
+          error: "Internal server error",
+          message: error instanceof Error ? error.message : "Unknown error",
+        });
       }
     },
   );
+
+  // NOTE: Analiza dokumentów jest teraz przetwarzana przez worker BullMQ
+  // Zobacz: apps/worker/src/jobs/analysis.ts
 
   // POST /documents/process - Przetwarzanie pliku z OCR
   fastify.post("/documents/process", async (request, reply) => {
@@ -1572,9 +1743,10 @@ Zawrzyj:
 
       for (const doc of docs) {
         try {
+          // nomic-embed-text ma limit ~2000 tokenów (~4000 znaków)
           const textToEmbed = `${doc.title || ""}\n\n${
             doc.content || ""
-          }`.substring(0, 8000);
+          }`.substring(0, 4000);
 
           const embeddingResponse = await embeddingsClient.embeddings.create({
             model: embConfig.modelName,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Calendar,
   ChevronLeft,
@@ -18,6 +18,7 @@ import {
   useCalendarNotifications,
   formatTimeUntilEvent,
 } from "@/lib/hooks/useCalendarNotifications";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -490,6 +491,8 @@ export function CalendarWidget({ onEventClick }: CalendarWidgetProps) {
   const [showDayModal, setShowDayModal] = useState(false);
   const [dayModalDate, setDayModalDate] = useState<Date | null>(null);
   const [viewMode, setViewMode] = useState<"month" | "week">("month");
+  const channelRef = useRef<RealtimeChannel | null>(null);
+  const userIdRef = useRef<string | null>(null);
 
   // System powiadomień - sprawdza co minutę
   const { notifications, dismissNotification } = useCalendarNotifications({
@@ -539,23 +542,57 @@ export function CalendarWidget({ onEventClick }: CalendarWidgetProps) {
     }
   }, [currentDate, viewMode]);
 
+  // Supabase Realtime zamiast polling
   useEffect(() => {
-    loadEvents();
-  }, [loadEvents]);
+    let mounted = true;
 
-  // Nasłuchuj na zdarzenie calendar-refresh (z chatu AI)
-  useEffect(() => {
-    const handleCalendarRefresh = () => {
-      console.log(
-        "[CalendarWidget] Received calendar-refresh event, reloading...",
-      );
-      loadEvents();
+    const setup = async () => {
+      // Pobierz początkowe dane
+      await loadEvents();
+
+      // Pobierz userId
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!mounted || !user) return;
+      userIdRef.current = user.id;
+
+      // Utwórz subscription WebSocket
+      const channel = supabase
+        .channel("calendar-changes")
+        .on(
+          "postgres_changes",
+          {
+            event: "*", // INSERT, UPDATE, DELETE
+            schema: "public",
+            table: "calendar_events",
+            filter: `user_id=eq.${user.id}`,
+          },
+          () => {
+            if (mounted) {
+              console.log("[CalendarWidget] Realtime update received");
+              loadEvents();
+            }
+          },
+        )
+        .subscribe((status) => {
+          console.log("[CalendarWidget] Realtime status:", status);
+        });
+
+      channelRef.current = channel;
     };
 
-    window.addEventListener("calendar-refresh", handleCalendarRefresh);
-    return () =>
-      window.removeEventListener("calendar-refresh", handleCalendarRefresh);
-  }, [loadEvents]);
+    setup();
+
+    return () => {
+      mounted = false;
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentDate, viewMode]); // Tylko gdy zmieni się data lub tryb widoku
 
   const handleAddEvent = async () => {
     if (!newEvent.title || !newEvent.start_date) return;

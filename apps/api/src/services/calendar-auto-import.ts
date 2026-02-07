@@ -9,7 +9,7 @@ import { getLLMClient, getAIConfig } from "../ai/index.js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
 interface DocumentInfo {
@@ -35,20 +35,40 @@ interface ExtractedEventInfo {
  * Automatycznie tworzy wydarzenie w kalendarzu dla dokumentów sesji/komisji
  */
 export async function autoImportToCalendar(doc: DocumentInfo): Promise<void> {
-  // Tylko dla dokumentów sesji i komisji
+  // Sprawdź czy tytuł wskazuje na sesję/komisję (niezależnie od document_type)
+  const titleLower = doc.title.toLowerCase();
+  const isSessionByTitle =
+    titleLower.includes("sesja") ||
+    titleLower.includes("posiedzenie") ||
+    titleLower.includes("obrady");
+  const isCommitteeByTitle =
+    titleLower.includes("komisj") || titleLower.includes("komitet");
+
+  // Mapowanie document_type na event_type
   const eventTypes: Record<string, "session" | "committee"> = {
-    // Nowe typy z classifyDocumentType
     session: "session",
     protocol: "session",
     committee: "committee",
-    // Stare typy dla kompatybilności
     session_agenda: "session",
     session_protocol: "session",
     committee_meeting: "committee",
     commission_protocol: "committee",
+    article: isSessionByTitle
+      ? "session"
+      : isCommitteeByTitle
+        ? "committee"
+        : (undefined as unknown as "session"),
   };
 
-  const eventType = eventTypes[doc.document_type];
+  let eventType = eventTypes[doc.document_type];
+
+  // Fallback: jeśli tytuł wskazuje na sesję/komisję, użyj tego
+  if (!eventType && isSessionByTitle) {
+    eventType = "session";
+  } else if (!eventType && isCommitteeByTitle) {
+    eventType = "committee";
+  }
+
   if (!eventType) {
     return; // Nie jest to dokument sesji/komisji
   }
@@ -63,7 +83,7 @@ export async function autoImportToCalendar(doc: DocumentInfo): Promise<void> {
 
   if (existingByDoc) {
     console.log(
-      `[CalendarAutoImport] Event already exists for document ${doc.id}`
+      `[CalendarAutoImport] Event already exists for document ${doc.id}`,
     );
     return;
   }
@@ -75,14 +95,14 @@ export async function autoImportToCalendar(doc: DocumentInfo): Promise<void> {
       extractedInfo = await extractEventInfoWithAI(
         doc.user_id,
         doc.title,
-        doc.content
+        doc.content,
       );
       console.log(`[CalendarAutoImport] AI extracted:`, extractedInfo);
 
       // Wymóg: reasoning musi wskazywać że to obowiązek radnego
       if (!extractedInfo.reasoning || !extractedInfo.isCouncilDuty) {
         console.log(
-          `[CalendarAutoImport] Skipping - not confirmed as council duty: ${doc.title}`
+          `[CalendarAutoImport] Skipping - not confirmed as council duty: ${doc.title}`,
         );
         return;
       }
@@ -92,7 +112,7 @@ export async function autoImportToCalendar(doc: DocumentInfo): Promise<void> {
     }
   } else {
     console.log(
-      `[CalendarAutoImport] Skipping - no content to analyze: ${doc.title}`
+      `[CalendarAutoImport] Skipping - no content to analyze: ${doc.title}`,
     );
     return;
   }
@@ -113,7 +133,7 @@ export async function autoImportToCalendar(doc: DocumentInfo): Promise<void> {
   // Wymóg: data MUSI być wyodrębniona przez AI
   if (!eventDate || isNaN(eventDate.getTime())) {
     console.log(
-      `[CalendarAutoImport] Skipping - AI nie znalazło daty dla: ${doc.title}`
+      `[CalendarAutoImport] Skipping - AI nie znalazło daty dla: ${doc.title}`,
     );
     return;
   }
@@ -121,7 +141,7 @@ export async function autoImportToCalendar(doc: DocumentInfo): Promise<void> {
   // Wymóg: godzina MUSI być wyodrębniona przez AI
   if (!extractedInfo.time) {
     console.log(
-      `[CalendarAutoImport] Skipping - no time found for: ${doc.title}`
+      `[CalendarAutoImport] Skipping - no time found for: ${doc.title}`,
     );
     return;
   }
@@ -129,7 +149,7 @@ export async function autoImportToCalendar(doc: DocumentInfo): Promise<void> {
   // Wymóg: miejsce MUSI być wyodrębnione
   if (!extractedInfo.location) {
     console.log(
-      `[CalendarAutoImport] Skipping - no location found for: ${doc.title}`
+      `[CalendarAutoImport] Skipping - no location found for: ${doc.title}`,
     );
     return;
   }
@@ -161,7 +181,7 @@ export async function autoImportToCalendar(doc: DocumentInfo): Promise<void> {
 
       if (titleSimilar && locationSimilar) {
         console.log(
-          `[CalendarAutoImport] Skipping - duplicate event detected: ${eventTitle} on ${eventDateStr}`
+          `[CalendarAutoImport] Skipping - duplicate event detected: ${eventTitle} on ${eventDateStr}`,
         );
         return;
       }
@@ -197,7 +217,7 @@ export async function autoImportToCalendar(doc: DocumentInfo): Promise<void> {
     console.log(
       `[CalendarAutoImport] Created event: ${eventTitle} for ${eventDate.toISOString()}${
         extractedInfo.location ? ` at ${extractedInfo.location}` : ""
-      }`
+      }`,
     );
   }
 }
@@ -208,7 +228,7 @@ export async function autoImportToCalendar(doc: DocumentInfo): Promise<void> {
 async function extractEventInfoWithAI(
   userId: string,
   title: string,
-  content: string
+  content: string,
 ): Promise<ExtractedEventInfo> {
   const llm = await getLLMClient(userId);
   const config = await getAIConfig(userId, "llm");
@@ -242,6 +262,10 @@ Jeśli nie możesz znaleźć WSZYSTKICH informacji (data, czas, miejsce), zwró�
 Szukaj konkretnych dat sesji/posiedzeń, nie dat publikacji dokumentu.`;
 
   try {
+    console.log(
+      `[CalendarAutoImport] Calling LLM for: ${title.substring(0, 50)}...`,
+    );
+
     const response = await llm.chat.completions.create({
       model: config.modelName,
       messages: [
@@ -253,22 +277,37 @@ Szukaj konkretnych dat sesji/posiedzeń, nie dat publikacji dokumentu.`;
         { role: "user", content: prompt },
       ],
       temperature: 0.1,
-      max_tokens: 200,
+      max_tokens: 500,
     });
 
     const responseText = response.choices[0]?.message?.content?.trim() || "{}";
+    console.log(
+      `[CalendarAutoImport] LLM response: ${responseText.substring(0, 300)}`,
+    );
 
-    // Wyodrębnij JSON z odpowiedzi
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    // Wyodrębnij JSON z odpowiedzi - obsłuż też markdown code blocks
+    let jsonStr = responseText;
+
+    // Usuń markdown code blocks jeśli obecne
+    const codeBlockMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch) {
+      jsonStr = codeBlockMatch[1].trim();
+    }
+
+    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
+      console.log(`[CalendarAutoImport] Parsed JSON:`, parsed);
       return {
         date: parsed.date || undefined,
         time: parsed.time || undefined,
         location: parsed.location || undefined,
         reasoning: parsed.reasoning || undefined,
-        isCouncilDuty: parsed.isCouncilDuty === true,
+        isCouncilDuty:
+          parsed.isCouncilDuty === true || parsed.is_council_duty === true,
       };
+    } else {
+      console.warn(`[CalendarAutoImport] No JSON found in response`);
     }
   } catch (error) {
     console.error("[CalendarAutoImport] AI extraction error:", error);
@@ -283,7 +322,7 @@ Szukaj konkretnych dat sesji/posiedzeń, nie dat publikacji dokumentu.`;
 function formatEventTitle(
   docTitle: string,
   sessionNumber?: number,
-  eventType?: "session" | "committee"
+  eventType?: "session" | "committee",
 ): string {
   if (eventType === "session" && sessionNumber) {
     return `Sesja Rady nr ${sessionNumber}`;
@@ -307,24 +346,17 @@ export async function batchImportExistingDocuments(userId: string): Promise<{
 }> {
   const stats = { imported: 0, skipped: 0, errors: 0 };
 
-  // Pobierz dokumenty sesji/komisji użytkownika
+  // Pobierz dokumenty sesji/komisji użytkownika - szukaj po tytule i typie
   const { data: documents, error } = await supabase
     .from("processed_documents")
     .select(
-      "id, user_id, title, document_type, content, session_number, normalized_publish_date, source_url"
+      "id, user_id, title, document_type, content, session_number, normalized_publish_date, source_url",
     )
     .eq("user_id", userId)
-    .in("document_type", [
-      // Nowe typy
-      "session",
-      "protocol",
-      "committee",
-      // Stare typy dla kompatybilności
-      "session_agenda",
-      "session_protocol",
-      "committee_meeting",
-      "commission_protocol",
-    ]);
+    .or(
+      "document_type.in.(session,protocol,committee,session_agenda,session_protocol,committee_meeting,commission_protocol)," +
+        "title.ilike.%sesja%,title.ilike.%posiedzenie%,title.ilike.%komisj%",
+    );
 
   if (error || !documents) {
     console.error("[CalendarAutoImport] Failed to fetch documents:", error);
@@ -332,7 +364,7 @@ export async function batchImportExistingDocuments(userId: string): Promise<{
   }
 
   console.log(
-    `[CalendarAutoImport] Found ${documents.length} session/committee documents to import`
+    `[CalendarAutoImport] Found ${documents.length} session/committee documents to import`,
   );
 
   for (const doc of documents) {

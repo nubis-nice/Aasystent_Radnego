@@ -1,6 +1,6 @@
 /**
  * Deep Research API Routes
- * Agent AI "Winsdurf" - Deep Internet Researcher
+ * ~~bez~~RADNY - Deep Internet Researcher
  */
 import { DeepResearchService } from "../services/deep-research-service.js";
 export async function deepResearchRoutes(fastify) {
@@ -47,7 +47,8 @@ export async function deepResearchRoutes(fastify) {
             return reply.send({ report });
         }
         catch (error) {
-            fastify.log.error("[DeepResearch] Research failed:", error);
+            fastify.log.error("[DeepResearch] Research failed: " +
+                String(error instanceof Error ? error.message : error));
             return reply.code(500).send({
                 error: "Research failed",
                 message: error instanceof Error ? error.message : "Unknown error",
@@ -74,7 +75,8 @@ export async function deepResearchRoutes(fastify) {
             return reply.send({ reports: reports || [] });
         }
         catch (error) {
-            fastify.log.error("[DeepResearch] Failed to fetch history:", error);
+            fastify.log.error("[DeepResearch] Failed to fetch history: " +
+                String(error instanceof Error ? error.message : error));
             return reply.code(500).send({
                 error: "Failed to fetch history",
                 message: error instanceof Error ? error.message : "Unknown error",
@@ -105,7 +107,8 @@ export async function deepResearchRoutes(fastify) {
             return reply.send({ report });
         }
         catch (error) {
-            fastify.log.error("[DeepResearch] Failed to fetch report:", error);
+            fastify.log.error("[DeepResearch] Failed to fetch report: " +
+                String(error instanceof Error ? error.message : error));
             return reply.code(500).send({
                 error: "Failed to fetch report",
                 message: error instanceof Error ? error.message : "Unknown error",
@@ -132,7 +135,8 @@ export async function deepResearchRoutes(fastify) {
             return reply.send({ success: true });
         }
         catch (error) {
-            fastify.log.error("[DeepResearch] Failed to delete report:", error);
+            fastify.log.error("[DeepResearch] Failed to delete report: " +
+                String(error instanceof Error ? error.message : error));
             return reply.code(500).send({
                 error: "Failed to delete report",
                 message: error instanceof Error ? error.message : "Unknown error",

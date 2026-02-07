@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Bell,
   Check,
@@ -12,6 +12,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -65,6 +66,8 @@ export function AlertsWidget() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const channelRef = useRef<RealtimeChannel | null>(null);
+  const userIdRef = useRef<string | null>(null);
 
   const loadAlerts = useCallback(async () => {
     try {
@@ -90,9 +93,57 @@ export function AlertsWidget() {
     }
   }, []);
 
+  // Supabase Realtime zamiast polling
   useEffect(() => {
-    loadAlerts();
-  }, [loadAlerts]);
+    let mounted = true;
+
+    const setup = async () => {
+      // Pobierz początkowe dane
+      await loadAlerts();
+
+      // Pobierz userId
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!mounted || !user) return;
+      userIdRef.current = user.id;
+
+      // Utwórz subscription WebSocket
+      const channel = supabase
+        .channel("alerts-changes")
+        .on(
+          "postgres_changes",
+          {
+            event: "*", // INSERT, UPDATE, DELETE
+            schema: "public",
+            table: "user_alerts",
+            filter: `user_id=eq.${user.id}`,
+          },
+          () => {
+            if (mounted) {
+              console.log("[AlertsWidget] Realtime update received");
+              loadAlerts();
+            }
+          },
+        )
+        .subscribe((status) => {
+          console.log("[AlertsWidget] Realtime status:", status);
+        });
+
+      channelRef.current = channel;
+    };
+
+    setup();
+
+    return () => {
+      mounted = false;
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Bez zależności - raz przy mount
 
   const handleMarkAsRead = async (alertId: string) => {
     try {
@@ -106,7 +157,7 @@ export function AlertsWidget() {
       });
 
       setAlerts((prev) =>
-        prev.map((a) => (a.id === alertId ? { ...a, is_read: true } : a))
+        prev.map((a) => (a.id === alertId ? { ...a, is_read: true } : a)),
       );
       setUnreadCount((prev) => Math.max(0, prev - 1));
     } catch (error) {

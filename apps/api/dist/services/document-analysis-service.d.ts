@@ -34,6 +34,7 @@ export declare class DocumentAnalysisService {
     extractReferences(content: string): DocumentReference[];
     searchReferencesInRAG(userId: string, references: DocumentReference[]): Promise<DocumentReference[]>;
     private buildSearchQuery;
+    private buildReferenceTitle;
     private buildUrlPatterns;
     private matchesReference;
     getDocument(userId: string, documentId: string): Promise<{

@@ -1,0 +1,16 @@
+name: aasystent-radnego-e2e
+
+services:
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.40.0-focal
+    container_name: aasystent-playwright
+    working_dir: /app/e2e
+    volumes:
+      - ../e2e:/app/e2e
+      - ../node_modules:/app/node_modules
+    environment:
+      - E2E_BASE_URL=http://host.docker.internal:3000
+      - CI=true
+    command: npx playwright test
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

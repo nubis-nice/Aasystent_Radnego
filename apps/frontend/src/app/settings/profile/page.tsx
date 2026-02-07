@@ -14,10 +14,18 @@ import {
   Shield,
   X,
   Plus,
+  MapPin,
+  Globe,
+  Building2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getUserProfile, updateUserProfile } from "@/lib/supabase/settings";
+import {
+  getUserProfile,
+  updateUserProfile,
+  getLocaleSettings,
+  updateLocaleSettings,
+} from "@/lib/supabase/settings";
 import { supabase } from "@/lib/supabase/client";
 
 const COUNCIL_ROLES = [
@@ -60,7 +68,16 @@ export default function ProfilePage() {
     committees: [] as string[],
     councilTerm: "",
   });
+  const [localeData, setLocaleData] = useState({
+    municipality: "",
+    voivodeship: "",
+    postalCode: "",
+    county: "",
+    bipUrl: "",
+    councilName: "",
+  });
   const [originalData, setOriginalData] = useState(formData);
+  const [originalLocaleData, setOriginalLocaleData] = useState(localeData);
 
   // Pobierz dane użytkownika przy montowaniu
   useEffect(() => {
@@ -93,6 +110,21 @@ export default function ProfilePage() {
           };
           setFormData(data);
           setOriginalData(data);
+        }
+
+        // Pobierz dane lokalne (gmina, województwo, etc.)
+        const locale = await getLocaleSettings(user.id);
+        if (locale) {
+          const locData = {
+            municipality: locale.municipality || "",
+            voivodeship: locale.voivodeship || "",
+            postalCode: locale.postal_code || "",
+            county: locale.county || "",
+            bipUrl: locale.bip_url || "",
+            councilName: locale.council_name || "",
+          };
+          setLocaleData(locData);
+          setOriginalLocaleData(locData);
         }
       } catch (error) {
         console.error("Error loading profile:", error);
@@ -128,10 +160,21 @@ export default function ProfilePage() {
         council_term: formData.councilTerm || null,
       });
 
-      console.log("[Profile] Save result:", result);
+      // Zapisz też dane lokalne (gmina, województwo, etc.)
+      const localeResult = await updateLocaleSettings(userId, {
+        municipality: localeData.municipality || null,
+        voivodeship: localeData.voivodeship || null,
+        postal_code: localeData.postalCode || null,
+        county: localeData.county || null,
+        bip_url: localeData.bipUrl || null,
+        council_name: localeData.councilName || null,
+      });
+
+      console.log("[Profile] Save result:", result, localeResult);
 
       if (result) {
         setOriginalData(formData);
+        setOriginalLocaleData(localeData);
         setMessage({ type: "success", text: "Profil został zaktualizowany" });
         setIsEditing(false);
 
@@ -150,6 +193,7 @@ export default function ProfilePage() {
 
   const handleCancel = () => {
     setFormData(originalData);
+    setLocaleData(originalLocaleData);
     setIsEditing(false);
     setMessage(null);
   };
@@ -381,7 +425,7 @@ export default function ProfilePage() {
                           setFormData({
                             ...formData,
                             committees: formData.committees.filter(
-                              (_, i) => i !== index
+                              (_, i) => i !== index,
                             ),
                           });
                         }}
@@ -405,7 +449,7 @@ export default function ProfilePage() {
                 >
                   <option value="">Wybierz komisję do dodania</option>
                   {COMMON_COMMITTEES.filter(
-                    (c) => !formData.committees.includes(c)
+                    (c) => !formData.committees.includes(c),
                   ).map((committee) => (
                     <option key={committee} value={committee}>
                       {committee}
@@ -434,6 +478,157 @@ export default function ProfilePage() {
                 </Button>
               </div>
             )}
+          </div>
+
+          {isEditing && (
+            <div className="flex gap-4 pt-4">
+              <Button onClick={handleSave} disabled={saving}>
+                {saving ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Zapisywanie...
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4 mr-2" />
+                    Zapisz zmiany
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleCancel}
+                disabled={saving}
+              >
+                Anuluj
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Dane lokalne gminy/miasta */}
+      <div className="bg-white dark:bg-secondary-800 rounded-2xl border border-border dark:border-border-dark p-8 shadow-md">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
+              <MapPin className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-text">Dane lokalne</h2>
+              <p className="text-sm text-text-secondary">
+                Gmina, województwo i kontekst pracy
+              </p>
+            </div>
+          </div>
+          {!isEditing && (
+            <Button variant="outline" onClick={() => setIsEditing(true)}>
+              Edytuj
+            </Button>
+          )}
+        </div>
+
+        <div className="space-y-6">
+          <div className="grid gap-6 md:grid-cols-2">
+            <div>
+              <label className="block text-sm font-semibold text-text mb-2">
+                <Building2 className="inline h-4 w-4 mr-2" />
+                Nazwa Rady
+              </label>
+              <Input
+                value={localeData.councilName}
+                onChange={(e) =>
+                  setLocaleData({ ...localeData, councilName: e.target.value })
+                }
+                placeholder="np. Rada Miejska w Drawnie"
+                disabled={!isEditing}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-text mb-2">
+                <MapPin className="inline h-4 w-4 mr-2" />
+                Gmina / Miasto
+              </label>
+              <Input
+                value={localeData.municipality}
+                onChange={(e) =>
+                  setLocaleData({ ...localeData, municipality: e.target.value })
+                }
+                placeholder="np. Drawno"
+                disabled={!isEditing}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-text mb-2">
+                Kod pocztowy
+              </label>
+              <Input
+                value={localeData.postalCode}
+                onChange={(e) =>
+                  setLocaleData({ ...localeData, postalCode: e.target.value })
+                }
+                placeholder="np. 73-220"
+                disabled={!isEditing}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-text mb-2">
+                Powiat
+              </label>
+              <Input
+                value={localeData.county}
+                onChange={(e) =>
+                  setLocaleData({ ...localeData, county: e.target.value })
+                }
+                placeholder="np. choszczeński"
+                disabled={!isEditing}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-text mb-2">
+                Województwo
+              </label>
+              <select
+                value={localeData.voivodeship}
+                onChange={(e) =>
+                  setLocaleData({ ...localeData, voivodeship: e.target.value })
+                }
+                disabled={!isEditing}
+                className="flex h-11 w-full rounded-xl border-2 border-secondary-200 bg-white px-4 py-2.5 text-sm font-medium text-text transition-all duration-200 hover:border-secondary-300 focus-visible:outline-none focus-visible:border-primary-500 focus-visible:ring-4 focus-visible:ring-primary-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:bg-secondary-50"
+              >
+                <option value="">Wybierz województwo</option>
+                <option value="dolnośląskie">dolnośląskie</option>
+                <option value="kujawsko-pomorskie">kujawsko-pomorskie</option>
+                <option value="lubelskie">lubelskie</option>
+                <option value="lubuskie">lubuskie</option>
+                <option value="łódzkie">łódzkie</option>
+                <option value="małopolskie">małopolskie</option>
+                <option value="mazowieckie">mazowieckie</option>
+                <option value="opolskie">opolskie</option>
+                <option value="podkarpackie">podkarpackie</option>
+                <option value="podlaskie">podlaskie</option>
+                <option value="pomorskie">pomorskie</option>
+                <option value="śląskie">śląskie</option>
+                <option value="świętokrzyskie">świętokrzyskie</option>
+                <option value="warmińsko-mazurskie">warmińsko-mazurskie</option>
+                <option value="wielkopolskie">wielkopolskie</option>
+                <option value="zachodniopomorskie">zachodniopomorskie</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-text mb-2">
+                <Globe className="inline h-4 w-4 mr-2" />
+                URL do BIP
+              </label>
+              <Input
+                value={localeData.bipUrl}
+                onChange={(e) =>
+                  setLocaleData({ ...localeData, bipUrl: e.target.value })
+                }
+                placeholder="np. https://bip.drawno.pl"
+                disabled={!isEditing}
+              />
+            </div>
           </div>
 
           {isEditing && (

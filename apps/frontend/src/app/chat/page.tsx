@@ -47,6 +47,10 @@ import { YouTubeSessionTool } from "@/components/chat/YouTubeSessionTool";
 import { SystemStatus } from "@/components/chat/SystemStatus";
 import { VoiceButton } from "@/components/voice/VoiceButton";
 import { useVoice } from "@/contexts/VoiceContext";
+import { useToolMode } from "@/hooks/useToolMode";
+import { ToolPanel } from "@/components/chat/tools/ToolPanel";
+import { isValidToolType, type ToolType } from "@/config/tools-config";
+import { useRouter } from "next/navigation";
 
 interface Citation {
   documentId?: string;
@@ -86,6 +90,7 @@ interface NextStepSuggestion {
   prompt: string;
   category: "legal" | "financial" | "report" | "search" | "action" | "calendar";
   isPrimary?: boolean; // Czy to główna sugestia (z propozycji w tekście)
+  toolType?: ToolType; // Typ narzędzia do otwarcia modalu
 }
 
 interface Message {
@@ -123,6 +128,10 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [showYouTubeTool, setShowYouTubeTool] = useState(false);
+  const router = useRouter();
+
+  // Hook do zarządzania narzędziami
+  const toolMode = useToolMode();
 
   // Funkcja ładowania konwersacji (dostępna przed efektami, aby uniknąć odwołania przed inicjalizacją)
   async function loadConversation(id: string) {
@@ -218,6 +227,18 @@ export default function ChatPage() {
     if (convId) {
       loadConversation(convId);
     }
+  }, [searchParams]);
+
+  // Obsługa parametru ?tool= z URL (aktywacja narzędzia)
+  useEffect(() => {
+    const toolParam = searchParams.get("tool");
+    // Sprawdź czy narzędzie nie jest już aktywne (zapobiega nieskończonej pętli)
+    if (toolParam && isValidToolType(toolParam) && !toolMode.state.isActive) {
+      toolMode.activateTool(toolParam as ToolType);
+      // Wyczyść parametr z URL bez przeładowania strony
+      router.replace("/chat", { scroll: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   // Obsługa wiadomości głosowych z VoiceContext (gdy użytkownik przychodzi z innej strony)
@@ -435,6 +456,7 @@ export default function ChatPage() {
           "Przygotuj projekt uchwały w tej sprawie. Uwzględnij: tytuł, podstawę prawną, treść merytoryczną i uzasadnienie.",
         category: "legal",
         isPrimary: true,
+        toolType: "resolution",
       });
     }
 
@@ -453,6 +475,7 @@ export default function ChatPage() {
           "Wygeneruj szablon raportu kontroli zawierający: nagłówek, zakres kontroli, ustalenia, wnioski i rekomendacje.",
         category: "report",
         isPrimary: true,
+        toolType: "report",
       });
     }
 
@@ -496,6 +519,7 @@ export default function ChatPage() {
         prompt:
           "Przeprowadź szczegółową analizę prawną tej uchwały, sprawdź zgodność z obowiązującymi przepisami i wskaż potencjalne ryzyka prawne.",
         category: "legal",
+        toolType: "resolution",
       });
     }
 
@@ -513,6 +537,7 @@ export default function ChatPage() {
         prompt:
           "Wykonaj szczegółową kontrolę rozliczeń budżetowych. Sprawdź zgodność wydatków z planem, przeanalizuj odchylenia i wskaż nieprawidłowości.",
         category: "financial",
+        toolType: "budget",
       });
     }
 
@@ -529,6 +554,7 @@ export default function ChatPage() {
         prompt:
           "Przygotuj pełny, profesjonalny raport analizy zawierający: streszczenie wykonawcze, szczegółowe ustalenia, rekomendacje i wnioski końcowe.",
         category: "report",
+        toolType: "report",
       });
     }
 
@@ -545,6 +571,7 @@ export default function ChatPage() {
         prompt:
           "Przygotuj projekt interpelacji lub zapytania radnego w tej sprawie.",
         category: "legal",
+        toolType: "interpelation",
       });
     }
 
@@ -586,6 +613,7 @@ export default function ChatPage() {
       prompt:
         "Przygotuj projekt wystąpienia radnego na sesji Rady w tej sprawie.",
       category: "report",
+      toolType: "speech",
     });
 
     // Podstawa prawna
@@ -1110,7 +1138,7 @@ export default function ChatPage() {
 
       setMessages((prev) => [...prev, aiMessage]);
 
-      // Obsłuż akcje UI z orchestratora (np. odświeżenie kalendarza)
+      // Obsłuż akcje UI z orchestratora (np. odświeżenie kalendarza, nawigacja do narzędzia)
       const uiActions = (
         response as {
           uiActions?: Array<{ type: string; target?: string; data?: unknown }>;
@@ -1122,6 +1150,40 @@ export default function ChatPage() {
             // Wyemituj zdarzenie odświeżenia kalendarza
             window.dispatchEvent(new CustomEvent("calendar-refresh"));
             console.log("[Chat] Dispatched calendar-refresh event");
+          }
+          // Obsługa nawigacji do narzędzia (quick_tool)
+          if (action.type === "navigate" && action.target?.includes("?tool=")) {
+            try {
+              const url = new URL(action.target, window.location.origin);
+              const toolParam = url.searchParams.get("tool");
+              if (toolParam && isValidToolType(toolParam)) {
+                toolMode.activateTool(toolParam as ToolType);
+                console.log("[Chat] Activated tool from uiAction:", toolParam);
+              }
+            } catch (e) {
+              console.error("[Chat] Error parsing tool URL:", e);
+            }
+          }
+          // Obsługa otwarcia narzędzia z danymi z kontekstu rozmowy
+          if (action.type === "open_tool_with_data" && action.target) {
+            const toolType = action.target as ToolType;
+            if (isValidToolType(toolType)) {
+              const actionData = action.data as {
+                formData?: Record<string, string>;
+                topic?: string;
+                context?: string;
+              };
+              // Aktywuj narzędzie z wstępnymi danymi
+              toolMode.activateToolWithData(
+                toolType,
+                actionData?.formData || {},
+              );
+              console.log(
+                "[Chat] Activated tool with data:",
+                toolType,
+                actionData?.formData,
+              );
+            }
           }
         }
       }
@@ -1243,6 +1305,81 @@ export default function ChatPage() {
             </h1>
           </div>
         </div>
+
+        {/* Panel narzędzia (gdy aktywne) */}
+        {toolMode.state.isActive && toolMode.state.toolConfig && (
+          <div className="mb-3">
+            <ToolPanel
+              config={toolMode.state.toolConfig}
+              formData={toolMode.state.formData}
+              generatedContent={toolMode.state.generatedContent}
+              isGenerating={toolMode.state.isGenerating}
+              onFieldChange={toolMode.updateFormField}
+              onGenerate={async () => {
+                const prompt = toolMode.buildPrompt();
+                if (!prompt) return;
+
+                toolMode.setIsGenerating(true);
+                try {
+                  const response = await sendMessage({
+                    message: prompt,
+                    conversationId,
+                    includeDocuments: true,
+                    includeMunicipalData: true,
+                    toolType: toolMode.state.toolType || undefined,
+                  });
+
+                  if (response.conversationId && !conversationId) {
+                    setConversationId(response.conversationId);
+                  }
+
+                  toolMode.setGeneratedContent(
+                    response.message?.content || "Brak odpowiedzi",
+                  );
+
+                  // Dodaj wiadomości do historii czatu
+                  const userMsg: Message = {
+                    id: `tool-user-${Date.now()}`,
+                    role: "user",
+                    content: prompt,
+                    citations: [],
+                  };
+                  const aiMsg: Message = {
+                    id: response.message?.id || `tool-ai-${Date.now()}`,
+                    role: "assistant",
+                    content: response.message?.content || "Brak odpowiedzi",
+                    citations: response.message?.citations || [],
+                  };
+                  setMessages((prev) => [...prev, userMsg, aiMsg]);
+                } catch (err) {
+                  console.error("[ToolPanel] Error generating:", err);
+                  setError({
+                    message:
+                      err instanceof Error ? err.message : "Błąd generowania",
+                  });
+                } finally {
+                  toolMode.setIsGenerating(false);
+                }
+              }}
+              onReset={toolMode.resetForm}
+              onClose={toolMode.deactivateTool}
+              onExportPDF={() => {
+                if (toolMode.state.generatedContent) {
+                  exportToPDF(toolMode.state.generatedContent, [], {
+                    title: toolMode.state.toolConfig?.name || "dokument",
+                  });
+                }
+              }}
+              onExportDOCX={() => {
+                if (toolMode.state.generatedContent) {
+                  exportToDOCX(toolMode.state.generatedContent, [], {
+                    title: toolMode.state.toolConfig?.name || "dokument",
+                  });
+                }
+              }}
+            />
+          </div>
+        )}
 
         {/* Chat messages */}
         <div className="flex-1 bg-white rounded-2xl border border-border shadow-md overflow-hidden flex flex-col">
@@ -1767,6 +1904,12 @@ export default function ChatPage() {
                                 <button
                                   key={step.id}
                                   onClick={() => {
+                                    // Jeśli ma toolType, otwórz modal narzędzia
+                                    if (step.toolType) {
+                                      toolMode.activateTool(step.toolType);
+                                      return;
+                                    }
+                                    // W przeciwnym razie wstaw prompt do pola wiadomości
                                     const userQ = getLastUserQuestion(msg.id);
                                     const contextPrompt = buildContextualPrompt(
                                       step,
@@ -1816,6 +1959,13 @@ export default function ChatPage() {
                                       <button
                                         key={step.id}
                                         onClick={() => {
+                                          // Jeśli ma toolType, otwórz modal narzędzia
+                                          if (step.toolType) {
+                                            toolMode.activateTool(
+                                              step.toolType,
+                                            );
+                                            return;
+                                          }
                                           const userQ = getLastUserQuestion(
                                             msg.id,
                                           );

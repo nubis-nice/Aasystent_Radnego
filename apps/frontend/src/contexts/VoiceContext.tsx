@@ -122,7 +122,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
   const [pendingMessage, setPendingMessage] =
     useState<PendingVoiceMessage | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(
-    null
+    null,
   );
   const [attachedDocuments, setAttachedDocuments] = useState<
     AttachedDocument[]
@@ -138,10 +138,10 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
         } = await supabase.auth.getUser();
         if (user) {
           const { data } = await supabase
-            .from("ai_configurations")
+            .from("user_ai_settings")
             .select("assistant_name")
             .eq("user_id", user.id)
-            .single();
+            .maybeSingle();
           if (data?.assistant_name) {
             setAssistantNameState(data.assistant_name);
           }
@@ -169,7 +169,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
           });
         }
       },
-      [pathname]
+      [pathname],
     ),
   });
 
@@ -222,7 +222,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
       setAssistantNameState(name);
       voiceConversation.setAssistantName(name);
     },
-    [voiceConversation]
+    [voiceConversation],
   );
 
   // Wykonaj akcję głosową przez API
@@ -274,7 +274,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
         return null;
       }
     },
-    [pendingAction, router]
+    [pendingAction, router],
   );
 
   // Wejdź w tryb czuwania (standby) - ciągłe nasłuchiwanie na wake word

@@ -1,237 +1,92 @@
-# ~~bez~~RADNY - Agent AI
+# Dokumentacja monorepo (wygenerowana) — ~~bez~~RADNY
 
-Agent AI wspierający radnych samorządowych w kontroli legalności, zasadności i skutków uchwał.
+Ta dokumentacja została wygenerowana na podstawie analizy kodu w repozytorium. Jej celem jest opisanie:
 
-> **~~bez~~RADNY** - bo z nami radny nigdy nie jest *bez*radny.
+- struktury monorepo (`apps/*`, `packages/*`, `infra/*`)
+- zależności uruchomieniowych między aplikacjami
+- zależności importów (w tym cross-importów między aplikacjami)
+- kontraktów kolejek (BullMQ/Redis) używanych do zadań asynchronicznych
 
-## 🎯 Kluczowe funkcje
+## Najnowsze zmiany (2026-01-25)
 
-### Warstwa 1: Źródła Danych (API-first)
+### Narzędzia ChatAI (Quick Tools)
 
-- **ISAP** - Internetowy System Aktów Prawnych (scraping)
-- **WSA/NSA** - Orzecznictwo sądów administracyjnych (scraping)
-- **RIO** - Regionalna Izba Obrachunkowa (scraping)
-- **BIP** - Biuletyn Informacji Publicznej (scraping, template)
-- **Dzienniki Urzędowe** - Monitor Polski i dzienniki wojewódzkie
+Uniwersalny system 8 narzędzi do generowania dokumentów w czacie:
 
-### Warstwa 2: Adaptery Pobierania
+- Wystąpienie, Interpelacja, Pismo, Protokół, Budżet, Wniosek, Uchwała, Raport
+- Aktywacja przez URL (`/chat?tool=speech`), czat lub głos
+- AI może auto-wypełniać formularze danymi z kontekstu rozmowy
 
-- `ApiDataFetcher` - uniwersalny klient API (OAuth2, API key, Basic, Bearer)
-- `ScraperDataFetcher` - web scraping z Cheerio (crawling, deduplikacja)
-- `UnifiedDataService` - orkiestrator łączący API i scraping
+### Asynchroniczna analiza dokumentów
 
-### Warstwa 3: Silniki Analityczne
+- Endpoint `/documents/:id/analyze` działa asynchronicznie
+- Postęp widoczny na Dashboard w widgecie "Przetwarzanie danych"
+- Rozwiązuje problem timeout przy OCR długich dokumentów
 
-- **Legal Search API** - wyszukiwanie fulltext/semantic/hybrid
-- **Legal Reasoning Engine** - analiza prawna z wykrywaniem ryzyk
-- **Budget Analysis Engine** - analiza budżetowa i wykrywanie anomalii
+Szczegóły w [docs/change_log.md](docs/change_log.md)
 
-## 🚀 Szybki start
+## Zakres
 
-### 1. Wymagania
+- `apps/api` — backend (Fastify)
+- `apps/frontend` — frontend (Next.js)
+- `apps/worker` — worker (BullMQ)
+- `packages/shared` — współdzielone typy i narzędzia (Zod, OpenAI utilities)
+- `infra/docker-compose.yml` — podstawowa infrastruktura local dev
 
-- Node.js 18+
-- PostgreSQL 14+ z pgvector
-- Redis
-- Konto Supabase
-- Klucz API OpenAI
+Jeżeli w repozytorium występują elementy, których nie dało się jednoznacznie potwierdzić w kodzie podczas analizy, są oznaczone jako `UNKNOWN`.
 
-### 2. Instalacja
+## Spis treści
 
-```bash
-# Klonuj repozytorium
-git clone <repo-url>
-cd Aasystent_Radnego
+- [01 — Architektura (high-level)](docs/01-architektura.md)
+- [02 — Struktura repozytorium](docs/02-struktura-repo.md)
+- [03 — Mapa zależności i importów](docs/03-mapa-zaleznosci-i-importow.md)
+- [04 — Aplikacja API](docs/04-app-api.md)
+- [05 — Aplikacja Worker](docs/05-app-worker.md)
+- [06 — Aplikacja Frontend](docs/06-app-frontend.md)
+- [07 — Pakiet `@aasystent-radnego/shared`](docs/07-pakiet-shared.md)
+- [08 — Kolejki BullMQ i kontrakty jobów](docs/08-kolejki-i-kontrakty.md)
+- [09 — Uruchomienie lokalne, ENV i usługi](docs/09-uruchomienie-i-env.md)
+- [API Reference (OpenAPI)](docs/api/openapi.yaml)
 
-# Zainstaluj zależności
-npm install
-```
+## CI/CD Pipeline
 
-### 3. Konfiguracja
-
-Utwórz pliki `.env`:
-
-**Backend** (`apps/api/.env`):
-
-```env
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-API_PORT=3001
-FRONTEND_URL=http://localhost:3000
-```
-
-**Frontend** (`apps/frontend/.env.local`):
-
-```env
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-NEXT_PUBLIC_API_URL=http://localhost:3001
-```
-
-### 4. Migracje bazy danych
-
-W Supabase Dashboard → SQL Editor uruchom kolejno:
-
-1. `apps/api/migrations/006_create_data_sources_schema.sql`
-2. `apps/api/migrations/008_update_data_sources_for_api.sql`
-3. `apps/api/migrations/009_create_semantic_search_functions.sql`
-
-### 5. Uruchomienie
+### Uruchomienie testów
 
 ```bash
-# Wszystkie serwisy jednocześnie
-npm run dev
+# TypeScript validation
+npm run typecheck
 
-# Lub osobno:
-cd apps/api && npm run dev        # Backend API (port 3001)
-cd apps/frontend && npm run dev   # Frontend (port 3000)
-cd apps/worker && npm run dev     # Worker (opcjonalnie)
+# Unit + Integration tests (37 testów)
+npm run test
+
+# E2E tests z Playwright (18 testów)
+npm run test:e2e
+
+# Pełny pipeline
+npm run typecheck && npm run build && npm run test
 ```
 
-### 6. Pierwsze kroki
+### GitHub Actions
 
-1. Otwórz `http://localhost:3000`
-2. Zaloguj się przez Google OAuth
-3. **Ustawienia → Konfiguracja API** - dodaj klucz OpenAI
-4. **Ustawienia → Źródła Danych** - dodaj źródła (ISAP, BIP, RIO)
-5. Kliknij **Scrapuj** aby pobrać dokumenty
-6. **Analizy** - testuj wyszukiwanie i analizy prawne
+Pipeline CI uruchamia się automatycznie na push/PR do `main`:
 
-## 📚 Dokumentacja
+1. **Lint** — ESLint
+2. **TypeCheck** — TypeScript
+3. **Build** — Kompilacja wszystkich pakietów
+4. **Test** — Unit + Integration (Vitest)
+5. **E2E** — Playwright
+6. **Security** — npm audit
 
-- [`docs/INSTRUKCJA_URUCHOMIENIA_WINSDURF.md`](docs/INSTRUKCJA_URUCHOMIENIA_WINSDURF.md) - szczegółowa instrukcja
-- [`docs/architecture.md`](docs/architecture.md) - architektura systemu
-- [`docs/change_log.md`](docs/change_log.md) - historia zmian
-
-## 🏗️ Architektura
-
-```
-┌─────────────────────────────────────────┐
-│           ~~bez~~RADNY                  │
-│     Agent AI dla Rady Miejskiej         │
-└─────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────────┐
-│  WARSTWA 1: Źródła Danych               │
-│  • ISAP  • WSA/NSA  • RIO  • BIP        │
-└─────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────────┐
-│  WARSTWA 2: Adaptery Pobierania         │
-│  • ApiDataFetcher                       │
-│  • ScraperDataFetcher                   │
-│  • UnifiedDataService                   │
-└─────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────────┐
-│  WARSTWA 3: Silniki Analityczne         │
-│  • Legal Search API                     │
-│  • Legal Reasoning Engine               │
-│  • Budget Analysis Engine               │
-└─────────────────────────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────────┐
-│  WARSTWA 4: API & UI                    │
-│  • REST API (Fastify)                   │
-│  • Frontend (Next.js)                   │
-│  • Worker (BullMQ)                      │
-└─────────────────────────────────────────┘
-```
-
-## 🔌 API Endpoints
-
-### Źródła danych
-
-- `GET /api/data-sources` - lista źródeł
-- `POST /api/data-sources` - dodaj źródło
-- `POST /api/data-sources/:id/scrape` - uruchom scraping
-
-### Analizy prawne
-
-- `POST /api/legal/search` - wyszukiwanie prawne
-- `POST /api/legal/reasoning` - analiza prawna z ryzykami
-- `POST /api/legal/budget-analysis` - analiza budżetowa
-- `GET /api/legal/analysis-types` - typy analiz
-
-## 🧪 Testowanie
+### Deployment (Vercel)
 
 ```bash
-# Wyszukiwanie prawne
-curl -X POST http://localhost:3001/api/legal/search \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "budżet gminy", "searchMode": "hybrid"}'
-
-# Analiza prawna
-curl -X POST http://localhost:3001/api/legal/reasoning \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"question": "Czy uchwała jest zgodna z prawem?", "analysisType": "legality"}'
+# Wymagane secrets w GitHub:
+VERCEL_TOKEN
+VERCEL_ORG_ID
+VERCEL_PROJECT_ID
 ```
 
-## 📦 Struktura projektu
+Deployment uruchamia się:
 
-```
-Aasystent_Radnego/
-├── apps/
-│   ├── api/                    # Backend API (Fastify)
-│   │   ├── src/
-│   │   │   ├── routes/         # Endpointy API
-│   │   │   ├── services/       # Silniki analityczne
-│   │   │   │   ├── data-fetchers/
-│   │   │   │   ├── legal-search-api.ts
-│   │   │   │   ├── legal-reasoning-engine.ts
-│   │   │   │   └── budget-analysis-engine.ts
-│   │   │   └── middleware/
-│   │   └── migrations/         # Migracje SQL
-│   ├── frontend/               # Frontend (Next.js)
-│   │   └── src/
-│   │       ├── app/
-│   │       │   ├── analysis/   # UI analiz prawnych
-│   │       │   └── settings/   # Ustawienia
-│   │       └── lib/api/        # API clients
-│   └── worker/                 # Worker (BullMQ)
-├── packages/
-│   └── shared/
-│       └── src/types/          # Wspólne typy TypeScript
-└── docs/                       # Dokumentacja
-```
-
-## 🛠️ Technologie
-
-- **Backend**: Fastify, TypeScript, Node.js
-- **Frontend**: Next.js 15, React 19, TailwindCSS
-- **Database**: PostgreSQL + pgvector (Supabase)
-- **AI**: OpenAI (GPT-4, embeddings)
-- **Queue**: BullMQ + Redis
-- **Scraping**: Cheerio, node-fetch
-
-## 🔒 Bezpieczeństwo
-
-- Autoryzacja przez Supabase OAuth (Google)
-- API keys szyfrowane w bazie danych
-- RLS (Row Level Security) w PostgreSQL
-- Rate limiting na endpointach API
-- Walidacja wszystkich inputów
-
-## 📝 Licencja
-
-Open Source - MIT License
-
-## 🤝 Wsparcie
-
-W razie problemów:
-
-1. Sprawdź logi: `apps/api/logs/`
-2. Zobacz dokumentację: `docs/`
-3. Sprawdź migracje w Supabase Dashboard
-
----
-
-**Status**: System produkcyjny ✅
-**Licencja**: MIT
-**Data aktualizacji**: 2026-01-25
+- **Staging** — push do `main`
+- **Production** — tag `v*` (np. `v1.0.0`)

@@ -36,6 +36,7 @@ export interface BackgroundTask {
 }
 
 export interface CreateTaskParams {
+  taskId?: string; // opcjonalnie predefiniowane ID
   userId: string;
   taskType: TaskType;
   title: string;
@@ -62,17 +63,25 @@ class BackgroundTaskService {
    */
   async createTask(params: CreateTaskParams): Promise<string | null> {
     try {
+      const insertData: Record<string, unknown> = {
+        user_id: params.userId,
+        task_type: params.taskType,
+        type: params.taskType, // Kolumna 'type' jest NOT NULL w schemacie
+        status: "queued",
+        title: params.title,
+        description: params.description,
+        progress: 0,
+        metadata: params.metadata || {},
+      };
+
+      // Użyj predefiniowanego ID jeśli podano
+      if (params.taskId) {
+        insertData.id = params.taskId;
+      }
+
       const { data, error } = await this.supabase
         .from("background_tasks")
-        .insert({
-          user_id: params.userId,
-          task_type: params.taskType,
-          status: "queued",
-          title: params.title,
-          description: params.description,
-          progress: 0,
-          metadata: params.metadata || {},
-        })
+        .insert(insertData)
         .select("id")
         .single();
 
@@ -225,6 +234,7 @@ class BackgroundTaskService {
       progress?: number;
       description?: string;
       error_message?: string;
+      metadata?: Record<string, unknown>;
     },
   ): Promise<boolean> {
     try {
@@ -247,6 +257,20 @@ class BackgroundTaskService {
       }
       if (updates.error_message) {
         updateData.error_message = updates.error_message;
+      }
+
+      // Merge metadata if provided
+      if (updates.metadata) {
+        const { data: existing } = await this.supabase
+          .from("background_tasks")
+          .select("metadata")
+          .eq("metadata->>jobId", jobId)
+          .single();
+
+        updateData.metadata = {
+          ...(existing?.metadata || {}),
+          ...updates.metadata,
+        };
       }
 
       const { error } = await this.supabase

@@ -12,7 +12,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 export async function performResearch(
   request: DeepResearchRequest,
-  token: string
+  token: string,
 ): Promise<DeepResearchReport> {
   const response = await fetch(`${API_URL}/api/research`, {
     method: "POST",
@@ -34,6 +34,7 @@ export async function performResearch(
   return data.report;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function getResearchHistory(token: string): Promise<any[]> {
   const response = await fetch(`${API_URL}/api/research/history`, {
     method: "GET",
@@ -55,7 +56,7 @@ export async function getResearchHistory(token: string): Promise<any[]> {
 
 export async function getResearchReport(
   id: string,
-  token: string
+  token: string,
 ): Promise<DeepResearchReport> {
   const response = await fetch(`${API_URL}/api/research/${id}`, {
     method: "GET",
@@ -77,7 +78,7 @@ export async function getResearchReport(
 
 export async function deleteResearchReport(
   id: string,
-  token: string
+  token: string,
 ): Promise<void> {
   const response = await fetch(`${API_URL}/api/research/${id}`, {
     method: "DELETE",
@@ -94,6 +95,7 @@ export async function deleteResearchReport(
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function getProvidersStatus(token: string): Promise<any[]> {
   const response = await fetch(`${API_URL}/api/research/providers/status`, {
     method: "GET",

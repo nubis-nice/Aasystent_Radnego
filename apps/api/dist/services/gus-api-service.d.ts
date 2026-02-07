@@ -67,7 +67,7 @@ export declare class GUSApiService {
         year?: number;
     }): Promise<GUSUnit[]>;
     /**
-     * Znajdź gminę po nazwie
+     * Znajdź gminę po nazwie (używa API search)
      */
     findGmina(name: string): Promise<GUSUnit | null>;
     /**
@@ -90,6 +90,7 @@ export declare class GUSApiService {
     }): Promise<GUSDataPoint[]>;
     /**
      * Pobierz dane dla jednej jednostki i wielu zmiennych
+     * Używa unit-parent-id do pobrania danych dla gminy i jej podjednostek
      */
     getDataByUnit(unitId: string, variableIds: string[], params?: {
         year?: number;

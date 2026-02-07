@@ -325,9 +325,11 @@ export class DocumentScorer {
             return true;
         });
         console.log(`[DocumentScorer] After deduplication: ${uniqueDocuments.length} unique docs (was ${documents.length})`);
-        // Oblicz score dla każdego dokumentu
+        // Oblicz score dla każdego dokumentu i znormalizuj tytuły
         const scoredDocuments = uniqueDocuments.map((doc) => ({
             ...doc,
+            // Normalizacja tytułu - usuń śmieci i zamień angielskie nazwy na polskie
+            title: this.normalizeTitle(doc.title),
             score: this.calculateScore(doc),
         }));
         // Filtruj po priorytecie (po obliczeniu score)
@@ -395,6 +397,33 @@ export class DocumentScorer {
         })
             .eq("id", documentId);
         return score;
+    }
+    /**
+     * Normalizacja tytułu dokumentu
+     * - Usuwa śmieci (| Urząd Miejski..., System Rada...)
+     * - Zamienia angielskie nazwy na polskie
+     */
+    normalizeTitle(title) {
+        if (!title)
+            return "Bez tytułu";
+        return (title
+            // Usuń śmieci z tytułu
+            .replace(/\s*\|.*$/g, "") // Usuń " | Urząd Miejski..."
+            .replace(/\s*-?\s*System\s+Rada.*$/gi, "") // Usuń "System Rada"
+            .replace(/\s*-?\s*BIP\s*.*$/gi, "") // Usuń "BIP..."
+            // Zamień angielskie nazwy dokumentów na polskie
+            .replace(/\bresolution\s+nr\b/gi, "Uchwała nr")
+            .replace(/\bresolution\b/gi, "Uchwała")
+            .replace(/\bprotocol\s+nr\b/gi, "Protokół nr")
+            .replace(/\bprotocol\b/gi, "Protokół")
+            .replace(/\bdraft\s+nr\b/gi, "Projekt nr")
+            .replace(/\bdraft\b/gi, "Projekt")
+            .replace(/\battachment\b/gi, "Załącznik")
+            .replace(/\bsession\b/gi, "Sesja")
+            .replace(/\bannouncement\b/gi, "Ogłoszenie")
+            // Cleanup
+            .replace(/\s+/g, " ")
+            .trim());
     }
 }
 // Export singleton instance

@@ -42,7 +42,8 @@ export const diagnosticsRoutes = async (fastify) => {
             let errors = [];
             for (const doc of docsWithoutEmbeddings) {
                 try {
-                    const textToEmbed = `${doc.title || ""}\n\n${doc.content || ""}`.slice(0, 8000);
+                    // nomic-embed-text ma limit ~2000 tokenów (~4000 znaków)
+                    const textToEmbed = `${doc.title || ""}\n\n${doc.content || ""}`.slice(0, 4000);
                     const embeddingResponse = await embeddingsClient.embeddings.create({
                         model: embConfig.modelName,
                         input: textToEmbed,

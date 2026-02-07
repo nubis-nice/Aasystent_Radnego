@@ -294,7 +294,7 @@ export class DeepResearchService {
                 excerpt: doc.content.substring(0, 300) + "...",
                 source: "local",
                 relevanceScore: 0.8, // High relevance for local sources
-                publishDate: doc.publish_date || doc.processed_at,
+                publishDate: doc.publish_date || doc.processed_at || undefined,
                 metadata: {
                     documentType: doc.document_type,
                 },
@@ -632,6 +632,7 @@ export class DeepResearchService {
             };
             const { error } = await this.supabase
                 .from("research_reports")
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 .insert(insertData);
             if (error)
                 throw error;

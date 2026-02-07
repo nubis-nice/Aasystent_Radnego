@@ -28,6 +28,7 @@ export function EndpointConfig({
   onModelsEndpointChange,
   disabled = false,
 }: EndpointConfigProps) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [defaults, setDefaults] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
@@ -42,7 +43,7 @@ export function EndpointConfig({
       setLoading(true);
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
       const response = await fetch(
-        `${apiUrl}/api/providers/${provider}/defaults`
+        `${apiUrl}/api/providers/${provider}/defaults`,
       );
 
       if (!response.ok) {

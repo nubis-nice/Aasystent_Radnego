@@ -178,7 +178,7 @@ export default function DocumentsPage() {
     }
   };
 
-  // Funkcja analizy dokumentu - profesjonalna analiza z kontekstem RAG
+  // Funkcja analizy dokumentu - profesjonalna analiza z kontekstem RAG (ASYNC)
   const handleAnalyze = async (docId: string, e?: React.MouseEvent) => {
     e?.preventDefault();
     e?.stopPropagation();
@@ -187,7 +187,27 @@ export default function DocumentsPage() {
       setAnalyzingId(docId);
       const result = await analyzeDocument(docId);
 
-      // Zapisz pełny kontekst analizy do localStorage
+      // Sprawdź czy odpowiedź jest asynchroniczna
+      if (result.async) {
+        // Analiza uruchomiona w tle - przekieruj do Dashboard
+        console.log(`[Documents] Analysis started: ${result.taskId}`);
+
+        // Zapisz info o oczekującej analizie
+        localStorage.setItem(
+          "pendingAnalysisTask",
+          JSON.stringify({
+            taskId: result.taskId,
+            documentTitle: result.document.title,
+            startedAt: new Date().toISOString(),
+          }),
+        );
+
+        // Przekieruj do Dashboard aby śledzić postęp
+        router.push("/dashboard?analysisStarted=true");
+        return;
+      }
+
+      // Synchroniczna odpowiedź (fallback) - zapisz kontekst i przekieruj do chatu
       localStorage.setItem(
         "pendingAnalysis",
         JSON.stringify({

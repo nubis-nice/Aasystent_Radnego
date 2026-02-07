@@ -1,7 +1,7 @@
 /**
  * AI Tool Orchestrator - Inteligentna orchestracja narzędzi AI
  */
-export type ToolType = "deep_research" | "rag_search" | "legal_analysis" | "session_search" | "person_search" | "document_fetch" | "budget_analysis" | "youtube_search" | "gus_statistics" | "isap_legal" | "eu_funds" | "geoportal_spatial" | "teryt_registry" | "krs_registry" | "ceidg_registry" | "gdos_environmental" | "voice_control" | "app_navigation" | "calendar_add" | "calendar_list" | "calendar_edit" | "calendar_delete" | "task_add" | "task_list" | "task_complete" | "task_delete" | "alert_check" | "quick_tool" | "app_navigate" | "simple_answer";
+export type ToolType = "deep_research" | "rag_search" | "legal_analysis" | "session_search" | "person_search" | "document_fetch" | "budget_analysis" | "youtube_search" | "gus_statistics" | "isap_legal" | "eu_funds" | "geoportal_spatial" | "teryt_registry" | "krs_registry" | "ceidg_registry" | "gdos_environmental" | "data_sources_search" | "verified_web_search" | "exhaustive_search" | "voice_control" | "app_navigation" | "calendar_add" | "calendar_list" | "calendar_edit" | "calendar_delete" | "task_add" | "task_list" | "task_complete" | "task_delete" | "alert_check" | "quick_tool" | "app_navigate" | "simple_answer";
 export interface DetectedIntent {
     primaryIntent: ToolType;
     secondaryIntents: ToolType[];
@@ -22,6 +22,13 @@ export interface ToolExecutionResult {
     success: boolean;
     data: unknown;
     executionTimeMs: number;
+    message?: string;
+    uiAction?: {
+        type: string;
+        target?: string;
+        data?: unknown;
+    };
+    navigationTarget?: string;
     error?: string;
 }
 export interface OrchestratorResult {

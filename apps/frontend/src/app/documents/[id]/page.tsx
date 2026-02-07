@@ -91,7 +91,7 @@ function FormattedDocumentContent({ document: doc }: { document: Document }) {
         e.toLowerCase().includes("sala") ||
         e.toLowerCase().includes("urząd") ||
         e.toLowerCase().includes("ośrodek") ||
-        e.toLowerCase().includes("budynek")
+        e.toLowerCase().includes("budynek"),
     );
 
   // Formatuj datę do czytelnej postaci
@@ -126,7 +126,7 @@ function FormattedDocumentContent({ document: doc }: { document: Document }) {
         {llmAnalysis?.summary && (
           <p className="mt-2 text-primary-700 text-sm">{llmAnalysis.summary}</p>
         )}
-      </div>
+      </div>,
     );
   }
 
@@ -150,7 +150,7 @@ function FormattedDocumentContent({ document: doc }: { document: Document }) {
           </p>
           <span className="text-xs text-blue-500">Źródło: analiza AI</span>
         </div>
-      </div>
+      </div>,
     );
   }
 
@@ -167,7 +167,7 @@ function FormattedDocumentContent({ document: doc }: { document: Document }) {
           <p className="text-green-900 font-semibold">{sessionLocation}</p>
           <span className="text-xs text-green-500">Źródło: analiza AI</span>
         </div>
-      </div>
+      </div>,
     );
   }
 
@@ -188,7 +188,7 @@ function FormattedDocumentContent({ document: doc }: { document: Document }) {
             </span>
           ))}
         </div>
-      </div>
+      </div>,
     );
   }
 
@@ -212,7 +212,7 @@ function FormattedDocumentContent({ document: doc }: { document: Document }) {
             </span>
           ))}
         </div>
-      </div>
+      </div>,
     );
   }
 
@@ -225,7 +225,7 @@ function FormattedDocumentContent({ document: doc }: { document: Document }) {
       <div className="prose prose-slate max-w-none">
         {formatPlainText(content)}
       </div>
-    </div>
+    </div>,
   );
 
   return (
@@ -297,7 +297,7 @@ function formatTextWithHighlights(text: string, key: string): React.ReactNode {
   // Uchwały
   const uchwalaRegex = new RegExp(
     FORMATTING_PATTERNS.uchwalaNumer.source,
-    "gi"
+    "gi",
   );
   while ((match = uchwalaRegex.exec(text)) !== null) {
     allMatches.push({
@@ -311,7 +311,7 @@ function formatTextWithHighlights(text: string, key: string): React.ReactNode {
   // Projekt uchwały
   const projektRegex = new RegExp(
     FORMATTING_PATTERNS.projektUchwaly.source,
-    "gi"
+    "gi",
   );
   while ((match = projektRegex.exec(text)) !== null) {
     allMatches.push({
@@ -363,7 +363,7 @@ function formatTextWithHighlights(text: string, key: string): React.ReactNode {
             title="Załącznik PDF"
           >
             📄 {m.text}
-          </span>
+          </span>,
         );
         break;
       case "druk":
@@ -374,7 +374,7 @@ function formatTextWithHighlights(text: string, key: string): React.ReactNode {
             title="Numer druku"
           >
             📋 {m.text}
-          </span>
+          </span>,
         );
         break;
       case "uchwala":
@@ -385,7 +385,7 @@ function formatTextWithHighlights(text: string, key: string): React.ReactNode {
             title="Numer uchwały"
           >
             📜 {m.text}
-          </span>
+          </span>,
         );
         break;
       case "projekt":
@@ -395,7 +395,7 @@ function formatTextWithHighlights(text: string, key: string): React.ReactNode {
             className="inline-block px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-sm font-semibold mr-1"
           >
             📝 {m.text}
-          </span>
+          </span>,
         );
         break;
       case "zalacznik":
@@ -406,7 +406,7 @@ function formatTextWithHighlights(text: string, key: string): React.ReactNode {
             title="Załącznik"
           >
             📎 {m.text}
-          </span>
+          </span>,
         );
         break;
       default:
@@ -477,7 +477,7 @@ function formatPlainText(text: string): React.ReactNode[] {
             className="text-slate-600 text-sm mb-4 leading-relaxed"
           >
             {formatTextWithHighlights(beforeSession, `pre-${keyIndex}`)}
-          </p>
+          </p>,
         );
       }
 
@@ -490,7 +490,7 @@ function formatPlainText(text: string): React.ReactNode[] {
           <h3 className="text-xl font-bold text-slate-800 tracking-wide">
             {sessionMatch[0]}
           </h3>
-        </div>
+        </div>,
       );
 
       remaining = remaining.slice(sessionEnd).trim();
@@ -512,7 +512,7 @@ function formatPlainText(text: string): React.ReactNode[] {
             <span className="text-slate-800 font-medium">
               {dateMatch[0].replace(/Data\s+posiedzenia\s+/i, "")}
             </span>
-          </div>
+          </div>,
         );
         remaining = remaining.replace(dateMatch[0], "").trim();
       }
@@ -526,7 +526,7 @@ function formatPlainText(text: string): React.ReactNode[] {
             <span className="text-slate-800 font-medium">
               {placeMatch[0].replace(/Miejsce\s+posiedzenia\s+/i, "").trim()}
             </span>
-          </div>
+          </div>,
         );
         remaining = remaining.replace(placeMatch[0], "").trim();
       }
@@ -538,7 +538,7 @@ function formatPlainText(text: string): React.ReactNode[] {
             className="mb-6 pl-4 border-l-2 border-slate-300 space-y-1"
           >
             {metaItems}
-          </div>
+          </div>,
         );
       }
     }
@@ -558,9 +558,9 @@ function formatPlainText(text: string): React.ReactNode[] {
           >
             {formatTextWithHighlights(
               capitalizeFirst(beforeAgenda),
-              `ba-${keyIndex}`
+              `ba-${keyIndex}`,
             )}
-          </p>
+          </p>,
         );
       }
 
@@ -571,7 +571,7 @@ function formatPlainText(text: string): React.ReactNode[] {
           className="text-lg font-semibold text-slate-800 mt-6 mb-4"
         >
           Porządek obrad
-        </h4>
+        </h4>,
       );
 
       remaining = remaining.slice(agendaIndex + agendaMatch[0].length).trim();
@@ -615,9 +615,9 @@ function formatPlainText(text: string): React.ReactNode[] {
           >
             {formatTextWithHighlights(
               capitalizeFirst(beforeFirst),
-              `intro-${keyIndex}`
+              `intro-${keyIndex}`,
             )}
-          </p>
+          </p>,
         );
       }
     }
@@ -634,12 +634,12 @@ function formatPlainText(text: string): React.ReactNode[] {
               <div className="flex-1 text-slate-700 leading-relaxed pt-1">
                 {formatTextWithHighlights(
                   capitalizeFirst(point.content),
-                  `pt-${idx}`
+                  `pt-${idx}`,
                 )}
               </div>
             </li>
           ))}
-        </ol>
+        </ol>,
       );
 
       // Usuń przetworzone punkty
@@ -667,9 +667,9 @@ function formatPlainText(text: string): React.ReactNode[] {
               >
                 {formatTextWithHighlights(
                   capitalizeFirst(text),
-                  `p-${keyIndex}`
+                  `p-${keyIndex}`,
                 )}
-              </p>
+              </p>,
             );
           }
           currentParagraph = [];
@@ -697,7 +697,7 @@ function formatPlainText(text: string): React.ReactNode[] {
     elements.push(
       <p key="fallback" className="text-slate-700 leading-7 text-justify">
         {formatTextWithHighlights(normalizedText, "fallback")}
-      </p>
+      </p>,
     );
   }
 
@@ -740,7 +740,7 @@ export default function DocumentDetailPage() {
         setRelatedDocs(related);
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Błąd pobierania dokumentu"
+          err instanceof Error ? err.message : "Błąd pobierania dokumentu",
         );
       } finally {
         setLoading(false);
@@ -766,7 +766,7 @@ export default function DocumentDetailPage() {
           prompt: result.analysisPrompt,
           context: result.chatContext,
           document: result.document,
-        })
+        }),
       );
 
       router.push("/chat?analysis=true");
@@ -945,6 +945,218 @@ export default function DocumentDetailPage() {
             </a>
           </div>
         )}
+
+        {/* Informacje o powiązanej transkrypcji z sesji */}
+        {(() => {
+          const meta = document.metadata as Record<string, unknown>;
+          const linkedTranscription = meta?.linkedTranscription as
+            | {
+                documentId?: string;
+                title?: string;
+                videoUrl?: string;
+                duration?: string;
+                speakerCount?: number;
+                speakers?: string[];
+              }
+            | undefined;
+
+          if (!linkedTranscription) return null;
+
+          return (
+            <div className="bg-gradient-to-r from-red-50 to-orange-50 rounded-xl border border-red-200 p-4">
+              <div className="flex items-center gap-2 text-red-700 mb-1">
+                <FileText className="h-4 w-4" />
+                <span className="text-sm font-medium">
+                  🎬 Transkrypcja sesji
+                </span>
+              </div>
+              <div className="space-y-1">
+                {linkedTranscription.title && (
+                  <p
+                    className="text-sm text-red-600 font-medium truncate"
+                    title={linkedTranscription.title}
+                  >
+                    {linkedTranscription.title}
+                  </p>
+                )}
+                {linkedTranscription.duration && (
+                  <p className="text-sm text-red-600">
+                    ⏱️ Czas: {linkedTranscription.duration}
+                  </p>
+                )}
+                {linkedTranscription.speakerCount && (
+                  <p className="text-sm text-red-600">
+                    👥 Mówców: {linkedTranscription.speakerCount}
+                  </p>
+                )}
+                {linkedTranscription.videoUrl && (
+                  <a
+                    href={linkedTranscription.videoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-red-700 hover:text-red-800 font-medium text-sm block mt-2"
+                  >
+                    ▶️ Obejrzyj nagranie →
+                  </a>
+                )}
+                {linkedTranscription.documentId && (
+                  <a
+                    href={`/documents/${linkedTranscription.documentId}`}
+                    className="text-red-700 hover:text-red-800 font-medium text-sm block"
+                  >
+                    📄 Zobacz transkrypcję →
+                  </a>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Informacje o transkrypcji sesji (legacy) */}
+        {(() => {
+          const transcription = (document.metadata as Record<string, unknown>)
+            ?.transcription as
+            | {
+                duration?: string;
+                speakers?: string;
+                source?: string;
+              }
+            | undefined;
+
+          if (!transcription) return null;
+
+          return (
+            <div className="bg-gradient-to-r from-violet-50 to-purple-50 rounded-xl border border-violet-200 p-4">
+              <div className="flex items-center gap-2 text-violet-700 mb-1">
+                <FileText className="h-4 w-4" />
+                <span className="text-sm font-medium">Transkrypcja sesji</span>
+              </div>
+              <div className="space-y-1">
+                {transcription.duration && (
+                  <p className="text-sm text-violet-600">
+                    ⏱️ Czas trwania: {transcription.duration}
+                  </p>
+                )}
+                {transcription.speakers && (
+                  <p className="text-sm text-violet-600">
+                    👥 Mówcy: {transcription.speakers}
+                  </p>
+                )}
+                {transcription.source && (
+                  <a
+                    href={transcription.source}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-violet-700 hover:text-violet-800 font-medium text-sm block mt-2"
+                  >
+                    🎬 Obejrzyj nagranie →
+                  </a>
+                )}
+                {!transcription.source && (
+                  <p className="text-violet-700 font-medium text-sm">
+                    ✅ Wykryto transkrypcję
+                  </p>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Wykryta transkrypcja z YouTube */}
+        {(() => {
+          const ytTranscription = (document.metadata as Record<string, unknown>)
+            ?.youtubeTranscription as
+            | {
+                videoTitle?: string;
+                channelName?: string;
+                duration?: string;
+                videoUrl?: string;
+              }
+            | undefined;
+
+          if (!ytTranscription) return null;
+
+          return (
+            <div className="bg-gradient-to-r from-red-50 to-orange-50 rounded-xl border border-red-200 p-4">
+              <div className="flex items-center gap-2 text-red-700 mb-1">
+                <FileText className="h-4 w-4" />
+                <span className="text-sm font-medium">
+                  Transkrypcja z YouTube
+                </span>
+              </div>
+              <div className="space-y-1">
+                {ytTranscription.videoTitle && (
+                  <p
+                    className="text-sm text-red-600 font-medium truncate"
+                    title={ytTranscription.videoTitle}
+                  >
+                    🎬 {ytTranscription.videoTitle}
+                  </p>
+                )}
+                {ytTranscription.channelName && (
+                  <p className="text-sm text-red-600">
+                    📺 {ytTranscription.channelName}
+                  </p>
+                )}
+                {ytTranscription.duration && (
+                  <p className="text-sm text-red-600">
+                    ⏱️ {ytTranscription.duration}
+                  </p>
+                )}
+                {ytTranscription.videoUrl && (
+                  <a
+                    href={ytTranscription.videoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-red-700 hover:text-red-800 font-medium text-sm block mt-2"
+                  >
+                    ▶️ Obejrzyj na YouTube →
+                  </a>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Informacje o sesji z analizy AI */}
+        {(() => {
+          const llmData = (document.metadata as Record<string, unknown>)
+            ?.llmAnalysis as Record<string, unknown> | undefined;
+          const sessionTranscription = llmData?.sessionTranscription as
+            | {
+                estimatedDuration?: string;
+                speakersCount?: number;
+              }
+            | undefined;
+
+          if (!sessionTranscription) return null;
+
+          return (
+            <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl border border-emerald-200 p-4">
+              <div className="flex items-center gap-2 text-emerald-700 mb-1">
+                <FileText className="h-4 w-4" />
+                <span className="text-sm font-medium">
+                  Wykryta transkrypcja
+                </span>
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm text-emerald-600">
+                  ✅ Dokument zawiera transkrypcję z sesji rady
+                </p>
+                {sessionTranscription.estimatedDuration && (
+                  <p className="text-sm text-emerald-600">
+                    ⏱️ Szacowany czas: {sessionTranscription.estimatedDuration}
+                  </p>
+                )}
+                {sessionTranscription.speakersCount && (
+                  <p className="text-sm text-emerald-600">
+                    👥 Liczba mówców: {sessionTranscription.speakersCount}
+                  </p>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Nagłówek dokumentu, miejsce i czas */}
@@ -959,12 +1171,12 @@ export default function DocumentDetailPage() {
 
         // Wyciągnij datę i godzinę z treści dokumentu (obsługa różnych formatów)
         const dateMatch = content.match(
-          /Data\s+posiedzenia[:\s]*[\n\r\s]*(\d{1,2}[-./]\d{1,2}[-./]\d{4})/i
+          /Data\s+posiedzenia[:\s]*[\n\r\s]*(\d{1,2}[-./]\d{1,2}[-./]\d{4})/i,
         );
         const timeMatch = content.match(/godz\.?\s*(\d{1,2}[:.]\d{2})/i);
         // Miejsce - wyciągnij adres, przytnij przy "Porządek obrad" lub numerze punktu
         const placeRaw = content.match(
-          /Miejsce\s+posiedzenia[:\s]*[\n\r\s]*([^]+?)(?=\s*Porządek\s+obrad|\s*1\.\s+[A-Z])/i
+          /Miejsce\s+posiedzenia[:\s]*[\n\r\s]*([^]+?)(?=\s*Porządek\s+obrad|\s*1\.\s+[A-Z])/i,
         );
         const placeMatch = placeRaw
           ? [placeRaw[0], placeRaw[1].replace(/\s+/g, " ").trim()]
@@ -986,7 +1198,7 @@ export default function DocumentDetailPage() {
             (e: string) =>
               e.toLowerCase().includes("sala") ||
               e.toLowerCase().includes("urząd") ||
-              e.toLowerCase().includes("ośrodek")
+              e.toLowerCase().includes("ośrodek"),
           );
 
         return sessionNumber || sessionDate || sessionLocation ? (
@@ -1009,7 +1221,7 @@ export default function DocumentDetailPage() {
                             day: "2-digit",
                             month: "long",
                             year: "numeric",
-                          }
+                          },
                         );
                       } catch {
                         return sessionDate;
@@ -1099,10 +1311,10 @@ export default function DocumentDetailPage() {
         // Sortuj po numerze
         points.sort((a, b) => {
           const numA = parseFloat(
-            a.num.replace(/[a-z]/g, (c) => "." + (c.charCodeAt(0) - 96))
+            a.num.replace(/[a-z]/g, (c) => "." + (c.charCodeAt(0) - 96)),
           );
           const numB = parseFloat(
-            b.num.replace(/[a-z]/g, (c) => "." + (c.charCodeAt(0) - 96))
+            b.num.replace(/[a-z]/g, (c) => "." + (c.charCodeAt(0) - 96)),
           );
           return numA - numB;
         });

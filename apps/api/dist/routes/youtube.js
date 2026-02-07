@@ -133,8 +133,8 @@ export const youtubeRoutes = async (fastify) => {
                 });
             }
             fastify.log.info(`[YouTube] Audio downloaded: ${downloadResult.audioPath}`);
-            // Transcribe and analyze
-            const result = await downloader.transcribeAndAnalyze(downloadResult.audioPath, videoId, videoTitle || downloadResult.title || "Sesja Rady", videoUrl);
+            // Transcribe and analyze - przekazujemy precomputed parts
+            const result = await downloader.transcribeAndAnalyze(downloadResult.audioPath, videoId, videoTitle || downloadResult.title || "Sesja Rady", videoUrl, downloadResult.parts);
             if (!result.success) {
                 return reply.status(422).send({
                     error: result.error,
@@ -350,14 +350,29 @@ export const youtubeRoutes = async (fastify) => {
             // Pobierz zadania z Redis queue dla aktualnego postępu
             const queueJobs = await getUserTranscriptionJobs(user.id);
             const queueJobsMap = new Map(queueJobs.map((j) => [j.id, j]));
+            // Debug: loguj mapowanie
+            if (queueJobs.length > 0) {
+                fastify.log.info(`[YouTube/jobs] Queue jobs: ${queueJobs.map((j) => `${j.id.slice(0, 8)}:${j.progress}%`).join(", ")}`);
+            }
             // Połącz dane z bazy z postępem z queue
             const jobsWithDetails = (dbJobs || []).map((dbJob) => {
                 const queueJob = queueJobsMap.get(dbJob.id);
+                // Jeśli zadanie jest aktywne w bazie ale nie ma go w Redis queue - jest osierocone
+                const isOrphaned = !queueJob &&
+                    !["completed", "failed"].includes(dbJob.status) &&
+                    dbJob.status !== "pending";
+                // Dla osierocononych zadań - używaj danych z bazy (worker aktualizuje bazę)
+                const effectiveProgress = queueJob?.progress ?? dbJob.progress ?? 0;
+                const effectiveMessage = queueJob?.progressMessage ||
+                    dbJob.progress_message ||
+                    (isOrphaned
+                        ? "Przetwarzanie (brak połączenia z kolejką)..."
+                        : "Oczekuje...");
                 return {
                     id: dbJob.id,
                     status: queueJob?.status || dbJob.status,
-                    progress: queueJob?.progress ?? dbJob.progress,
-                    progressMessage: queueJob?.progressMessage || dbJob.progress_message,
+                    progress: effectiveProgress,
+                    progressMessage: effectiveMessage,
                     videoTitle: dbJob.video_title,
                     videoUrl: dbJob.video_url,
                     createdAt: queueJob?.createdAt || new Date(dbJob.created_at),
@@ -457,6 +472,7 @@ export const youtubeRoutes = async (fastify) => {
     });
     // POST /api/youtube/job/:jobId/cancel - Anuluj zadanie transkrypcji
     fastify.post("/youtube/job/:jobId/cancel", async (request, reply) => {
+        fastify.log.info(`[YouTube] CANCEL request for job: ${request.params.jobId}`);
         try {
             const authHeader = request.headers.authorization;
             if (!authHeader?.startsWith("Bearer ")) {
@@ -511,6 +527,7 @@ export const youtubeRoutes = async (fastify) => {
     });
     // DELETE /api/youtube/job/:jobId - Usuń zadanie transkrypcji
     fastify.delete("/youtube/job/:jobId", async (request, reply) => {
+        fastify.log.info(`[YouTube] DELETE request for job: ${request.params.jobId}`);
         try {
             const authHeader = request.headers.authorization;
             if (!authHeader?.startsWith("Bearer ")) {
@@ -582,13 +599,25 @@ export const youtubeRoutes = async (fastify) => {
                     .status(403)
                     .send({ error: "Brak dostępu do tego zadania" });
             }
-            if (dbJob.status !== "failed") {
+            // Pozwól na retry dla: failed, pending (utknięte), downloading, transcribing, analyzing, saving
+            const canRetry = [
+                "failed",
+                "pending",
+                "downloading",
+                "transcribing",
+                "analyzing",
+                "saving",
+            ].includes(dbJob.status);
+            if (!canRetry) {
                 return reply
                     .status(400)
-                    .send({ error: "Można ponowić tylko nieudane zadania" });
+                    .send({ error: "Nie można ponowić zakończonego zadania" });
             }
-            // Spróbuj retry w Redis queue
-            const retried = await retryTranscriptionJob(jobId);
+            // Spróbuj retry w Redis queue (dla failed)
+            let retried = false;
+            if (dbJob.status === "failed") {
+                retried = await retryTranscriptionJob(jobId);
+            }
             if (retried) {
                 // Zaktualizuj status w bazie
                 await supabase
@@ -608,6 +637,7 @@ export const youtubeRoutes = async (fastify) => {
                 });
             }
             else {
+                // Dla utkniętych zadań (pending bez wpisu w kolejce) - utwórz nowe
                 // Utwórz nowe zadanie z tymi samymi parametrami
                 const newJobId = await addTranscriptionJob(user.id, dbJob.video_url, dbJob.video_title, {
                     sessionId: dbJob.session_id,
@@ -640,6 +670,47 @@ export const youtubeRoutes = async (fastify) => {
             fastify.log.error(error);
             return reply.status(500).send({
                 error: error instanceof Error ? error.message : "Błąd ponowienia zadania",
+            });
+        }
+    });
+    // DELETE /api/youtube/jobs/cleanup - Usuń wszystkie niedziałające zadania
+    fastify.delete("/youtube/jobs/cleanup", async (request, reply) => {
+        try {
+            const authHeader = request.headers.authorization;
+            if (!authHeader?.startsWith("Bearer ")) {
+                return reply.status(401).send({ error: "Unauthorized" });
+            }
+            const token = authHeader.substring(7);
+            const { data: { user }, error: authError, } = await supabase.auth.getUser(token);
+            if (authError || !user) {
+                return reply.status(401).send({ error: "Invalid token" });
+            }
+            // Usuń zadania które nie są completed (utknięte/failed)
+            const { data: deletedJobs, error: deleteError } = await supabase
+                .from("transcription_jobs")
+                .delete()
+                .eq("user_id", user.id)
+                .neq("status", "completed")
+                .select("id, video_title, status");
+            if (deleteError) {
+                throw new Error(`Database error: ${deleteError.message}`);
+            }
+            fastify.log.info(`[YouTube] Cleaned up ${deletedJobs?.length || 0} stuck jobs for user ${user.id}`);
+            return reply.send({
+                success: true,
+                deletedCount: deletedJobs?.length || 0,
+                deletedJobs: deletedJobs?.map((j) => ({
+                    id: j.id,
+                    title: j.video_title,
+                    status: j.status,
+                })),
+                message: `Usunięto ${deletedJobs?.length || 0} niedziałających zadań`,
+            });
+        }
+        catch (error) {
+            fastify.log.error(error);
+            return reply.status(500).send({
+                error: error instanceof Error ? error.message : "Błąd czyszczenia zadań",
             });
         }
     });

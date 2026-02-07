@@ -137,14 +137,29 @@ export class GUSApiService {
   }
 
   /**
-   * Znajdź gminę po nazwie
+   * Znajdź gminę po nazwie (używa API search)
    */
   async findGmina(name: string): Promise<GUSUnit | null> {
-    const gminy = await this.getUnits({ level: 6 }); // Poziom 6 = gminy
-    const found = gminy.find((g) =>
-      g.name.toLowerCase().includes(name.toLowerCase()),
-    );
-    return found || null;
+    try {
+      // Użyj endpointu wyszukiwania zamiast pobierania wszystkich gmin
+      const result = await this.request<{ results: GUSUnit[] }>(
+        "/units/search",
+        { name, level: 6 },
+      );
+
+      if (result.results && result.results.length > 0) {
+        // Preferuj dokładne dopasowanie lub gminę miejsko-wiejską
+        const exact = result.results.find(
+          (g) => g.name.toLowerCase() === name.toLowerCase(),
+        );
+        return exact || result.results[0];
+      }
+
+      return null;
+    } catch (error) {
+      console.error("[GUS] findGmina error:", error);
+      return null;
+    }
   }
 
   /**
@@ -199,21 +214,75 @@ export class GUSApiService {
 
   /**
    * Pobierz dane dla jednej jednostki i wielu zmiennych
+   * Używa unit-parent-id do pobrania danych dla gminy i jej podjednostek
    */
   async getDataByUnit(
     unitId: string,
     variableIds: string[],
     params?: { year?: number },
   ): Promise<GUSDataPoint[]> {
-    const result = await this.request<{ results: GUSDataPoint[] }>(
-      `/data/by-unit/${unitId}`,
-      {
-        "var-id": variableIds.join(","),
-        ...(params?.year && { year: params.year }),
-      },
-    );
+    const allData: GUSDataPoint[] = [];
 
-    return result.results || [];
+    // Pobierz parent-id (powiat) z unit-id gminy
+    // Format: 023216402033 -> parent: 023216402000
+    const parentId = unitId.slice(0, 9) + "000";
+
+    // Pobierz dane dla każdej zmiennej
+    for (const varId of variableIds) {
+      try {
+        const result = await this.request<{
+          results: Array<{
+            id: string;
+            name: string;
+            values: Array<{ year: number; val: number }>;
+          }>;
+        }>(`/data/by-variable/${varId}`, {
+          "unit-parent-id": parentId,
+          "page-size": 100,
+          ...(params?.year && { year: params.year }),
+        });
+
+        // Filtruj wyniki dla konkretnej jednostki
+        console.log(
+          `[GUS] Variable ${varId}: got ${result.results?.length || 0} results`,
+        );
+        if (result.results && result.results.length > 0) {
+          // Debug: pokaż wszystkie ID
+          const ids = result.results.map((u) => u.id).join(", ");
+          console.log(
+            `[GUS] Variable ${varId}: unit IDs = ${ids.substring(0, 100)}...`,
+          );
+
+          for (const unit of result.results) {
+            // Dopasuj dokładnie
+            if (unit.id === unitId && unit.values) {
+              console.log(
+                `[GUS] Variable ${varId}: MATCH found for ${unitId}, values: ${unit.values.length}`,
+              );
+              // Weź tylko najnowszy rok jeśli nie podano konkretnego
+              const values = params?.year
+                ? unit.values.filter((v) => v.year === params.year)
+                : [unit.values.sort((a, b) => b.year - a.year)[0]].filter(
+                    Boolean,
+                  );
+
+              for (const val of values) {
+                allData.push({
+                  id: parseInt(unit.id) || 0,
+                  variableId: parseInt(varId),
+                  val: val.val,
+                  year: val.year,
+                });
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`[GUS] Failed to fetch variable ${varId}:`, err);
+      }
+    }
+
+    return allData;
   }
 
   /**
@@ -224,21 +293,53 @@ export class GUSApiService {
     year?: number,
   ): Promise<GUSStats | null> {
     try {
-      // Kluczowe zmienne dla gmin (przykładowe ID - do dostosowania)
+      // Kluczowe zmienne dla gmin - dane demograficzne i budżetowe
+      // ID zmiennych z GUS BDL API (sprawdzone 27.01.2026)
+      // Źródło: https://bdl.stat.gov.pl/api/v1/variables?subject-id=P1873
       const keyVariableIds = [
-        "60559", // Ludność
         "72305", // Dochody budżetu gminy
         "72395", // Wydatki budżetu gminy
-        "461668", // Bezrobotni zarejestrowani
+        "60", // Urodzenia żywe (P1873)
+        "65", // Zgony ogółem (P1873)
+        "68", // Przyrost naturalny (P1873)
+        "450540", // Urodzenia żywe na 1000 ludności (P3428)
+        "450541", // Zgony na 1000 ludności (P3428)
+        "450551", // Przyrost naturalny na 1000 ludności (P3428)
       ];
 
       const data = await this.getDataByUnit(gminaId, keyVariableIds, { year });
 
-      // Pobierz info o jednostce
-      const units = await this.getUnits();
-      const unit = units.find((u) => u.id === gminaId);
+      console.log(
+        `[GUS] getGminaStats: fetched ${data.length} data points for ${gminaId}`,
+      );
 
-      if (!unit) return null;
+      // Pobierz info o jednostce przez search (getUnits bez parametrów nie zwraca gmin)
+      const searchResult = await this.request<{ results: GUSUnit[] }>(
+        "/units/search",
+        { name: gminaId.slice(0, 6), level: 6 },
+      );
+      const unit = searchResult.results?.find((u) => u.id === gminaId);
+
+      if (!unit) {
+        console.warn(`[GUS] Unit ${gminaId} not found in search results`);
+        // Fallback - utwórz podstawowe info
+        if (data.length > 0) {
+          const stats: GUSStats = {
+            unitId: gminaId,
+            unitName: "Nieznana jednostka",
+            level: 6,
+            variables: data.map((d) => ({
+              id: String(d.variableId),
+              name: `Zmienna ${d.variableId}`,
+              value: d.val,
+              year: d.year,
+              unit: "",
+            })),
+          };
+          return stats;
+        }
+        return null;
+      }
 
       // Pobierz info o zmiennych
       const variables = await this.getVariables();

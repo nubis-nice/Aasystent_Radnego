@@ -17,7 +17,8 @@ export async function providerRoutes(fastify) {
             return reply.send({ capabilities: capabilities || [] });
         }
         catch (error) {
-            fastify.log.error("Error fetching provider capabilities:", error);
+            fastify.log.error("Error fetching provider capabilities: " +
+                String(error instanceof Error ? error.message : error));
             return reply
                 .status(500)
                 .send({ error: "Failed to fetch provider capabilities" });
@@ -62,7 +63,8 @@ export async function providerRoutes(fastify) {
             return reply.send({ defaults });
         }
         catch (error) {
-            fastify.log.error("Error fetching provider defaults:", error);
+            fastify.log.error("Error fetching provider defaults: " +
+                String(error instanceof Error ? error.message : error));
             return reply
                 .status(500)
                 .send({ error: "Failed to fetch provider defaults" });
@@ -86,7 +88,8 @@ export async function providerRoutes(fastify) {
             return reply.send({ providers: supportedProviders });
         }
         catch (error) {
-            fastify.log.error("Error fetching supported providers:", error);
+            fastify.log.error("Error fetching supported providers: " +
+                String(error instanceof Error ? error.message : error));
             return reply
                 .status(500)
                 .send({ error: "Failed to fetch supported providers" });
